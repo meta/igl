@@ -121,7 +121,6 @@ class Texture final : public ITexture {
   mutable bool mipmapsAreAvailableAndUploaded_ = false;
 
   mutable base::AttachmentInteropDesc attachmentDesc_; // Cached for IAttachmentInterop::getDesc()
-  mutable int uploadTimes_ = 0;
 };
 
 } // namespace igl::metal

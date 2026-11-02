@@ -373,12 +373,6 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
   [encoder endEncoding];
   [mtlCmdBuffer commit];
   
-  if (range.mipLevel == 0 && range.layer == 0) {
-    uploadTimes_++;
-  }
-  
-  IGL_DEBUG_ASSERT(uploadTimes_ <= 3, "Textures that are uploaded frequently should use MTLStorageModeShared mode.");
-
   return Result{};
 }
 
