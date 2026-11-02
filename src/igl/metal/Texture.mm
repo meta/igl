@@ -7,8 +7,6 @@
 
 #include <igl/metal/Texture.h>
 
-#include <algorithm>
-#include <cstring>
 #include <utility>
 #include <igl/Macros.h>
 #include <igl/metal/CommandBuffer.h>
