@@ -358,10 +358,16 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
         std::memcpy(dst + row * tile.bytesPerRow, src + row * srcBytesPerRow, copyBytesPerRow);
       }
 
+      TextureRangeDesc imageRange = sliceRange;
+      imageRange.depth = 1;
+      const size_t sourceBytesPerImage =
+          type == TextureType::ThreeD ? properties.getBytesPerLayer(imageRange, tile.bytesPerRow)
+                                      : tile.bytesPerImage;
+
       [encoder copyFromBuffer:stagingBuffer
                  sourceOffset:tile.offset
             sourceBytesPerRow:tile.bytesPerRow
-          sourceBytesPerImage:tile.bytesPerImage
+          sourceBytesPerImage:sourceBytesPerImage
                    sourceSize:MTLSizeMake(sliceRange.width, sliceRange.height, sliceRange.depth)
                     toTexture:value_
              destinationSlice:slice
