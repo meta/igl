@@ -214,11 +214,6 @@ Result Texture::getBytes(const TextureRangeDesc& range, void* outData, size_t by
 
 namespace {
 /// @brief Location of one (mip level, slice) tile inside the staging buffer.
-///
-/// GPU-private textures whose destination rejects a lossless -> lossy texture blit (i.e. lossy
-/// compressed destinations) are populated from a shared MTLBuffer via copyFromBuffer, which has
-/// no compressionType constraint. Tiles are laid out back to back, each padded to a safe
-/// alignment so that sourceOffset stays a multiple of the pixel/block size.
 struct StagingTile {
   size_t offset = 0;
   uint32_t bytesPerRow = 0;
