@@ -87,6 +87,8 @@ class Texture final : public ITexture {
                                        const TextureRangeDesc& range,
                                        NSUInteger metalSlice);
 
+  TextureDesc textureDesc_;
+
  private:
   [[nodiscard]] bool needsRepacking(const TextureRangeDesc& range, size_t bytesPerRow) const final;
   Result uploadInternal(TextureType type,
@@ -95,6 +97,11 @@ class Texture final : public ITexture {
                         size_t bytesPerRow,
                         const uint32_t* IGL_NULLABLE mipLevelBytes) const final;
 
+  [[nodiscard]] Result uploadViaStagingBuffer(TextureType type,
+                                              const TextureRangeDesc& range,
+                                              const void* IGL_NULLABLE data,
+                                              size_t bytesPerRow) const;
+  
   void generateMipmap(id<MTLCommandBuffer> cmdBuffer) const;
 
   // Given bytes per row of an input texture, return bytesPerRow value
@@ -114,6 +121,7 @@ class Texture final : public ITexture {
   mutable bool mipmapsAreAvailableAndUploaded_ = false;
 
   mutable base::AttachmentInteropDesc attachmentDesc_; // Cached for IAttachmentInterop::getDesc()
+  mutable int uploadTimes_ = 0;
 };
 
 } // namespace igl::metal

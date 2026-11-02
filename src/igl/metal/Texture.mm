@@ -7,6 +7,8 @@
 
 #include <igl/metal/Texture.h>
 
+#include <algorithm>
+#include <cstring>
 #include <utility>
 #include <igl/Macros.h>
 #include <igl/metal/CommandBuffer.h>
@@ -88,6 +90,15 @@ Result Texture::uploadInternal(TextureType type,
 
   const auto initialSlice = getMetalSlice(type, range.face, range.layer);
   const auto numSlices = getMetalSlice(type, range.numFaces, range.numLayers);
+
+  if (get().storageMode == MTLStorageModePrivate) {
+    //@tencent：新增通过StagingBuffer进行数据上传的逻辑
+    const auto result = uploadViaStagingBuffer(type, range, data, bytesPerRow);
+    if (!result.isOk()) {
+      return result;
+    }
+  } else {
+  //原始igl逻辑
   for (auto mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels; ++mipLevel) {
     const auto mipRange = range.atMipLevel(mipLevel);
     for (auto slice = initialSlice; slice < initialSlice + numSlices; ++slice) {
@@ -127,6 +138,7 @@ Result Texture::uploadInternal(TextureType type,
         break;
       }
     }
+  }
   }
 
   if (mipmapGeneration_ == TextureDesc::TextureMipmapGeneration::AutoGenerateOnUpload) {
@@ -200,6 +212,174 @@ Result Texture::getBytes(const TextureRangeDesc& range, void* outData, size_t by
     bgrToRgb(static_cast<unsigned char*>(outData), range.width, range.height, bytesPerPixel);
   }
   return Result(Result::Code::Ok);
+}
+
+namespace {
+/// @brief Location of one (mip level, slice) tile inside the staging buffer.
+///
+/// GPU-private textures whose destination rejects a lossless -> lossy texture blit (i.e. lossy
+/// compressed destinations) are populated from a shared MTLBuffer via copyFromBuffer, which has
+/// no compressionType constraint. Tiles are laid out back to back, each padded to a safe
+/// alignment so that sourceOffset stays a multiple of the pixel/block size.
+struct StagingTile {
+  size_t offset = 0;
+  uint32_t bytesPerRow = 0;
+  size_t bytesPerImage = 0;
+};
+
+/// Tiles are padded so that every sourceOffset stays a multiple of the pixel / block size that
+/// copyFromBuffer requires as its alignment.
+constexpr size_t kStagingTileAlignment = 64;
+
+size_t alignUp(size_t value, size_t alignment) noexcept {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+uint32_t getNumStagingSlices(TextureType type, uint32_t numLayers) noexcept {
+  return type == TextureType::Cube ? 6 : std::max(numLayers, 1u);
+}
+
+/// @brief Byte offset and row/image strides of one (mipLevel, slice) tile in the staging buffer.
+///
+/// The exact same function must drive both the memcpy that fills the buffer and the
+/// copyFromBuffer blit that drains it. If the two ever disagree the data lands in the wrong
+/// place and Metal reports no error.
+StagingTile getStagingTile(const TextureDesc& desc, uint32_t mipLevel, uint32_t slice) noexcept {
+  const TextureFormatProperties& properties =
+      TextureFormatProperties::fromTextureFormat(desc.format);
+  const TextureRangeDesc fullRange = desc.asRange();
+  const auto numSlices = getNumStagingSlices(desc.type, desc.numLayers);
+
+  size_t offset = 0;
+  for (uint32_t level = 0; level < desc.numMipLevels; ++level) {
+    const TextureRangeDesc levelRange = fullRange.atMipLevel(level);
+    const auto bytesPerRow = properties.getBytesPerRow(levelRange);
+    const auto bytesPerImage = properties.getBytesPerLayer(levelRange, bytesPerRow);
+    for (uint32_t s = 0; s < numSlices; ++s) {
+      if (level == mipLevel && s == slice) {
+        return StagingTile{offset, bytesPerRow, bytesPerImage};
+      }
+      offset += alignUp(bytesPerImage, kStagingTileAlignment);
+    }
+  }
+  return StagingTile{};
+}
+
+/// @brief Total size in bytes of the staging buffer needed for the given descriptor.
+size_t calcStagingBufferSize(const TextureDesc& desc) noexcept {
+  const TextureFormatProperties& properties =
+      TextureFormatProperties::fromTextureFormat(desc.format);
+  const TextureRangeDesc fullRange = desc.asRange();
+  const auto numSlices = getNumStagingSlices(desc.type, desc.numLayers);
+
+  size_t total = 0;
+  for (uint32_t level = 0; level < desc.numMipLevels; ++level) {
+    const TextureRangeDesc levelRange = fullRange.atMipLevel(level);
+    const auto bytesPerRow = properties.getBytesPerRow(levelRange);
+    const auto bytesPerImage = properties.getBytesPerLayer(levelRange, bytesPerRow);
+    total += alignUp(bytesPerImage, kStagingTileAlignment) * numSlices;
+  }
+  return total;
+}
+
+/// @brief Blit options that copyFromBuffer needs for the given texture format.
+///
+/// PVRTC blocks are stored row-major in a buffer, which the blit has to be told explicitly.
+MTLBlitOption getBlitOptions(TextureFormat format) noexcept {
+  switch (format) {
+  case TextureFormat::RGBA_PVRTC_2BPPV1:
+  case TextureFormat::RGB_PVRTC_2BPPV1:
+  case TextureFormat::RGBA_PVRTC_4BPPV1:
+  case TextureFormat::RGB_PVRTC_4BPPV1:
+    return MTLBlitOptionRowLinearPVRTC;
+  default:
+    return MTLBlitOptionNone;
+  }
+}
+} // namespace
+
+// The CPU cannot touch a GPU-private value_, so stage the data in a shared buffer and blit it
+// in. A texture-to-texture blit is rejected whenever the destination's compressionType differs
+// from the source's; copyFromBuffer has no such constraint.
+Result Texture::uploadViaStagingBuffer(TextureType type,
+                                       const TextureRangeDesc& range,
+                                       const void* IGL_NULLABLE data,
+                                       size_t bytesPerRow) const {
+  IGL_DEBUG_ASSERT(data, "Need a valid input buffer");
+  const Device* device = static_cast<const Device*>(&capabilities_);
+  IGL_DEBUG_ASSERT(device, "Device is not available; cannot create CommandQueue.");
+
+  const TextureFormatProperties& properties = getProperties();
+  const auto srcBytesPerRow = bytesPerRow > 0 ? bytesPerRow : properties.getBytesPerRow(range);
+  const auto initialSlice = getMetalSlice(type, range.face, range.layer);
+  const auto numSlices = getMetalSlice(type, range.numFaces, range.numLayers);
+  const TextureDesc& desc = textureDesc_;
+
+  id<MTLBuffer> stagingBuffer =
+      [device->get() newBufferWithLength:calcStagingBufferSize(textureDesc_)
+                                 options:MTLResourceStorageModeShared];
+
+  auto* const stagingBase = static_cast<uint8_t*>([stagingBuffer contents]);
+  const auto stagingLength = [stagingBuffer length];
+
+  std::shared_ptr<ICommandQueue> cmdQueue =
+      const_cast<Device*>(device)->getMostRecentCommandQueue();
+  if (!cmdQueue) {
+    Result result;
+    cmdQueue = const_cast<Device*>(device)->createCommandQueue({}, &result);
+    if (!result.isOk()) {
+      return result;
+    }
+  }
+  auto mtlCmdQueue = static_cast<CommandQueue&>(*cmdQueue).get();
+  const id<MTLCommandBuffer> mtlCmdBuffer = [mtlCmdQueue commandBuffer];
+  IGL_DEBUG_ASSERT(mtlCmdBuffer, "Cannot create MTLCommandBuffer.");
+
+  const MTLBlitOption blitOptions = getBlitOptions(getFormat());
+
+  const id<MTLBlitCommandEncoder> encoder = [mtlCmdBuffer blitCommandEncoder];
+  for (auto mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels; ++mipLevel) {
+    const TextureRangeDesc mipRange = range.atMipLevel(mipLevel);
+    for (auto slice = initialSlice; slice < initialSlice + numSlices; ++slice) {
+      const TextureRangeDesc sliceRange = atMetalSlice(type, mipRange, slice);
+      const auto* sliceData = getSubRangeStart(data, range, sliceRange, bytesPerRow);
+      const StagingTile tile = getStagingTile(desc, mipLevel, slice);
+      if (tile.offset + tile.bytesPerImage > stagingLength) {
+        IGL_DEBUG_ABORT("Staging buffer is too small for the requested upload range.");
+        break;
+      }
+
+      const auto copyBytesPerRow =
+          std::min(static_cast<size_t>(srcBytesPerRow), static_cast<size_t>(tile.bytesPerRow));
+      auto* dst = stagingBase + tile.offset;
+      const auto* src = static_cast<const uint8_t*>(sliceData);
+      const uint32_t numRows = properties.getRows(sliceRange);
+      for (uint32_t row = 0; row < numRows; ++row) {
+        std::memcpy(dst + row * tile.bytesPerRow, src + row * srcBytesPerRow, copyBytesPerRow);
+      }
+
+      [encoder copyFromBuffer:stagingBuffer
+                 sourceOffset:tile.offset
+            sourceBytesPerRow:tile.bytesPerRow
+          sourceBytesPerImage:tile.bytesPerImage
+                   sourceSize:MTLSizeMake(sliceRange.width, sliceRange.height, sliceRange.depth)
+                    toTexture:value_
+             destinationSlice:slice
+             destinationLevel:mipLevel
+            destinationOrigin:MTLOriginMake(sliceRange.x, sliceRange.y, sliceRange.z)
+                      options:blitOptions];
+    }
+  }
+  [encoder endEncoding];
+  [mtlCmdBuffer commit];
+  
+  if (range.mipLevel == 0 && range.layer == 0) {
+    uploadTimes_++;
+  }
+  
+  IGL_DEBUG_ASSERT(uploadTimes_ <= 3, "Textures that are uploaded frequently should use MTLStorageModeShared mode.");
+
+  return Result{};
 }
 
 size_t Texture::toMetalBytesPerRow(size_t bytesPerRow) const {
