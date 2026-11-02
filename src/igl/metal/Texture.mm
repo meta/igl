@@ -92,13 +92,11 @@ Result Texture::uploadInternal(TextureType type,
   const auto numSlices = getMetalSlice(type, range.numFaces, range.numLayers);
 
   if (get().storageMode == MTLStorageModePrivate) {
-    //@tencent：新增通过StagingBuffer进行数据上传的逻辑
     const auto result = uploadViaStagingBuffer(type, range, data, bytesPerRow);
     if (!result.isOk()) {
       return result;
     }
   } else {
-  //原始igl逻辑
   for (auto mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels; ++mipLevel) {
     const auto mipRange = range.atMipLevel(mipLevel);
     for (auto slice = initialSlice; slice < initialSlice + numSlices; ++slice) {
