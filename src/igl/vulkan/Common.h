@@ -141,6 +141,12 @@ struct VulkanContextConfig {
   const void* pipelineCacheData = nullptr;
   size_t pipelineCacheDataSize = 0;
 
+  // Every submission on the IGL queues waits on a binary semaphore signaled by the previous
+  // submission. When false, each command buffer begins with a full pipeline barrier instead, which
+  // gives the same ordering on a single queue without the per-submission semaphores. Submissions
+  // that carry injected wait semaphores keep chaining to the next submission either way.
+  bool chainSubmitsWithSemaphores = true;
+
   // This enables fences generated at the end of submission to be exported to the client.
   // The client can then use the SubmitHandle to wait for the completion of the GPU work.
   bool exportableFences = false;

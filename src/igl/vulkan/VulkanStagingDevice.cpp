@@ -38,7 +38,8 @@ VulkanStagingDevice::VulkanStagingDevice(VulkanContext& ctx) : ctx_(ctx) {
                                                 ctx_.config_.exportableFences,
                                                 ctx_.features_.has_VK_KHR_timeline_semaphore,
                                                 ctx_.features_.has_VK_KHR_synchronization2,
-                                                "VulkanStagingDevice::immediate_");
+                                                "VulkanStagingDevice::immediate_",
+                                                ctx_.config_.chainSubmitsWithSemaphores);
   IGL_DEBUG_ASSERT(immediate.get());
 }
 

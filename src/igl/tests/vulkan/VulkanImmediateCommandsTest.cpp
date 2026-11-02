@@ -126,6 +126,10 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     return vf;
   }
 
+  static VkSemaphore lastSubmitSemaphore(const igl::vulkan::VulkanImmediateCommands& commands) {
+    return commands.lastSubmitSemaphore_.semaphore;
+  }
+
   igl::vulkan::VulkanImmediateCommands::SubmitHandle submitForPresentation(
       igl::vulkan::VulkanImmediateCommands& commands,
       const igl::vulkan::VulkanImmediateCommands::CommandBufferWrapper& wrapper,
@@ -563,6 +567,81 @@ TEST_F(VulkanImmediateCommandsTest, InjectedWaitSemaphoreReachesSubmit) {
   const auto handle = ctx.immediate_->submit(second);
   EXPECT_FALSE(handle.empty());
   EXPECT_EQ(ctx.immediate_->wait(handle), VK_SUCCESS);
+}
+
+TEST_F(VulkanImmediateCommandsTest, SubmitsChainWithSemaphoresByDefault) {
+  auto& ctx = getVulkanContext();
+  vulkan::VulkanImmediateCommands commands(ctx.vf_,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Default chain test");
+  const auto handle = commands.submit(commands.acquire());
+  EXPECT_NE(lastSubmitSemaphore(commands), VK_NULL_HANDLE);
+  EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+}
+
+TEST_F(VulkanImmediateCommandsTest, UnchainedSubmitsComplete) {
+  auto& ctx = getVulkanContext();
+  for (const bool useSync2 : {false, true}) {
+    if (useSync2 && (!ctx.features().has_VK_KHR_timeline_semaphore ||
+                     !ctx.features().has_VK_KHR_synchronization2)) {
+      continue;
+    }
+    vulkan::VulkanImmediateCommands commands(ctx.vf_,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             useSync2,
+                                             useSync2,
+                                             "Unchained test",
+                                             /*chainSubmitsWithSemaphores=*/false);
+    // More submissions than command buffers, so every wrapper is recycled at least once.
+    std::vector<vulkan::VulkanImmediateCommands::SubmitHandle> handles;
+    for (uint32_t i = 0; i < 2 * vulkan::VulkanImmediateCommands::kMaxCommandBuffers; ++i) {
+      handles.push_back(commands.submit(commands.acquire()));
+      EXPECT_EQ(lastSubmitSemaphore(commands), VK_NULL_HANDLE);
+    }
+    EXPECT_EQ(commands.wait(handles.back()), VK_SUCCESS);
+    commands.waitAll();
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, UnchainedSubmitWithInjectedWaitChainsToNext) {
+  auto& ctx = getVulkanContext();
+  for (const bool useSync2 : {false, true}) {
+    if (useSync2 && (!ctx.features().has_VK_KHR_timeline_semaphore ||
+                     !ctx.features().has_VK_KHR_synchronization2)) {
+      continue;
+    }
+    vulkan::VulkanImmediateCommands commands(ctx.vf_,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             useSync2,
+                                             useSync2,
+                                             "Unchained injected wait test",
+                                             /*chainSubmitsWithSemaphores=*/false);
+    vulkan::VulkanSemaphore signal(ctx.vf_, ctx.getVkDevice(), false, "Injected wait test");
+
+    const auto& producer = commands.acquire();
+    ASSERT_TRUE(commands.signalSemaphore(signal.getVkSemaphore(), 0));
+    commands.submit(producer);
+    EXPECT_EQ(lastSubmitSemaphore(commands), VK_NULL_HANDLE);
+
+    const auto& consumer = commands.acquire();
+    ASSERT_TRUE(commands.waitSemaphore(signal.getVkSemaphore()));
+    commands.submit(consumer);
+    EXPECT_NE(lastSubmitSemaphore(commands), VK_NULL_HANDLE);
+
+    // The next submission consumes the chain semaphore and does not extend the chain.
+    const auto handle = commands.submit(commands.acquire());
+    EXPECT_EQ(lastSubmitSemaphore(commands), VK_NULL_HANDLE);
+    EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+    commands.waitAll();
+  }
 }
 
 TEST_F(VulkanImmediateCommandsTest, CachedFDDefaultIsNegativeOne) {

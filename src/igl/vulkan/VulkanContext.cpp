@@ -1278,7 +1278,8 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                                                          config_.exportableFences,
                                                          features_.has_VK_KHR_timeline_semaphore,
                                                          features_.has_VK_KHR_synchronization2,
-                                                         "VulkanContext::immediate_");
+                                                         "VulkanContext::immediate_",
+                                                         config_.chainSubmitsWithSemaphores);
   IGL_DEBUG_ASSERT(config_.maxResourceCount > 0,
                    "Max resource count needs to be greater than zero");
   syncSubmitHandles.resize(config_.maxResourceCount);

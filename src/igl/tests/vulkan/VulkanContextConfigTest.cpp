@@ -28,6 +28,7 @@ TEST(VulkanContextConfigTest, DefaultBooleanFields) {
   EXPECT_FALSE(config.enableGfxReconstruct);
   EXPECT_FALSE(config.enableMultiviewPerViewViewports);
   EXPECT_FALSE(config.exportableFences);
+  EXPECT_TRUE(config.chainSubmitsWithSemaphores);
   EXPECT_FALSE(config.headless);
 }
 

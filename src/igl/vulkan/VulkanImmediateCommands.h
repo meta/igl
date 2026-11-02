@@ -35,6 +35,11 @@ class VulkanImmediateCommands final {
    * it easier for debugging
    * The constructor initializes the vector of `CommandBufferWrapper` structures with
    * a total of `kMaxCommandBuffers`
+   * When `chainSubmitsWithSemaphores` is true, every submission waits on a binary semaphore
+   * signaled by the previous one. When false, each command buffer starts with a full pipeline
+   * barrier instead, which orders it after all earlier work on the queue; only a submission that
+   * carries injected wait semaphores still chains to the next one, because later submissions are
+   * otherwise not ordered after a semaphore wait.
    */
   VulkanImmediateCommands(const VulkanFunctionTable& vf,
                           VkDevice device,
@@ -42,7 +47,8 @@ class VulkanImmediateCommands final {
                           bool exportableFences,
                           bool useTimelineSemaphore,
                           bool useSynchronization2,
-                          const char* debugName);
+                          const char* debugName,
+                          bool chainSubmitsWithSemaphores = true);
   ~VulkanImmediateCommands();
   VulkanImmediateCommands(const VulkanImmediateCommands&) = delete;
   VulkanImmediateCommands& operator=(const VulkanImmediateCommands&) = delete;
@@ -238,6 +244,7 @@ class VulkanImmediateCommands final {
 
   bool useTimelineSemaphore_ = false;
   bool useTimelineSemaphoreAndSynchronization2_ = false;
+  bool chainSubmitsWithSemaphores_ = true;
 };
 
 } // namespace igl::vulkan

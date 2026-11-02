@@ -21,7 +21,8 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
                                                  bool exportableFences,
                                                  bool useTimelineSemaphore,
                                                  bool useSynchronization2,
-                                                 const char* debugName) :
+                                                 const char* debugName,
+                                                 bool chainSubmitsWithSemaphores) :
   vf_(vf),
   device_(device),
   debugName_(debugName),
@@ -33,7 +34,8 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
       .deviceIndex = 0UL,
   }),
   useTimelineSemaphore_(useTimelineSemaphore),
-  useTimelineSemaphoreAndSynchronization2_(useTimelineSemaphore && useSynchronization2) {
+  useTimelineSemaphoreAndSynchronization2_(useTimelineSemaphore && useSynchronization2),
+  chainSubmitsWithSemaphores_(chainSubmitsWithSemaphores) {
   IGL_PROFILER_FUNCTION();
 
   vf_.vkGetDeviceQueue(device_, queueFamilyIndex, 0, &queue_);
@@ -144,6 +146,26 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
   };
   VK_ASSERT(vf_.vkBeginCommandBuffer(current->cmdBuf, &bi));
 
+  if (!chainSubmitsWithSemaphores_) {
+    // Orders this command buffer after all work submitted earlier to the queue, which is what the
+    // submit-semaphore chain provides otherwise.
+    const VkMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+    };
+    vf_.vkCmdPipelineBarrier(current->cmdBuf,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             0,
+                             1,
+                             &barrier,
+                             0,
+                             nullptr,
+                             0,
+                             nullptr);
+  }
+
   nextSubmitHandle_ = current->handle;
   return *current;
 }
@@ -250,6 +272,9 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 
   // The submission chain and presentation signals have capacity separate from injected signals.
   constexpr size_t kSubmitSemaphoreCapacity = kMaxInjectedSemaphores + 2;
+  // Without the full chain, a submission that waits on injected semaphores still signals its chain
+  // semaphore so that the next submission is ordered after those waits.
+  const bool signalChainSemaphore = chainSubmitsWithSemaphores_ || numWaitSemaphores_ != 0;
   if (useTimelineSemaphoreAndSynchronization2_) {
     // @lint-ignore CLANGTIDY
     VkSemaphoreSubmitInfo waitSemaphores[kSubmitSemaphoreCapacity] = {};
@@ -266,11 +291,13 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
       signalSemaphores[i] = signalSemaphores_[i];
     }
     uint32_t numSignalSemaphores = numSignalSemaphores_;
-    signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = wrapper.semaphore.getVkSemaphore(),
-        .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-    };
+    if (signalChainSemaphore) {
+      signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
+          .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+          .semaphore = wrapper.semaphore.getVkSemaphore(),
+          .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      };
+    }
     if (presentationSemaphore != VK_NULL_HANDLE) {
       signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
           .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
@@ -324,7 +351,9 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
       signalValues[i] = signalSemaphores_[i].value;
     }
     uint32_t numSignalSemaphores = numSignalSemaphores_;
-    signalSemaphores[numSignalSemaphores++] = wrapper.semaphore.vkSemaphore_;
+    if (signalChainSemaphore) {
+      signalSemaphores[numSignalSemaphores++] = wrapper.semaphore.vkSemaphore_;
+    }
     if (presentationSemaphore != VK_NULL_HANDLE) {
       signalSemaphores[numSignalSemaphores++] = presentationSemaphore;
     }
@@ -357,7 +386,8 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
     IGL_PROFILER_ZONE_END();
   }
 
-  lastSubmitSemaphore_.semaphore = wrapper.semaphore.vkSemaphore_;
+  lastSubmitSemaphore_.semaphore = signalChainSemaphore ? wrapper.semaphore.vkSemaphore_
+                                                        : VK_NULL_HANDLE;
   lastSubmitHandle_ = wrapper.handle;
   numWaitSemaphores_ = 0;
   numSignalSemaphores_ = 0;
