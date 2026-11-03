@@ -16,6 +16,7 @@
 #include <igl/RenderCommandEncoder.h>
 #include <igl/RenderPass.h>
 #include <igl/opengl/Device.h>
+#include <igl/opengl/DeviceFeatureSet.h>
 #include <igl/opengl/IContext.h>
 #include <igl/opengl/TimestampQueries.h>
 
@@ -125,6 +126,32 @@ class TimerOGLTest : public ::testing::Test {
   std::shared_ptr<ICommandQueue> cmdQueue_;
   opengl::IContext* context_ = nullptr;
 };
+
+TEST_F(TimerOGLTest, DisjointReadDoesNotGenerateGlError) {
+  Result result;
+  std::shared_ptr<ITimestampQueries> queries;
+  if (iglDev_->hasFeature(DeviceFeatures::TimestampQueries)) {
+    queries = iglDev_->createTimestampQueries(1, &result);
+    ASSERT_TRUE(result.isOk()) << result.message;
+  } else {
+    queries = createTimestampQueries(0);
+  }
+  ASSERT_NE(queries, nullptr);
+  ASSERT_TRUE(queries->isValid());
+  ASSERT_EQ(context_->getError(), GL_NO_ERROR);
+
+  context_->enableAutomaticErrorCheck(false);
+  const bool disjoint = queries->readAndClearDisjoint();
+  const GLenum error = context_->getError();
+  context_->enableAutomaticErrorCheck(true);
+
+  EXPECT_EQ(error, GL_NO_ERROR);
+  if (!opengl::DeviceFeatureSet::usesOpenGLES() ||
+      !context_->deviceFeatures().hasExtension(opengl::Extensions::TimerQuery)) {
+    EXPECT_FALSE(disjoint);
+  }
+  EXPECT_TRUE(queries->isValid());
+}
 
 TEST_F(TimerOGLTest, NullQueryFunctionsAreInvalid) {
   for (const auto& queryFunctions :

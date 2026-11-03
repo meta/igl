@@ -141,7 +141,8 @@ TimestampQueryResult TimestampQueries::getElapsedNanosResult(uint32_t slotIndex)
 
 bool TimestampQueries::readAndClearDisjoint() {
   IGL_PROFILER_FUNCTION();
-  if (!getContext().deviceFeatures().hasExtension(Extensions::TimerQuery)) {
+  if (!DeviceFeatureSet::usesOpenGLES() ||
+      !getContext().deviceFeatures().hasExtension(Extensions::TimerQuery)) {
     return false;
   }
   GLint disjoint = 0;
