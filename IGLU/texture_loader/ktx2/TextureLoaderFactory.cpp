@@ -9,6 +9,7 @@
 
 #include <IGLU/texture_loader/ktx2/Header.h>
 #include <algorithm>
+#include <cstring>
 #include <ktx.h>
 #include <numeric>
 #include <igl/Macros.h>
