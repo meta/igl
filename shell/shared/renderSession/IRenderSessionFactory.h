@@ -15,8 +15,9 @@
 #include <shell/shared/renderSession/ShellType.h>
 
 namespace igl::vulkan {
+class VulkanFeatures;
 struct VulkanContextConfig;
-}
+} // namespace igl::vulkan
 
 namespace igl::shell {
 
@@ -64,6 +65,12 @@ class IRenderSessionFactory {
   [[nodiscard]] virtual std::vector<std::string> requestedVulkanDeviceExtensions() const noexcept {
     return {};
   }
+
+  /// @brief Adds Vulkan feature requests before the Android shell creates its device.
+  /// Use VulkanFeatures::requestFeature(); leave existing fields and requests intact.
+  /// Extension names must also be supplied by requestedVulkanDeviceExtensions().
+  /// The default leaves the shell's feature selection unchanged.
+  virtual void addVulkanFeatureRequests(vulkan::VulkanFeatures& /* features */) const noexcept {}
 
   /// @brief Gives a session factory a chance to customize Android Vulkan context creation.
   /// The default implementation intentionally leaves the IGL configuration unchanged.

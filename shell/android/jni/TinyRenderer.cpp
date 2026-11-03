@@ -613,6 +613,7 @@ void TinyRenderer::init(AAssetManager* mgr,
     // https://vulkan.gpuinfo.org/listdevicescoverage.php?feature=dualSrcBlend&platform=android&option=not
     igl::vulkan::VulkanFeatures vulkanFeatures(config);
     vulkanFeatures.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
+    factory.addVulkanFeatureRequests(vulkanFeatures);
 
     // Opt-in: sessions may declare extra Vulkan device extensions via the factory.
     // Default is empty -> behavior unchanged for sessions that declare nothing.
