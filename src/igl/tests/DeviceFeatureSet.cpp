@@ -11,6 +11,7 @@
 #include <igl/opengl/IContext.h>
 #include <igl/opengl/PlatformDevice.h>
 #endif // IGL_BACKEND_OPENGL
+#include <cstdlib>
 #include <string>
 
 namespace igl::tests {
@@ -742,6 +743,91 @@ TEST_F(GpuTimerTierTest, DesktopAndUnknown) {
   EXPECT_EQ(opengl::classifyGpuTimerTier("Apple M1", "Apple"), opengl::GpuTimerTier::Full);
   EXPECT_EQ(opengl::classifyGpuTimerTier("", nullptr), opengl::GpuTimerTier::Full);
 }
+#endif // IGL_BACKEND_OPENGL
+
+#if IGL_BACKEND_OPENGL
+TEST_F(GpuTimerTierTest, ParseOverride) {
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride("full"), opengl::GpuTimerTier::Full);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride("conservative"), opengl::GpuTimerTier::Conservative);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride("disabled"), opengl::GpuTimerTier::Disabled);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride(nullptr), std::nullopt);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride(""), std::nullopt);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride("Full"), std::nullopt);
+  EXPECT_EQ(opengl::parseGpuTimerTierOverride("64"), std::nullopt);
+}
+
+#if !IGL_PLATFORM_WINDOWS
+namespace {
+// Sets or clears kGpuTimerTierOverrideEnvVar for one test and restores its previous value.
+class ScopedTimerTierOverride {
+ public:
+  explicit ScopedTimerTierOverride(const char* IGL_NULLABLE value) {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    const char* previous = std::getenv(opengl::kGpuTimerTierOverrideEnvVar);
+    if (previous != nullptr) {
+      previous_ = std::string(previous);
+    }
+    set(value);
+  }
+  ~ScopedTimerTierOverride() {
+    set(previous_ ? previous_->c_str() : nullptr);
+  }
+  ScopedTimerTierOverride(const ScopedTimerTierOverride&) = delete;
+  ScopedTimerTierOverride& operator=(const ScopedTimerTierOverride&) = delete;
+
+ private:
+  static void set(const char* IGL_NULLABLE value) {
+    if (value == nullptr) {
+      // NOLINTNEXTLINE(concurrency-mt-unsafe)
+      unsetenv(opengl::kGpuTimerTierOverrideEnvVar);
+    } else {
+      // NOLINTNEXTLINE(concurrency-mt-unsafe)
+      setenv(opengl::kGpuTimerTierOverrideEnvVar, value, 1);
+    }
+  }
+  std::optional<std::string> previous_;
+};
+} // namespace
+
+TEST_F(GpuTimerTierTest, DebugOverrideIsReadFromTheEnvironmentOnlyInDebugBuilds) {
+  {
+    const ScopedTimerTierOverride scoped("full");
+#if IGL_DEBUG
+    EXPECT_EQ(opengl::getGpuTimerTierDebugOverride(), opengl::GpuTimerTier::Full);
+#else
+    EXPECT_EQ(opengl::getGpuTimerTierDebugOverride(), std::nullopt);
+#endif
+  }
+  {
+    const ScopedTimerTierOverride scoped("not-a-tier");
+    EXPECT_EQ(opengl::getGpuTimerTierDebugOverride(), std::nullopt);
+  }
+  {
+    const ScopedTimerTierOverride scoped(nullptr);
+    EXPECT_EQ(opengl::getGpuTimerTierDebugOverride(), std::nullopt);
+  }
+}
+
+TEST_F(DeviceFeatureSetTest, GpuTimerTierHonorsTheDebugOverride) {
+  const auto* platformDevice = iglDev_->getPlatformDevice<igl::opengl::PlatformDevice>();
+  if (platformDevice == nullptr) {
+    GTEST_SKIP() << "OpenGL only";
+  }
+  const auto& featureSet = platformDevice->getContext().deviceFeatures();
+  const bool hasTimerQuery = featureSet.hasExtension(opengl::Extensions::TimerQuery);
+  for (const char* value : {"disabled", "conservative", "full"}) {
+    const ScopedTimerTierOverride scoped(value);
+    const auto expected = !hasTimerQuery ? opengl::GpuTimerTier::Disabled
+#if IGL_DEBUG
+                                         : *opengl::parseGpuTimerTierOverride(value);
+#else
+                                         : featureSet.getGpuTimerTier();
+#endif
+    EXPECT_EQ(featureSet.getGpuTimerTier(), expected) << value;
+    EXPECT_EQ(featureSet.getTimerQueryMaxSlots(), static_cast<uint32_t>(expected)) << value;
+  }
+}
+#endif // !IGL_PLATFORM_WINDOWS
 #endif // IGL_BACKEND_OPENGL
 
 } // namespace igl::tests

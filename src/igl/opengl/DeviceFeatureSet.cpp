@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <igl/Common.h>
@@ -205,6 +206,31 @@ std::optional<GpuTimerTier> classifyPowerVrTimerTier(const char* renderer, const
   return GpuTimerTier::Disabled;
 }
 } // namespace
+
+std::optional<GpuTimerTier> parseGpuTimerTierOverride(const char* IGL_NULLABLE value) {
+  if (value == nullptr) {
+    return std::nullopt;
+  }
+  if (std::strcmp(value, "full") == 0) {
+    return GpuTimerTier::Full;
+  }
+  if (std::strcmp(value, "conservative") == 0) {
+    return GpuTimerTier::Conservative;
+  }
+  if (std::strcmp(value, "disabled") == 0) {
+    return GpuTimerTier::Disabled;
+  }
+  return std::nullopt;
+}
+
+std::optional<GpuTimerTier> getGpuTimerTierDebugOverride() {
+#if IGL_DEBUG
+  // NOLINTNEXTLINE(concurrency-mt-unsafe)
+  return parseGpuTimerTierOverride(std::getenv(kGpuTimerTierOverrideEnvVar));
+#else
+  return std::nullopt;
+#endif
+}
 
 GpuTimerTier classifyGpuTimerTier(const char* renderer, const char* vendor) {
   if (renderer == nullptr) {
@@ -471,6 +497,9 @@ GpuTimerTier DeviceFeatureSet::getGpuTimerTier() const {
   IGL_PROFILER_FUNCTION();
   if (!hasExtension(Extensions::TimerQuery)) {
     return GpuTimerTier::Disabled;
+  }
+  if (const auto tierOverride = getGpuTimerTierDebugOverride()) {
+    return *tierOverride;
   }
   const auto* renderer = reinterpret_cast<const char*>(glContext_.getString(GL_RENDERER));
   const auto* vendor = reinterpret_cast<const char*>(glContext_.getString(GL_VENDOR));

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -211,6 +212,23 @@ enum class GpuTimerTier : uint32_t {
 [[nodiscard]] GpuTimerTier classifyGpuTimerTier(const char* IGL_NULLABLE renderer,
                                                 const char* IGL_NULLABLE vendor);
 
+/// Environment variable read by getGpuTimerTierDebugOverride().
+inline constexpr const char* IGL_NONNULL kGpuTimerTierOverrideEnvVar =
+    "IGL_GPU_TIMER_TIER_OVERRIDE";
+
+/// Parses a timer-tier override: "full", "conservative" or "disabled". Anything else, including
+/// null, is no override.
+[[nodiscard]] std::optional<GpuTimerTier> parseGpuTimerTierOverride(const char* IGL_NULLABLE value);
+
+/// The timer tier set in kGpuTimerTierOverrideEnvVar, for on-device GPU performance measurement in
+/// debug builds. When set, DeviceFeatureSet::getGpuTimerTier() returns it in place of the
+/// GL_RENDERER / GL_VENDOR classification, so timer queries can be re-enabled on a GPU that
+/// classifyGpuTimerTier() disables. Always std::nullopt when IGL_DEBUG is 0, so release builds use
+/// the classification. An environment variable is used because each shared library that links IGL
+/// statically has its own copy of any static state; the process environment is shared by all of
+/// them.
+[[nodiscard]] std::optional<GpuTimerTier> getGpuTimerTierDebugOverride();
+
 /// Returns true if the GPU with these raw GL_RENDERER / GL_VENDOR strings advertises
 /// GL_EXT_shader_framebuffer_fetch but its driver breaks it, as the Adreno 500 series does.
 /// Exposed as a free function for unit testing without a GL context.
@@ -256,7 +274,8 @@ class DeviceFeatureSet final {
 
   bool getFeatureLimits(DeviceFeatureLimits featureLimits, size_t& result) const;
 
-  /// Returns the GPU timer tier based on GL_RENDERER / GL_VENDOR.
+  /// Returns the GPU timer tier based on GL_RENDERER / GL_VENDOR, or the debug override from
+  /// getGpuTimerTierDebugOverride() when one is set. Disabled without a timer query extension.
   [[nodiscard]] GpuTimerTier getGpuTimerTier() const;
 
   /// Convenience: static_cast<uint32_t>(getGpuTimerTier()).
