@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <type_traits>
 #include <unordered_set>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/VulkanHelpers.h>
@@ -35,6 +38,34 @@ class VulkanFeatures final {
   enum class ExtensionType { Instance = 0, Device };
 
   explicit VulkanFeatures(VulkanContextConfig config) noexcept;
+  VulkanFeatures(const VulkanFeatures& other) noexcept;
+
+  /// @brief Adds requested bits from a Vulkan feature structure. Owns a copy; ignores pNext.
+  /// The structure must contain only sType, pNext, and VkBool32 feature members.
+  /// It is queried only if extensionName is enabled or coreVersion is supported (0 means none).
+  template<typename Feature>
+  void requestFeature(const Feature& feature,
+                      const char* IGL_NONNULL extensionName,
+                      uint32_t coreVersion = 0) {
+    static_assert(std::is_trivially_copyable_v<Feature>);
+    static_assert(std::is_standard_layout_v<Feature>);
+    static_assert(offsetof(Feature, pNext) == offsetof(VkBaseOutStructure, pNext));
+    static_assert(alignof(Feature) <= alignof(uint64_t));
+    requestFeature(&feature, sizeof(Feature), extensionName, coreVersion);
+  }
+
+  void requestFeature(const VkPhysicalDeviceFeatures& features) {
+    requestFeature(VkPhysicalDeviceFeatures2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                             .features = features},
+                   "",
+                   VK_API_VERSION_1_0);
+  }
+
+  /// @brief After device creation, returns the enabled structure; nullptr means its bits are off.
+  [[nodiscard]] const void* IGL_NULLABLE feature(VkStructureType type) const noexcept;
+
+  /// @brief Returns whether an extension was enabled for the specified object type.
+  [[nodiscard]] bool enabled(const char* extensionName, ExtensionType extensionType) const;
 
   /// @brief Populates the VkPhysicalDeviceFeatures2 and its pNext chain for a Vulkan context
   void populateWithAvailablePhysicalDeviceFeatures(const VulkanContext& context,
@@ -99,6 +130,7 @@ class VulkanFeatures final {
   // checkSelectedFeatures() does not cover this struct, so neither mistake is reported: the
   // first silently disables the feature and the second loses the device. Query the physical
   // device yourself and request only what it reports.
+  // requestFeature() queries and selects this bit when the device is created.
   VkPhysicalDeviceShaderIntegerDotProductFeatures featuresShaderIntegerDotProduct{};
 
   // VK_EXT_extended_dynamic_state (promoted to Vulkan 1.3)
@@ -210,6 +242,32 @@ class VulkanFeatures final {
   [[nodiscard]] std::vector<const char*> allEnabled(ExtensionType extensionType) const;
 
   std::vector<VkExtensionProperties> extensionProps_;
+
+  struct alignas(uint64_t) FeatureWord {
+    std::byte bytes[sizeof(uint64_t)]{};
+  };
+
+  struct FeatureRequest {
+    std::string extensionName;
+    uint32_t coreVersion;
+    size_t size;
+    std::vector<FeatureWord> requested;
+    std::vector<FeatureWord> selected;
+    bool chained = false;
+    bool addedToChain = false;
+  };
+  std::vector<FeatureRequest> featureRequests_;
+
+  void requestFeature(const void* IGL_NONNULL feature,
+                      size_t size,
+                      const char* IGL_NONNULL extensionName,
+                      uint32_t coreVersion);
+  void enableRequestedFeatures(const VulkanContext& context,
+                               VkPhysicalDevice physicalDevice,
+                               uint32_t apiVersion);
+  void resetRequestedFeatures() noexcept;
+  [[nodiscard]] std::array<VkBaseOutStructure*, 24> featureStructures() noexcept;
+  [[nodiscard]] VkBaseOutStructure* requestedFeatureStructure(FeatureRequest& request) noexcept;
 };
 
 } // namespace igl::vulkan

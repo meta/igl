@@ -10,6 +10,7 @@
 #include <igl/vulkan/VulkanHelpers.h>
 
 #include <array>
+#include <cstring>
 #include <string>
 
 namespace igl::tests {
@@ -509,6 +510,27 @@ TEST_F(IvkCreateDeviceTest, DoesNotEnableIndependentBlendWhenUnsupported) {
   EXPECT_EQ(result, VK_SUCCESS);
   EXPECT_TRUE(gFeaturesCaptured);
   EXPECT_EQ(gCapturedFeatures.independentBlend, VK_FALSE);
+}
+
+TEST_F(IvkCreateDeviceTest, ForwardsSelectedCoreFeaturesExactly) {
+  const VkDeviceQueueCreateInfo queueCreateInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .queueFamilyIndex = 0,
+      .queueCount = 1,
+      .pQueuePriorities = nullptr,
+  };
+  const VkPhysicalDeviceFeatures2 selected = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+      .features = {.independentBlend = VK_TRUE, .shaderFloat64 = VK_TRUE, .shaderInt64 = VK_TRUE},
+  };
+  const VulkanFunctionTable vt = {.vkCreateDevice = &fakeCreateDevice};
+  VkDevice device = VK_NULL_HANDLE;
+  const VkResult result =
+      ivkCreateDevice(&vt, VK_NULL_HANDLE, 1, &queueCreateInfo, 0, nullptr, &selected, &device);
+  EXPECT_EQ(result, VK_SUCCESS);
+  ASSERT_TRUE(gFeaturesCaptured);
+  EXPECT_EQ(std::memcmp(&gCapturedFeatures, &selected.features, sizeof(VkPhysicalDeviceFeatures)),
+            0);
 }
 
 TEST_F(IvkCreateDeviceTest, PassesTheFeatureChain) {

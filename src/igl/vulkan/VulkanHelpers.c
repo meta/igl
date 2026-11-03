@@ -249,31 +249,20 @@ VkResult ivkCreateDevice(const struct VulkanFunctionTable* vt,
                          const VkDeviceQueueCreateInfo* queueCreateInfos,
                          size_t numDeviceExtensions,
                          const char** deviceExtensions,
-                         const VkPhysicalDeviceFeatures2* supported,
+                         const VkPhysicalDeviceFeatures2* enabledFeatures,
                          VkDevice* outDevice) {
   assert(numQueueCreateInfos >= 1);
-  const VkPhysicalDeviceFeatures deviceFeatures10 = {
-      .independentBlend = supported ? supported->features.independentBlend : VK_TRUE,
-      .dualSrcBlend = supported ? supported->features.dualSrcBlend : VK_TRUE,
-      .multiDrawIndirect = supported ? supported->features.multiDrawIndirect : VK_TRUE,
-      .drawIndirectFirstInstance = supported ? supported->features.drawIndirectFirstInstance
-                                             : VK_TRUE,
-      .depthBiasClamp = supported ? supported->features.depthBiasClamp : VK_TRUE,
-      .fillModeNonSolid = supported ? supported->features.fillModeNonSolid : VK_TRUE,
-      .shaderInt16 = supported ? supported->features.shaderInt16 : VK_TRUE,
-      .samplerAnisotropy = supported ? supported->features.samplerAnisotropy : VK_TRUE,
-  };
   VkDeviceCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
       .queueCreateInfoCount = (uint32_t)numQueueCreateInfos,
       .pQueueCreateInfos = queueCreateInfos,
       .enabledExtensionCount = (uint32_t)numDeviceExtensions,
       .ppEnabledExtensionNames = deviceExtensions,
-      .pEnabledFeatures = &deviceFeatures10,
+      .pEnabledFeatures = &enabledFeatures->features,
   };
 
   // Append all feature structs being requested for this device
-  ci.pNext = supported->pNext;
+  ci.pNext = enabledFeatures->pNext;
 
   return vt->vkCreateDevice(physicalDevice, &ci, NULL, outDevice);
 }

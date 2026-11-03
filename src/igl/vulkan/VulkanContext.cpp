@@ -1084,9 +1084,17 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
 
   // Use the requested features passed to the function (if any) or use the default features
   if (requestedFeatures) {
+    constexpr auto instanceType = static_cast<size_t>(VulkanFeatures::ExtensionType::Instance);
+    auto instanceExtensions = std::move(features_.extensions_[instanceType]);
+    auto enabledInstanceExtensions = std::move(features_.enabledExtensions_[instanceType]);
     features_ = *requestedFeatures;
+    features_.extensions_[instanceType] = std::move(instanceExtensions);
+    features_.enabledExtensions_[instanceType] = std::move(enabledInstanceExtensions);
   }
 
+  features_.extensions_[static_cast<size_t>(VulkanFeatures::ExtensionType::Device)].clear();
+  features_.enabledExtensions_[static_cast<size_t>(VulkanFeatures::ExtensionType::Device)].clear();
+  features_.resetRequestedFeatures();
   features_.populateWithAvailablePhysicalDeviceFeatures(*this, vkPhysicalDevice_);
 
   // The query above fills the request structs with supported values, so resolve any mutually
@@ -1195,6 +1203,9 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
   const auto qcis = queuePool.getQueueCreationInfos();
 
   auto deviceExtensions = features_.allEnabled(VulkanFeatures::ExtensionType::Device);
+
+  features_.enableRequestedFeatures(*this, vkPhysicalDevice_, apiVersion);
+  features_.resolveMutuallyExclusiveFeatures();
 
   VkDevice device = nullptr;
   VK_ASSERT_RETURN(ivkCreateDevice(&vf_,

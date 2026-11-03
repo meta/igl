@@ -166,6 +166,192 @@ VulkanFeatures::VulkanFeatures(VulkanContextConfig config) noexcept :
   assembleFeatureChain(config);
 }
 
+VulkanFeatures::VulkanFeatures(const VulkanFeatures& other) noexcept : config(other.config) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+  *this = other;
+  has_VK_EXT_descriptor_buffer = other.has_VK_EXT_descriptor_buffer;
+  has_VK_EXT_descriptor_indexing = other.has_VK_EXT_descriptor_indexing;
+  has_VK_EXT_fragment_density_map = other.has_VK_EXT_fragment_density_map;
+  has_VK_EXT_headless_surface = other.has_VK_EXT_headless_surface;
+  has_VK_EXT_index_type_uint8 = other.has_VK_EXT_index_type_uint8;
+  has_VK_EXT_mesh_shader = other.has_VK_EXT_mesh_shader;
+  has_VK_EXT_queue_family_foreign = other.has_VK_EXT_queue_family_foreign;
+  has_VK_EXT_scalar_block_layout = other.has_VK_EXT_scalar_block_layout;
+  has_VK_KHR_8bit_storage = other.has_VK_KHR_8bit_storage;
+  has_VK_KHR_buffer_device_address = other.has_VK_KHR_buffer_device_address;
+  has_VK_KHR_create_renderpass2 = other.has_VK_KHR_create_renderpass2;
+  has_VK_KHR_get_surface_capabilities2 = other.has_VK_KHR_get_surface_capabilities2;
+  has_VK_KHR_portability_enumeration = other.has_VK_KHR_portability_enumeration;
+  has_VK_KHR_shader_non_semantic_info = other.has_VK_KHR_shader_non_semantic_info;
+  has_VK_KHR_synchronization2 = other.has_VK_KHR_synchronization2;
+  has_VK_KHR_timeline_semaphore = other.has_VK_KHR_timeline_semaphore;
+  has_VK_KHR_uniform_buffer_standard_layout = other.has_VK_KHR_uniform_buffer_standard_layout;
+  has_VK_KHR_vulkan_memory_model = other.has_VK_KHR_vulkan_memory_model;
+  has_VK_QCOM_multiview_per_view_viewports = other.has_VK_QCOM_multiview_per_view_viewports;
+  has_VK_EXT_extended_dynamic_state = other.has_VK_EXT_extended_dynamic_state;
+  has_VK_EXT_extended_dynamic_state2 = other.has_VK_EXT_extended_dynamic_state2;
+}
+
+void VulkanFeatures::requestFeature(const void* feature,
+                                    size_t size,
+                                    const char* extensionName,
+                                    uint32_t coreVersion) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+  const auto* header = static_cast<const VkBaseInStructure*>(feature);
+  if (size <= sizeof(VkBaseOutStructure) ||
+      header->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES ||
+      header->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES ||
+      header->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES
+#if defined(VK_VERSION_1_4)
+      || header->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES
+#endif
+  ) {
+    IGL_LOG_ERROR("Ignoring invalid or aggregate Vulkan feature structure %u\n",
+                  static_cast<uint32_t>(header->sType));
+    return;
+  }
+  const size_t words = (size + sizeof(FeatureWord) - 1) / sizeof(FeatureWord);
+  FeatureRequest request{.extensionName = extensionName,
+                         .coreVersion = coreVersion,
+                         .size = size,
+                         .requested = std::vector<FeatureWord>(words),
+                         .selected = std::vector<FeatureWord>(words)};
+  std::memcpy(request.requested.data(), feature, size);
+  reinterpret_cast<VkBaseOutStructure*>(request.requested.data())->pNext = nullptr;
+  reinterpret_cast<VkBaseOutStructure*>(request.selected.data())->sType = header->sType;
+  featureRequests_.push_back(std::move(request));
+}
+
+const void* VulkanFeatures::feature(VkStructureType type) const noexcept {
+  const auto* current = reinterpret_cast<const VkBaseOutStructure*>(&vkPhysicalDeviceFeatures2);
+  for (; current; current = current->pNext) {
+    if (current->sType == type) {
+      return current;
+    }
+  }
+  return nullptr;
+}
+
+std::array<VkBaseOutStructure*, 24> VulkanFeatures::featureStructures() noexcept {
+  return {reinterpret_cast<VkBaseOutStructure*>(&vkPhysicalDeviceFeatures2),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresSamplerYcbcrConversion),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderDrawParameters),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresMultiview),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresIndexTypeUint8),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresSynchronization2),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresTimelineSemaphore),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresVulkanMemoryModel),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderFloat16Int8),
+          reinterpret_cast<VkBaseOutStructure*>(&features16BitStorage),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresBufferDeviceAddress),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresDescriptorIndexing),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresMultiviewPerViewViewports),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresFragmentDensityMap),
+          reinterpret_cast<VkBaseOutStructure*>(&features8BitStorage),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresUniformBufferStandardLayout),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresScalarBlockLayout),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresMeshShader),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresFragmentShadingRate),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresDescriptorBuffer),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresTextureCompressionAstcHdr),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresExtendedDynamicState),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresExtendedDynamicState2),
+          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderIntegerDotProduct)};
+}
+
+VkBaseOutStructure* VulkanFeatures::requestedFeatureStructure(FeatureRequest& request) noexcept {
+  auto* selected = reinterpret_cast<VkBaseOutStructure*>(request.selected.data());
+  for (auto* structure : featureStructures()) {
+    if (structure->sType == selected->sType) {
+      return structure;
+    }
+  }
+  return selected;
+}
+
+void VulkanFeatures::enableRequestedFeatures(const VulkanContext& context,
+                                             VkPhysicalDevice physicalDevice,
+                                             uint32_t apiVersion) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+  const auto availableCoreFeatures = vkPhysicalDeviceFeatures2.features;
+  vkPhysicalDeviceFeatures2.features = {
+      .independentBlend = availableCoreFeatures.independentBlend,
+      .dualSrcBlend = availableCoreFeatures.dualSrcBlend,
+      .multiDrawIndirect = availableCoreFeatures.multiDrawIndirect,
+      .drawIndirectFirstInstance = availableCoreFeatures.drawIndirectFirstInstance,
+      .depthBiasClamp = availableCoreFeatures.depthBiasClamp,
+      .fillModeNonSolid = availableCoreFeatures.fillModeNonSolid,
+      .samplerAnisotropy = availableCoreFeatures.samplerAnisotropy,
+      .shaderInt16 = availableCoreFeatures.shaderInt16,
+  };
+  for (auto& request : featureRequests_) {
+    auto* selected = reinterpret_cast<VkBaseOutStructure*>(request.selected.data());
+    const VkStructureType type = selected->sType;
+    std::fill(request.selected.begin(), request.selected.end(), FeatureWord{});
+    selected->sType = type;
+    request.chained = enabled(request.extensionName.c_str(), ExtensionType::Device) ||
+                      (request.coreVersion != 0 && apiVersion >= request.coreVersion);
+    if (!request.chained) {
+      continue;
+    }
+    VkPhysicalDeviceFeatures2 available{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                        .pNext = selected};
+    context.vf_.vkGetPhysicalDeviceFeatures2(
+        physicalDevice,
+        type == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2
+            ? reinterpret_cast<VkPhysicalDeviceFeatures2*>(selected)
+            : &available);
+    auto* target = static_cast<VkBaseOutStructure*>(const_cast<void*>(feature(type)));
+    const bool alreadyChained = target != nullptr;
+    if (!target) {
+      target = requestedFeatureStructure(request);
+    }
+    for (size_t offset = sizeof(VkBaseOutStructure); offset < request.size;
+         offset += sizeof(VkBool32)) {
+      VkBool32 supported = VK_FALSE;
+      std::memcpy(
+          &supported, reinterpret_cast<const uint8_t*>(selected) + offset, sizeof(VkBool32));
+      if (supported == VK_FALSE) {
+        if (!alreadyChained) {
+          std::memcpy(reinterpret_cast<uint8_t*>(target) + offset, &supported, sizeof(VkBool32));
+        }
+        continue;
+      }
+      VkBool32 requested = VK_FALSE, existing = VK_FALSE;
+      std::memcpy(&requested,
+                  reinterpret_cast<const uint8_t*>(request.requested.data()) + offset,
+                  sizeof(VkBool32));
+      if (alreadyChained) {
+        std::memcpy(&existing, reinterpret_cast<const uint8_t*>(target) + offset, sizeof(VkBool32));
+      }
+      const VkBool32 value = existing || requested ? VK_TRUE : VK_FALSE;
+      std::memcpy(reinterpret_cast<uint8_t*>(target) + offset, &value, sizeof(VkBool32));
+    }
+    if (!alreadyChained) {
+      target->pNext = nullptr;
+      ivkAddNext(&vkPhysicalDeviceFeatures2, target);
+    }
+    request.addedToChain = !alreadyChained;
+  }
+}
+
+void VulkanFeatures::resetRequestedFeatures() noexcept {
+  for (auto& request : featureRequests_) {
+    if (request.addedToChain) {
+      auto* structure = requestedFeatureStructure(request);
+      std::memset(reinterpret_cast<uint8_t*>(structure) + sizeof(VkBaseOutStructure),
+                  0,
+                  request.size - sizeof(VkBaseOutStructure));
+    }
+    const VkStructureType type =
+        reinterpret_cast<const VkBaseOutStructure*>(request.requested.data())->sType;
+    std::fill(request.selected.begin(), request.selected.end(), FeatureWord{});
+    reinterpret_cast<VkBaseOutStructure*>(request.selected.data())->sType = type;
+    request.chained = false;
+    request.addedToChain = false;
+  }
+}
+
 // NOLINTNEXTLINE(bugprone-exception-escape)
 void VulkanFeatures::populateWithAvailablePhysicalDeviceFeatures(
     const VulkanContext& context,
@@ -305,30 +491,9 @@ void VulkanFeatures::assembleFeatureChain(const VulkanContextConfig& contextConf
   // Reset all pNext pointers. We might be copying the chain from another VulkanFeatures object,
   // so we need to reset the pNext pointers to avoid dangling pointers. Some of the extensions'
   // pointers are guarded by #ifdefs below
-  vkPhysicalDeviceFeatures2.pNext = nullptr;
-  featuresSamplerYcbcrConversion.pNext = nullptr;
-  featuresShaderDrawParameters.pNext = nullptr;
-  featuresMultiview.pNext = nullptr;
-  featuresIndexTypeUint8.pNext = nullptr;
-  featuresSynchronization2.pNext = nullptr;
-  featuresTimelineSemaphore.pNext = nullptr;
-  featuresVulkanMemoryModel.pNext = nullptr;
-  featuresShaderFloat16Int8.pNext = nullptr;
-  features16BitStorage.pNext = nullptr;
-  featuresBufferDeviceAddress.pNext = nullptr;
-  featuresDescriptorIndexing.pNext = nullptr;
-  featuresMultiviewPerViewViewports.pNext = nullptr;
-  featuresFragmentDensityMap.pNext = nullptr;
-  features8BitStorage.pNext = nullptr;
-  featuresUniformBufferStandardLayout.pNext = nullptr;
-  featuresScalarBlockLayout.pNext = nullptr;
-  featuresMeshShader.pNext = nullptr;
-  featuresFragmentShadingRate.pNext = nullptr;
-  featuresDescriptorBuffer.pNext = nullptr;
-  featuresTextureCompressionAstcHdr.pNext = nullptr;
-  featuresExtendedDynamicState.pNext = nullptr;
-  featuresExtendedDynamicState2.pNext = nullptr;
-  featuresShaderIntegerDotProduct.pNext = nullptr;
+  for (auto* structure : featureStructures()) {
+    structure->pNext = nullptr;
+  }
 
   // Add the required and optional features to the VkPhysicalDeviceFetaures2_
   ivkAddNext(&vkPhysicalDeviceFeatures2, &featuresSamplerYcbcrConversion);
@@ -393,6 +558,10 @@ void VulkanFeatures::assembleFeatureChain(const VulkanContextConfig& contextConf
   if (hasExtension(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME)) {
     ivkAddNext(&vkPhysicalDeviceFeatures2, &featuresExtendedDynamicState2);
   }
+  if (enabled(VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME) &&
+      featuresTextureCompressionAstcHdr.textureCompressionASTC_HDR == VK_TRUE) {
+    ivkAddNext(&vkPhysicalDeviceFeatures2, &featuresTextureCompressionAstcHdr);
+  }
   // Gated on the caller's request rather than on the extension being present, unlike the
   // structs above. The feature is core from Vulkan 1.3, where a device may support it without
   // still advertising VK_KHR_shader_integer_dot_product, so an extension gate would silently
@@ -401,6 +570,13 @@ void VulkanFeatures::assembleFeatureChain(const VulkanContextConfig& contextConf
   // adds nothing to the default device.
   if (featuresShaderIntegerDotProduct.shaderIntegerDotProduct == VK_TRUE) {
     ivkAddNext(&vkPhysicalDeviceFeatures2, &featuresShaderIntegerDotProduct);
+  }
+  for (auto& request : featureRequests_) {
+    reinterpret_cast<VkBaseOutStructure*>(request.selected.data())->pNext = nullptr;
+    auto* structure = requestedFeatureStructure(request);
+    if (request.chained && !feature(structure->sType)) {
+      ivkAddNext(&vkPhysicalDeviceFeatures2, structure);
+    }
   }
 }
 
@@ -447,6 +623,7 @@ VulkanFeatures& VulkanFeatures::operator=(const VulkanFeatures& other) noexcept 
   extensions_ = other.extensions_;
   enabledExtensions_ = other.enabledExtensions_;
   extensionProps_ = other.extensionProps_;
+  featureRequests_ = other.featureRequests_;
 
   assembleFeatureChain(config);
 
@@ -657,9 +834,12 @@ void VulkanFeatures::enableCommonDeviceExtensions(const VulkanContextConfig& con
 }
 
 bool VulkanFeatures::enabled(const char* extensionName) const {
-  return (enabledExtensions_[static_cast<size_t>(ExtensionType::Instance)].count(extensionName) >
-          0) ||
-         (enabledExtensions_[static_cast<size_t>(ExtensionType::Device)].count(extensionName) > 0);
+  return enabled(extensionName, ExtensionType::Instance) ||
+         enabled(extensionName, ExtensionType::Device);
+}
+
+bool VulkanFeatures::enabled(const char* extensionName, ExtensionType extensionType) const {
+  return enabledExtensions_[static_cast<size_t>(extensionType)].count(extensionName) > 0;
 }
 
 std::vector<const char*> VulkanFeatures::allEnabled(ExtensionType extensionType) const {

@@ -9,7 +9,15 @@
 
 #include <igl/vulkan/VulkanFeatures.h>
 
+#include <cstring>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Common.h>
+#include <igl/vulkan/HWDevice.h>
+#include <igl/vulkan/VulkanContext.h>
+
+#if IGL_PLATFORM_MACOSX
+#include <igl/vulkan/moltenvk/MoltenVkHelpers.h>
+#endif
 
 namespace igl::tests {
 
@@ -453,5 +461,307 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingSynchronization2) {
   EXPECT_FALSE(result.isOk());
 #endif
 }
+
+#if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
+class VulkanFeatureRequestTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    igl::setDebugBreakEnabled(false);
+#if IGL_PLATFORM_MACOSX && !defined(IGL_USE_STATIC_KOSMICKRISP)
+    vulkan::setupMoltenVKEnvironment();
+#endif
+    context_ = vulkan::HWDevice::createContext(config_, nullptr);
+    ASSERT_NE(context_, nullptr);
+    Result result;
+    devices_ = vulkan::HWDevice::queryDevices(
+        *context_, HWDeviceQueryDesc(HWDeviceType::Unknown), &result);
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_FALSE(devices_.empty());
+    physicalDevice_ =
+        reinterpret_cast<VkPhysicalDevice>(devices_[0].guid); // NOLINT(performance-no-int-to-ptr)
+    available_.enumerate(context_->vf_, physicalDevice_);
+    VkPhysicalDeviceProperties properties{};
+    context_->vf_.vkGetPhysicalDeviceProperties(physicalDevice_, &properties);
+    apiVersion_ = properties.apiVersion;
+  }
+
+  template<typename Feature>
+  Feature query(VkStructureType type) {
+    Feature supported{.sType = type};
+    VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                       .pNext = &supported};
+    context_->vf_.vkGetPhysicalDeviceFeatures2(physicalDevice_, &features);
+    return supported;
+  }
+
+  void create(const vulkan::VulkanFeatures& requested, const char* extension = nullptr) {
+    Result result;
+    device_ = vulkan::HWDevice::create(std::move(context_),
+                                       devices_[0],
+                                       0,
+                                       0,
+                                       extension ? 1 : 0,
+                                       extension ? &extension : nullptr,
+                                       &requested,
+                                       "Feature request test",
+                                       &result);
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_NE(device_, nullptr);
+  }
+
+  template<typename Feature>
+  Feature read(const vulkan::VulkanFeatures& features, VkStructureType type) {
+    Feature selected{.sType = type};
+    if (const void* structure = features.feature(type)) {
+      std::memcpy(&selected, structure, sizeof(Feature));
+    }
+    selected.pNext = nullptr;
+    return selected;
+  }
+
+  size_t count(VkStructureType type) {
+    size_t occurrences = 0;
+    const auto* current = reinterpret_cast<const VkBaseOutStructure*>(
+        &device_->getVulkanContext().features().vkPhysicalDeviceFeatures2);
+    for (; current; current = current->pNext) {
+      occurrences += current->sType == type ? 1 : 0;
+    }
+    return occurrences;
+  }
+
+  const vulkan::VulkanContextConfig config_ = util::device::vulkan::getContextConfig(false);
+  vulkan::VulkanFeatures available_{config_};
+  std::unique_ptr<vulkan::VulkanContext> context_;
+  std::unique_ptr<vulkan::Device> device_;
+  std::vector<HWDeviceDesc> devices_;
+  VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
+  uint32_t apiVersion_ = 0;
+};
+
+TEST_F(VulkanFeatureRequestTest, SubgroupSizeControlEnablesOnlyRequestedSupportedBits) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+  const auto supported = query<VkPhysicalDeviceSubgroupSizeControlFeatures>(type);
+  const bool extensionAvailable = available_.available(
+      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME, vulkan::VulkanFeatures::ExtensionType::Device);
+#if IGL_PLATFORM_LINUX
+  ASSERT_TRUE(supported.subgroupSizeControl);
+#endif
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceSubgroupSizeControlFeatures{.sType = type, .subgroupSizeControl = VK_TRUE},
+      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+      VK_API_VERSION_1_3);
+  ASSERT_NO_FATAL_FAILURE(create(requested, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME));
+  const auto& enabled = device_->getVulkanContext().features();
+  const auto selected = read<VkPhysicalDeviceSubgroupSizeControlFeatures>(enabled, type);
+  EXPECT_EQ(selected.subgroupSizeControl,
+            extensionAvailable || apiVersion_ >= VK_API_VERSION_1_3 ? supported.subgroupSizeControl
+                                                                    : VK_FALSE);
+  EXPECT_EQ(selected.computeFullSubgroups, VK_FALSE);
+  EXPECT_EQ(enabled.enabled(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+                            vulkan::VulkanFeatures::ExtensionType::Device),
+            extensionAvailable);
+}
+
+TEST_F(VulkanFeatureRequestTest, AvailableExtensionMustBeEnabled) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+  const auto supported = query<VkPhysicalDeviceSubgroupSizeControlFeatures>(type);
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceSubgroupSizeControlFeatures{
+          .sType = type, .subgroupSizeControl = supported.subgroupSizeControl},
+      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+  ASSERT_NO_FATAL_FAILURE(create(requested));
+  const auto& enabled = device_->getVulkanContext().features();
+  EXPECT_FALSE(enabled.enabled(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+                               vulkan::VulkanFeatures::ExtensionType::Device));
+  EXPECT_EQ(read<VkPhysicalDeviceSubgroupSizeControlFeatures>(enabled, type).subgroupSizeControl,
+            VK_FALSE);
+}
+
+TEST_F(VulkanFeatureRequestTest, InstanceExtensionsSurviveFeatureRequests) {
+  constexpr auto type = vulkan::VulkanFeatures::ExtensionType::Instance;
+  const vulkan::VulkanFeatures before(context_->features());
+  ASSERT_FALSE(before.allAvailableExtensions(type).empty());
+  bool hasEnabledExtension = false;
+  for (const auto& name : before.allAvailableExtensions(type)) {
+    hasEnabledExtension |= before.enabled(name.c_str(), type);
+  }
+  ASSERT_TRUE(hasEnabledExtension);
+  vulkan::VulkanFeatures requested(config_);
+  ASSERT_TRUE(requested.allAvailableExtensions(type).empty());
+  requested.requestFeature(VkPhysicalDeviceFeatures{.shaderInt64 = VK_TRUE});
+  ASSERT_NO_FATAL_FAILURE(create(requested));
+  const auto& enabled = device_->getVulkanContext().features();
+  EXPECT_EQ(enabled.allAvailableExtensions(type), before.allAvailableExtensions(type));
+  for (const auto& name : before.allAvailableExtensions(type)) {
+    EXPECT_EQ(enabled.enabled(name.c_str(), type), before.enabled(name.c_str(), type)) << name;
+  }
+}
+
+TEST_F(VulkanFeatureRequestTest, CoreVersionEnablesIntegerDotProductWithoutExtension) {
+  constexpr VkStructureType type =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES;
+  const auto supported = query<VkPhysicalDeviceShaderIntegerDotProductFeatures>(type);
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceShaderIntegerDotProductFeatures{.sType = type,
+                                                      .shaderIntegerDotProduct = VK_TRUE},
+      VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME,
+      VK_API_VERSION_1_3);
+  ASSERT_NO_FATAL_FAILURE(create(requested));
+  const auto& enabled = device_->getVulkanContext().features();
+  EXPECT_FALSE(enabled.enabled(VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME,
+                               vulkan::VulkanFeatures::ExtensionType::Device));
+  EXPECT_EQ(enabled.featuresShaderIntegerDotProduct.shaderIntegerDotProduct,
+            apiVersion_ >= VK_API_VERSION_1_3 ? supported.shaderIntegerDotProduct : VK_FALSE);
+  EXPECT_EQ(
+      read<VkPhysicalDeviceShaderIntegerDotProductFeatures>(enabled, type).shaderIntegerDotProduct,
+      enabled.featuresShaderIntegerDotProduct.shaderIntegerDotProduct);
+}
+
+TEST_F(VulkanFeatureRequestTest, MissingExtensionLeavesDeviceCreatedAndBitsOff) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_NV;
+  if (available_.available(VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME,
+                           vulkan::VulkanFeatures::ExtensionType::Device)) {
+    GTEST_SKIP() << "This device supports the extension used for the absent-extension case";
+  }
+  const auto supported = query<VkPhysicalDeviceCooperativeMatrixFeaturesNV>(type);
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceCooperativeMatrixFeaturesNV{.sType = type, .cooperativeMatrix = VK_TRUE},
+      VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME);
+  ASSERT_NO_FATAL_FAILURE(create(requested, VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME));
+  const auto& enabled = device_->getVulkanContext().features();
+  EXPECT_FALSE(enabled.enabled(VK_NV_COOPERATIVE_MATRIX_EXTENSION_NAME,
+                               vulkan::VulkanFeatures::ExtensionType::Device));
+  EXPECT_EQ(read<VkPhysicalDeviceCooperativeMatrixFeaturesNV>(enabled, type).cooperativeMatrix,
+            supported.cooperativeMatrix);
+  EXPECT_EQ(supported.cooperativeMatrix, VK_FALSE);
+}
+
+TEST_F(VulkanFeatureRequestTest, ExistingStorageAndCoreFeaturesRemainUnchanged) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+  const auto supported = query<VkPhysicalDevice16BitStorageFeatures>(type);
+  VkPhysicalDeviceFeatures2 core{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+  context_->vf_.vkGetPhysicalDeviceFeatures2(physicalDevice_, &core);
+#if IGL_PLATFORM_LINUX
+  ASSERT_TRUE(core.features.shaderInt64);
+#endif
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDevice16BitStorageFeatures{.sType = type, .storageBuffer16BitAccess = VK_TRUE},
+      VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
+      VK_API_VERSION_1_1);
+  requested.requestFeature(
+      VkPhysicalDeviceFeatures{.shaderFloat64 = VK_TRUE, .shaderInt64 = VK_TRUE});
+  ASSERT_NO_FATAL_FAILURE(create(requested));
+  const auto& enabled = device_->getVulkanContext().features();
+  const auto selected = read<VkPhysicalDevice16BitStorageFeatures>(enabled, type);
+  EXPECT_EQ(selected.storageBuffer16BitAccess, supported.storageBuffer16BitAccess);
+  EXPECT_EQ(selected.uniformAndStorageBuffer16BitAccess,
+            supported.uniformAndStorageBuffer16BitAccess);
+  EXPECT_EQ(selected.storagePushConstant16, supported.storagePushConstant16);
+  EXPECT_EQ(selected.storageInputOutput16, supported.storageInputOutput16);
+  EXPECT_EQ(count(type), 1);
+  EXPECT_EQ(enabled.vkPhysicalDeviceFeatures2.features.independentBlend,
+            core.features.independentBlend);
+  EXPECT_EQ(enabled.vkPhysicalDeviceFeatures2.features.multiDrawIndirect,
+            core.features.multiDrawIndirect);
+  EXPECT_EQ(enabled.vkPhysicalDeviceFeatures2.features.shaderInt64, core.features.shaderInt64);
+  EXPECT_EQ(enabled.vkPhysicalDeviceFeatures2.features.shaderFloat64, core.features.shaderFloat64);
+  EXPECT_EQ(enabled.vkPhysicalDeviceFeatures2.features.robustBufferAccess, VK_FALSE);
+}
+
+TEST_F(VulkanFeatureRequestTest, CopiesOwnRequestsAndEnabledChain) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+  const auto supported = query<VkPhysicalDeviceSubgroupSizeControlFeatures>(type);
+  vulkan::VulkanFeatures assigned(config_);
+  {
+    VkPhysicalDevice16BitStorageFeatures ignored{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES};
+    vulkan::VulkanFeatures source(config_);
+    source.requestFeature(
+        VkPhysicalDeviceSubgroupSizeControlFeatures{
+            .sType = type, .pNext = &ignored, .subgroupSizeControl = VK_TRUE},
+        VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+        VK_API_VERSION_1_3);
+    assigned = source;
+  }
+  vulkan::VulkanFeatures copied(assigned);
+  assigned = vulkan::VulkanFeatures(config_);
+  ASSERT_NO_FATAL_FAILURE(create(copied));
+  vulkan::VulkanFeatures snapshot(device_->getVulkanContext().features());
+  device_.reset();
+  EXPECT_EQ(read<VkPhysicalDeviceSubgroupSizeControlFeatures>(snapshot, type).subgroupSizeControl,
+            apiVersion_ >= VK_API_VERSION_1_3 ? supported.subgroupSizeControl : VK_FALSE);
+  ASSERT_NO_FATAL_FAILURE(SetUp());
+  ASSERT_NO_FATAL_FAILURE(create(snapshot));
+  const auto selected = read<VkPhysicalDeviceSubgroupSizeControlFeatures>(
+      device_->getVulkanContext().features(), type);
+  EXPECT_EQ(selected.subgroupSizeControl,
+            apiVersion_ >= VK_API_VERSION_1_3 ? supported.subgroupSizeControl : VK_FALSE);
+  EXPECT_EQ(selected.computeFullSubgroups, VK_FALSE);
+}
+
+TEST_F(VulkanFeatureRequestTest, CopiesKeepEnabledAstcHdrWithoutGenericRequest) {
+  constexpr VkStructureType type =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES_EXT;
+  const auto supported = query<VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT>(type);
+  const bool extensionAvailable =
+      available_.available(VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME,
+                           vulkan::VulkanFeatures::ExtensionType::Device);
+  vulkan::VulkanFeatures requested(config_);
+  ASSERT_NO_FATAL_FAILURE(create(requested, VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME));
+  const auto& enabled = device_->getVulkanContext().features();
+  const bool expected = extensionAvailable && (supported.textureCompressionASTC_HDR != 0u);
+  ASSERT_EQ(enabled.feature(type) != nullptr, expected);
+  vulkan::VulkanFeatures snapshot(enabled);
+  device_.reset();
+  EXPECT_EQ(snapshot.feature(type) != nullptr, expected);
+  EXPECT_EQ(read<VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT>(snapshot, type)
+                .textureCompressionASTC_HDR,
+            expected ? VK_TRUE : VK_FALSE);
+}
+
+TEST_F(VulkanFeatureRequestTest, OverlappingRequestsShareOneStructureAndOrSupportedBits) {
+  constexpr VkStructureType type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+  const auto supported = query<VkPhysicalDeviceSubgroupSizeControlFeatures>(type);
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceSubgroupSizeControlFeatures{.sType = type, .subgroupSizeControl = VK_TRUE},
+      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+      VK_API_VERSION_1_3);
+  requested.requestFeature(
+      VkPhysicalDeviceSubgroupSizeControlFeatures{.sType = type, .computeFullSubgroups = VK_TRUE},
+      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+      VK_API_VERSION_1_3);
+  ASSERT_NO_FATAL_FAILURE(create(requested, VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME));
+  const auto& enabled = device_->getVulkanContext().features();
+  const auto selected = read<VkPhysicalDeviceSubgroupSizeControlFeatures>(enabled, type);
+  const bool provided = enabled.enabled(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+                                        vulkan::VulkanFeatures::ExtensionType::Device) ||
+                        apiVersion_ >= VK_API_VERSION_1_3;
+  EXPECT_EQ(selected.subgroupSizeControl, provided ? supported.subgroupSizeControl : VK_FALSE);
+  EXPECT_EQ(selected.computeFullSubgroups, provided ? supported.computeFullSubgroups : VK_FALSE);
+  EXPECT_EQ(count(type), provided ? 1 : 0);
+}
+
+TEST_F(VulkanFeatureRequestTest, AggregateFeatureStructuresAreDropped) {
+  vulkan::VulkanFeatures requested(config_);
+  requested.requestFeature(
+      VkPhysicalDeviceVulkan13Features{.sType =
+                                           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                                       .subgroupSizeControl = VK_TRUE},
+      "",
+      VK_API_VERSION_1_3);
+  ASSERT_NO_FATAL_FAILURE(create(requested));
+  EXPECT_EQ(count(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES), 0);
+  EXPECT_EQ(device_->getVulkanContext()
+                .features()
+                .featuresShaderIntegerDotProduct.shaderIntegerDotProduct,
+            VK_FALSE);
+}
+#endif
 
 } // namespace igl::tests

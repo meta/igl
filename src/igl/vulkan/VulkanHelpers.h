@@ -55,23 +55,10 @@ VkResult ivkCreateSurface(const struct VulkanFunctionTable* vt,
                           void* layer,
                           VkSurfaceKHR* outSurface);
 
-/** @brief Creates a Vulkan device from the given physical device. The physical device features
- * (VkPhysicalDeviceFeatures) conditionally enabled, based on the provided supported physical device
- * features, are `dualSrcBlend`, `multiDrawIndirect`, `drawIndirectFirstInstance`, `depthBiasClamp`,
- * `fillModeNonSolid`, and `shaderInt16`.
- * The validation layers enabled are defined in `kDefaultValidationLayers`
- * If descriptor indexing is enabled, then the following descriptor indexing features
- * (VkPhysicalDeviceDescriptorIndexingFeaturesEXT) are enabled:
- * `shaderSampledImageArrayNonUniformIndexing`, `descriptorBindingUniformBufferUpdateAfterBind`,
- * `descriptorBindingSampledImageUpdateAfterBind`, `descriptorBindingStorageImageUpdateAfterBind`,
- * `descriptorBindingStorageBufferUpdateAfterBind`, `descriptorBindingUpdateUnusedWhilePending`,
- * `descriptorBindingPartiallyBound`, `runtimeDescriptorArray`.
- * If 16-bit shader floats are enabled, then the following shader float 16 features are enabled:
- * VkPhysicalDevice16BitStorageFeatures::storageBuffer16BitAccess
- * VkPhysicalDeviceShaderFloat16Int8Features::shaderFloat16
- * If the `VK_KHR_buffer_device_address` extension is available, then
- * VkPhysicalDeviceBufferDeviceAddressFeaturesKHR::bufferDeviceAddress is enabled If multiview is
- * enabled, then VkPhysicalDeviceMultiviewFeatures::multiview is enabled
+/** @brief Creates a Vulkan device from the given physical device.
+ * Enables the core features in `enabledFeatures->features` and its `pNext` feature chain exactly as
+ * supplied. The caller selects supported features to enable, as
+ * `VulkanFeatures::enableRequestedFeatures()` does.
  */
 VkResult ivkCreateDevice(const struct VulkanFunctionTable* vt,
                          VkPhysicalDevice physicalDevice,
@@ -79,7 +66,7 @@ VkResult ivkCreateDevice(const struct VulkanFunctionTable* vt,
                          const VkDeviceQueueCreateInfo* queueCreateInfos,
                          size_t numDeviceExtensions,
                          const char** deviceExtensions,
-                         const VkPhysicalDeviceFeatures2* supported,
+                         const VkPhysicalDeviceFeatures2* enabledFeatures,
                          VkDevice* outDevice);
 
 VkResult ivkCreateSwapchain(const struct VulkanFunctionTable* vt,
