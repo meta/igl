@@ -35,6 +35,7 @@ public class VulkanView extends SurfaceView
   private Intent mIntent;
   private final SampleLib.DisplayRateWatcher mDisplayRateWatcher;
 
+  @SuppressWarnings("this-escape")
   public VulkanView(
       Context context,
       SampleLib.BackendVersion backendVersion,

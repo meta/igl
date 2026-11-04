@@ -35,6 +35,7 @@ public class SampleView extends GLSurfaceView {
   private Intent mIntent;
   private SampleLib.DisplayRateWatcher mDisplayRateWatcher;
 
+  @SuppressWarnings("this-escape")
   public SampleView(
       Context context,
       SampleLib.BackendVersion backendVersion,
@@ -45,6 +46,7 @@ public class SampleView extends GLSurfaceView {
     init(context, backendVersion, swapchainColorTextureFormat, enableStencilBuffer, intent);
   }
 
+  @SuppressWarnings("this-escape")
   public SampleView(
       Context context,
       SampleLib.BackendVersion backendVersion,
@@ -54,6 +56,7 @@ public class SampleView extends GLSurfaceView {
     init(context, backendVersion, swapchainColorTextureFormat, false, intent);
   }
 
+  @SuppressWarnings("this-escape")
   private void init(
       Context context,
       SampleLib.BackendVersion backendVersion,
@@ -207,6 +210,7 @@ public class SampleView extends GLSurfaceView {
     }
 
     @Override
+    @SuppressWarnings("static")
     public EGLSurface createWindowSurface(
         EGL10 egl10, EGLDisplay eglDisplay, EGLConfig eglConfig, Object nativeWindow) {
       String eglExtensionString = egl10.eglQueryString(eglDisplay, egl10.EGL_EXTENSIONS);
