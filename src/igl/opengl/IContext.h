@@ -636,12 +636,15 @@ class IContext {
                       std::unordered_set<std::string>& supportedExtensions);
 
   bool alwaysCheckError_ = false; // TRUE to check error after each OGL call
-  mutable GLenum lastError_ = GL_NO_ERROR;
-  mutable unsigned int callCounter_ = 0;
+  // Objects created on this context call back into it from whichever thread binds, uploads or
+  // releases them, so a context shared with a loader thread is entered from two threads at once.
+  // The bookkeeping those calls touch is therefore atomic.
+  mutable std::atomic<GLenum> lastError_{GL_NO_ERROR};
+  mutable std::atomic<unsigned int> callCounter_{0};
   std::atomic<unsigned int> drawCallCount_{0};
   std::atomic<unsigned int> shaderCompilationCount_{0};
-  int lockCount_ = 0; // used by DestructionGuard
-  int refCount_ = 0; // used by addRef/releaseRef
+  std::atomic<int> lockCount_{0}; // used by DestructionGuard
+  std::atomic<int> refCount_{0}; // used by addRef/releaseRef
   bool shouldValidateShaders_ = false;
 
   // API Logging

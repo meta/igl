@@ -84,35 +84,35 @@ void logSource(const int count, const char** string, const int* length) {
 
 #define GLCALL(funcName)                                        \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup()); \
-  callCounter_++;                                               \
+  callCounter_.fetch_add(1, std::memory_order_relaxed);         \
   gl##funcName
 
 #define IGLCALL(funcName)                                       \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup()); \
-  callCounter_++;                                               \
+  callCounter_.fetch_add(1, std::memory_order_relaxed);         \
   igl##funcName
 
 #define GLCALL_WITH_RETURN(ret, funcName)                       \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup()); \
-  callCounter_++;                                               \
+  callCounter_.fetch_add(1, std::memory_order_relaxed);         \
   ret = gl##funcName
 
 #define IGLCALL_WITH_RETURN(ret, funcName)                      \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup()); \
-  callCounter_++;                                               \
+  callCounter_.fetch_add(1, std::memory_order_relaxed);         \
   ret = igl##funcName
 
 #define GLCALL_PROC(funcPtr, ...)                               \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup()); \
   if (IGL_DEBUG_VERIFY(funcPtr)) {                              \
-    callCounter_++;                                             \
+    callCounter_.fetch_add(1, std::memory_order_relaxed);       \
     (*funcPtr)(__VA_ARGS__);                                    \
   }
 
 #define GLCALL_PROC_WITH_RETURN(ret, funcPtr, returnOnError, ...) \
   IGL_SOFT_ASSERT(isCurrentContext() || isCurrentSharegroup());   \
   if (IGL_DEBUG_VERIFY(funcPtr)) {                                \
-    callCounter_++;                                               \
+    callCounter_.fetch_add(1, std::memory_order_relaxed);         \
     ret = (*funcPtr)(__VA_ARGS__);                                \
   } else {                                                        \
     ret = returnOnError;                                          \
@@ -810,7 +810,7 @@ IContext::IContext() : deviceFeatureSet_(*this) {
 
 IContext::~IContext() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
-  IGL_SOFT_ASSERT(refCount_ == 0,
+  IGL_SOFT_ASSERT(refCount_.load(std::memory_order_acquire) == 0,
                   "Dangling IContext reference left behind."
                   // @fb-only
   );
@@ -2868,8 +2868,8 @@ void IContext::framebufferTexture2DMultisample(GLenum target,
     multisampleDrawTargetVerified_ = multisampleDrawTargetVerified_ ||
                                      (verifiesTarget && error == GL_NO_ERROR);
     if (alwaysCheckError_) {
-      lastError_ = error;
-      GL_ASSERT_ERROR(lastError_ == GL_NO_ERROR, __FUNCTION__, __LINE__, error);
+      lastError_.store(error, std::memory_order_relaxed);
+      GL_ASSERT_ERROR(error == GL_NO_ERROR, __FUNCTION__, __LINE__, error);
     }
   }
 }
@@ -4712,16 +4712,20 @@ void IContext::vertexAttribDivisor(GLuint index, GLuint divisor) {
 }
 
 Result IContext::getLastError() const {
-  return GL_ERROR_TO_RESULT(lastError_);
+  const GLenum error = lastError_.load(std::memory_order_relaxed);
+  return GL_ERROR_TO_RESULT(error);
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
 GLenum IContext::checkForErrors(IGL_MAYBE_UNUSED const char* callerName,
                                 IGL_MAYBE_UNUSED size_t lineNum) const {
-  lastError_ = getError();
+  // GL error state belongs to the calling thread's current context, so the error is reported from
+  // this call's own read rather than from lastError_, which another thread may have replaced.
+  const GLenum error = getError();
+  lastError_.store(error, std::memory_order_relaxed);
 #if IGL_DEBUG && !IGL_API_LOG
-  static bool gettingMessageLog = false; // Used to avoid recursive entry
-  if (lastError_ != GL_NO_ERROR && !gettingMessageLog &&
+  thread_local bool gettingMessageLog = false; // Used to avoid recursive entry
+  if (error != GL_NO_ERROR && !gettingMessageLog &&
       deviceFeatureSet_.hasInternalFeature(InternalFeatures::DebugMessageCallback)) {
     GLint numMessages = 0;
     getIntegerv(GL_DEBUG_LOGGED_MESSAGES, &numMessages);
@@ -4746,9 +4750,9 @@ GLenum IContext::checkForErrors(IGL_MAYBE_UNUSED const char* callerName,
   }
 #endif //  IGL_DEBUG && !IGL_API_LOG
 
-  GL_ASSERT_ERROR(lastError_ == GL_NO_ERROR, callerName, lineNum, lastError_);
+  GL_ASSERT_ERROR(error == GL_NO_ERROR, callerName, lineNum, error);
 
-  return lastError_;
+  return error;
 }
 
 // This function has no effect in release mode because the current thinking
@@ -4761,7 +4765,7 @@ void IContext::enableAutomaticErrorCheck(bool enable) {
 
 /** Returns current `callCounter_` value. Exposed for testing only. */
 unsigned int IContext::getCallCount() const {
-  return callCounter_;
+  return callCounter_.load(std::memory_order_relaxed);
 }
 
 unsigned int IContext::getCurrentDrawCount() const {
@@ -4773,13 +4777,13 @@ unsigned int IContext::getShaderCompilationCount() const {
 }
 
 void IContext::resetCounters() {
-  callCounter_ = 0;
+  callCounter_.store(0, std::memory_order_relaxed);
 }
 
 bool IContext::addRef() {
   const bool ret = isLikelyValidObject();
   if (ret) {
-    ++refCount_;
+    refCount_.fetch_add(1, std::memory_order_relaxed);
   }
   return ret;
 }
@@ -4787,7 +4791,8 @@ bool IContext::addRef() {
 bool IContext::releaseRef() {
   const bool ret = isLikelyValidObject();
   if (ret) {
-    --refCount_;
+    // Release ordering, so a destructor that observes zero also observes every object's teardown.
+    refCount_.fetch_sub(1, std::memory_order_release);
   }
   return ret;
 }

@@ -9,7 +9,12 @@
 
 #include "../util/TestDevice.h"
 
+#include <array>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
+#include <vector>
 #include <igl/Common.h>
 #include <igl/DeviceFeatures.h>
 #include <igl/Texture.h>
@@ -408,6 +413,149 @@ TEST_F(ContextOGLTest, DeviceDestructionCallsWillDestroy) {
 
   // Original context should still be valid
   ASSERT_NE(context_, nullptr);
+}
+
+/// An object created on one context of a sharegroup calls back into that context from every
+/// thread that uses it, so a context is entered from two threads at once. Verify that calls made
+/// concurrently through one context from two threads, each with a context of the group current,
+/// are all counted, and that its feature set answers the same on both threads.
+TEST_F(ContextOGLTest, ConcurrentCallsFromTwoSharegroupThreads) {
+#if IGL_PLATFORM_WINDOWS && !IGL_ANGLE
+  GTEST_SKIP() << "Context sharing not implemented in opengl::wgl";
+#endif
+  // A fresh device, so its feature caches start empty and both threads fill them.
+  auto freshDevice = util::createTestDevice();
+  ASSERT_NE(freshDevice, nullptr);
+  auto& freshContext = static_cast<opengl::Device&>(*freshDevice).getContext();
+  freshContext.enableAutomaticErrorCheck(false);
+  Result result;
+  auto sharedContext = freshContext.createShareContext(&result);
+  if (!result.isOk() || sharedContext == nullptr) {
+    GTEST_SKIP() << "Context sharing is unavailable: " << result.message;
+  }
+  freshContext.setCurrent();
+
+  constexpr std::array kQueried = {
+      DeviceFeatures::Texture2DArray,
+      DeviceFeatures::Texture3D,
+      DeviceFeatures::UniformBlocks,
+      DeviceFeatures::ReadWriteFramebuffer,
+  };
+  std::array<bool, kQueried.size()> workerAnswers{};
+  std::array<bool, kQueried.size()> renderAnswers{};
+  std::thread featureWorker([&]() {
+    sharedContext->setCurrent();
+    for (size_t i = 0; i < kQueried.size(); ++i) {
+      workerAnswers[i] = freshContext.deviceFeatures().hasFeature(kQueried[i]);
+    }
+    sharedContext->clearCurrentContext();
+  });
+  for (size_t i = 0; i < kQueried.size(); ++i) {
+    renderAnswers[i] = freshContext.deviceFeatures().hasFeature(kQueried[i]);
+  }
+  featureWorker.join();
+  EXPECT_EQ(workerAnswers, renderAnswers);
+
+  constexpr unsigned int kCalls = 20000;
+  const unsigned int callsBefore = freshContext.getCallCount();
+  std::thread countingWorker([&]() {
+    sharedContext->setCurrent();
+    GLint workerValue = 0;
+    for (unsigned int i = 0; i < kCalls; ++i) {
+      freshContext.getIntegerv(GL_MAX_TEXTURE_SIZE, &workerValue);
+    }
+    sharedContext->clearCurrentContext();
+  });
+  GLint value = 0;
+  for (unsigned int i = 0; i < kCalls; ++i) {
+    freshContext.getIntegerv(GL_MAX_TEXTURE_SIZE, &value);
+  }
+  countingWorker.join();
+  EXPECT_EQ(freshContext.getCallCount() - callsBefore, 2 * kCalls);
+  context_->setCurrent();
+}
+
+/// A texture keeps the context that created it, and a thread that has another context of the
+/// group current deletes it through that context. Textures are shared across the group, so the
+/// deletion is valid there; framebuffers, vertex arrays and queries are not, and still have to be
+/// deleted on the context that created them. Verify that textures created through one context on a
+/// worker thread, while the worker keeps creating, are deleted from the main thread through the
+/// same context, with no GL error on either thread.
+TEST_F(ContextOGLTest, TexturesCreatedOnOneContextAreDeletedFromAnotherThread) {
+#if IGL_PLATFORM_WINDOWS && !IGL_ANGLE
+  GTEST_SKIP() << "Context sharing not implemented in opengl::wgl";
+#endif
+  auto freshDevice = util::createTestDevice();
+  ASSERT_NE(freshDevice, nullptr);
+  auto& freshContext = static_cast<opengl::Device&>(*freshDevice).getContext();
+  Result result;
+  std::unique_ptr<opengl::IContext> loaderContext = freshContext.createShareContext(&result);
+  if (!result.isOk() || loaderContext == nullptr) {
+    GTEST_SKIP() << "Context sharing is unavailable: " << result.message;
+  }
+  freshContext.setCurrent();
+
+  constexpr int kTextures = 2000;
+  std::mutex mutex;
+  std::condition_variable created;
+  std::vector<GLuint> pending;
+  bool workerDone = false;
+  GLenum workerError = GL_NO_ERROR;
+  std::thread worker([&]() {
+    loaderContext->setCurrent();
+    const std::array<uint8_t, 4> pixel = {1, 2, 3, 4};
+    for (int i = 0; i < kTextures; ++i) {
+      GLuint texture = 0;
+      loaderContext->genTextures(1, &texture);
+      loaderContext->bindTexture(GL_TEXTURE_2D, texture);
+      loaderContext->texImage2D(
+          GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+      loaderContext->bindTexture(GL_TEXTURE_2D, 0);
+      // Deletion from the other context may follow only once the creation is visible to it.
+      loaderContext->flush();
+      {
+        const std::lock_guard<std::mutex> lock(mutex);
+        pending.push_back(texture);
+      }
+      created.notify_one();
+    }
+    loaderContext->finish();
+    workerError = loaderContext->getError();
+    loaderContext->clearCurrentContext();
+    {
+      const std::lock_guard<std::mutex> lock(mutex);
+      workerDone = true;
+    }
+    created.notify_one();
+  });
+
+  std::vector<GLuint> deleted;
+  deleted.reserve(kTextures);
+  while (true) {
+    std::vector<GLuint> batch;
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      created.wait(lock, [&]() { return workerDone || !pending.empty(); });
+      if (pending.empty() && workerDone) {
+        break;
+      }
+      batch.swap(pending);
+    }
+    for (const GLuint texture : batch) {
+      loaderContext->deleteTextures(1, &texture);
+      deleted.push_back(texture);
+    }
+  }
+  worker.join();
+  freshContext.finish();
+
+  EXPECT_EQ(workerError, static_cast<GLenum>(GL_NO_ERROR));
+  EXPECT_EQ(freshContext.getError(), static_cast<GLenum>(GL_NO_ERROR));
+  ASSERT_EQ(deleted.size(), static_cast<size_t>(kTextures));
+  for (const GLuint texture : deleted) {
+    EXPECT_FALSE(freshContext.isTexture(texture));
+  }
+  context_->setCurrent();
 }
 
 } // namespace igl::tests

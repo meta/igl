@@ -13,6 +13,7 @@
 #include <EGL/eglext.h>
 #include <EGL/eglplatform.h>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 #include <igl/opengl/IContext.h>
@@ -109,9 +110,23 @@ class Context final : public IContext {
   std::optional<bool> eglSupportssRGB_;
 
  private:
+  // Since EGLContext does not expose a Share Group, membership is recorded here: every context in
+  // the group, including the one that owns this record. The record is shared by the contexts of a
+  // group, grows from whichever thread creates or marks a member, and is read by GL calls on every
+  // thread that has a member current, so it is synchronized.
+  class Sharegroup final {
+   public:
+    void add(EGLContext context);
+    [[nodiscard]] bool contains(EGLContext context) const;
+
+   private:
+    mutable std::mutex mutex_;
+    std::vector<EGLContext> contexts_;
+  };
+
   Context(BackendVersion backendVersion,
           EGLContext shareContext,
-          std::shared_ptr<std::vector<EGLContext>> sharegroup,
+          std::shared_ptr<Sharegroup> sharegroup,
           bool offscreen,
           EGLNativeWindowType window,
           std::pair<EGLint, EGLint> dimensions);
@@ -128,9 +143,10 @@ class Context final : public IContext {
   EGLConfig config_ = EGL_NO_CONFIG_KHR;
   FOLLY_POP_WARNING
 
-  // Since EGLContext does not expose a Share Group, this must be set manually via the
-  // constructor and should be a list of all the contexts in the group including this context_
-  std::shared_ptr<std::vector<EGLContext>> sharegroup_;
+  // Assigned before this context is reachable from another thread and never replaced afterwards;
+  // only the record it points to changes. createShareContext() swaps the record its wrapping
+  // constructor made for the existing context's before it returns the new context.
+  std::shared_ptr<Sharegroup> sharegroup_;
 
   static constexpr BackendVersion kDefaultEGLBackendVersion = {
       .flavor = BackendFlavor::OpenGL_ES,

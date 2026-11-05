@@ -188,19 +188,12 @@ EGLConfig chooseConfig(uint8_t contextMajorVersion, EGLDisplay display) {
     return nullptr;
   }
 
-  auto sharegroup = existingContext.sharegroup_;
-  if (!sharegroup) {
-    sharegroup = std::make_shared<std::vector<EGLContext>>();
-    sharegroup->reserve(2);
-    sharegroup->emplace_back(existingContext.context_);
-
-    existingContext.sharegroup_ = sharegroup;
-  }
-  sharegroup->emplace_back(newContext);
+  // Every constructor records the context in a group, so the existing context has one to join.
+  existingContext.sharegroup_->add(newContext);
 
   auto context = std::make_unique<Context>(
       existingContext.display_, newContext, readSurface, drawSurface, existingContext.getConfig());
-  context->sharegroup_ = std::move(sharegroup);
+  context->sharegroup_ = existingContext.sharegroup_;
 
   Result::setOk(outResult);
   return context;
@@ -230,18 +223,17 @@ Context::Context(const Context& sharedContext) :
 
 Context::Context(BackendVersion backendVersion,
                  EGLContext shareContext,
-                 std::shared_ptr<std::vector<EGLContext>> sharegroup,
+                 std::shared_ptr<Sharegroup> sharegroup,
                  bool offscreen,
                  EGLNativeWindowType window,
                  std::pair<EGLint, EGLint> dimensions) :
   backendVersion_(backendVersion) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   IGL_DEBUG_ASSERT(backendVersion.flavor == BackendFlavor::OpenGL_ES);
-  IGL_DEBUG_ASSERT(
-      (shareContext == EGL_NO_CONTEXT && sharegroup == nullptr) ||
-          (shareContext != EGL_NO_CONTEXT && sharegroup != nullptr &&
-           std::find(sharegroup->begin(), sharegroup->end(), shareContext) != sharegroup->end()),
-      "shareContext and sharegroup values must be consistent");
+  IGL_DEBUG_ASSERT((shareContext == EGL_NO_CONTEXT && sharegroup == nullptr) ||
+                       (shareContext != EGL_NO_CONTEXT && sharegroup != nullptr &&
+                        sharegroup->contains(shareContext)),
+                   "shareContext and sharegroup values must be consistent");
   EGLConfig config{nullptr};
   auto contextDisplay =
       newEGLContext(backendVersion.majorVersion, getDefaultEGLDisplay(), shareContext, &config);
@@ -281,9 +273,9 @@ Context::Context(BackendVersion backendVersion,
   if (sharegroup != nullptr) {
     sharegroup_ = std::move(sharegroup);
   } else {
-    sharegroup_ = std::make_shared<std::vector<EGLContext>>();
+    sharegroup_ = std::make_shared<Sharegroup>();
   }
-  sharegroup_->emplace_back(context_);
+  sharegroup_->add(context_);
 
   initialize();
 }
@@ -312,9 +304,10 @@ Context::Context(EGLDisplay display,
   backendVersion_(kDefaultEGLBackendVersion) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   IContext::registerContext(context_, this);
+  // Recorded before initialize(), whose GL calls already query the group.
+  sharegroup_ = std::make_shared<Sharegroup>();
+  sharegroup_->add(context_);
   initialize();
-  sharegroup_ = std::make_shared<std::vector<EGLContext>>();
-  sharegroup_->emplace_back(context_);
 }
 
 void Context::updateSurface(NativeWindowType window) {
@@ -383,12 +376,7 @@ bool Context::isCurrentSharegroup() const {
   if (currentContext == EGL_NO_CONTEXT) {
     return false;
   }
-  if (sharegroup_) {
-    const auto& sharegroup = *sharegroup_;
-    auto it = std::find(sharegroup.begin(), sharegroup.end(), currentContext);
-    return it != sharegroup.end();
-  }
-  return false;
+  return sharegroup_ != nullptr && sharegroup_->contains(currentContext);
 }
 
 void Context::present(std::shared_ptr<ITexture> /*surface*/) const {
@@ -486,15 +474,20 @@ bool Context::markSharegroup(EGLContext sharedContextHandle) {
   if (sharedContextHandle == EGL_NO_CONTEXT) {
     return false;
   }
-  if (!sharegroup_) {
-    sharegroup_ = std::make_shared<std::vector<EGLContext>>();
-    sharegroup_->emplace_back(context_);
-  }
-  if (std::find(sharegroup_->begin(), sharegroup_->end(), sharedContextHandle) ==
-      sharegroup_->end()) {
-    sharegroup_->emplace_back(sharedContextHandle);
-  }
+  sharegroup_->add(sharedContextHandle);
   return true;
+}
+
+void Context::Sharegroup::add(EGLContext context) {
+  const std::lock_guard<std::mutex> lock(mutex_);
+  if (std::find(contexts_.begin(), contexts_.end(), context) == contexts_.end()) {
+    contexts_.emplace_back(context);
+  }
+}
+
+bool Context::Sharegroup::contains(EGLContext context) const {
+  const std::lock_guard<std::mutex> lock(mutex_);
+  return std::find(contexts_.begin(), contexts_.end(), context) != contexts_.end();
 }
 
 #if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)

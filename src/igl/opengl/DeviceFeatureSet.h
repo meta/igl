@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -334,16 +336,20 @@ class DeviceFeatureSet final {
 
   std::unordered_set<std::string> supportedExtensions_;
   std::string extensions_;
+  // The caches fill lazily on first query, and objects created on a shared context query its
+  // feature set from every thread that uses them, so each cache is safe to fill concurrently. A
+  // value bit is published before its initialized bit.
+  mutable std::mutex textureCapabilityCacheMutex_;
   mutable std::unordered_map<TextureFormat, ICapabilities::TextureFormatCapabilities>
       textureCapabilityCache_;
-  mutable uint64_t extensionCache_ = 0;
-  mutable uint64_t extensionCacheInitialized_ = 0;
-  mutable uint64_t featureCache_ = 0;
-  mutable uint64_t featureCacheInitialized_ = 0;
-  mutable uint32_t internalFeatureCache_ = 0;
-  mutable uint32_t internalFeatureCacheInitialized_ = 0;
-  mutable uint64_t textureFeatureCache_ = 0;
-  mutable uint64_t textureFeatureCacheInitialized_ = 0;
+  mutable std::atomic<uint64_t> extensionCache_{0};
+  mutable std::atomic<uint64_t> extensionCacheInitialized_{0};
+  mutable std::atomic<uint64_t> featureCache_{0};
+  mutable std::atomic<uint64_t> featureCacheInitialized_{0};
+  mutable std::atomic<uint32_t> internalFeatureCache_{0};
+  mutable std::atomic<uint32_t> internalFeatureCacheInitialized_{0};
+  mutable std::atomic<uint64_t> textureFeatureCache_{0};
+  mutable std::atomic<uint64_t> textureFeatureCacheInitialized_{0};
   IContext& glContext_;
   GLVersion version_ = GLVersion::NotAvailable;
 };

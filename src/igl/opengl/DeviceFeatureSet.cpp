@@ -205,6 +205,30 @@ std::optional<GpuTimerTier> classifyPowerVrTimerTier(const char* renderer, const
   }
   return GpuTimerTier::Disabled;
 }
+
+// One bit of a lazily filled cache. Threads that race on the same bit compute the same answer, so
+// the race is benign: storeCachedBit() publishes the value bit before the initialized bit, which
+// loadCachedBit() acquires before reading the value.
+template<typename T>
+bool loadCachedBit(const std::atomic<T>& cache,
+                   const std::atomic<T>& initialized,
+                   T bit,
+                   bool& value) {
+  if ((initialized.load(std::memory_order_acquire) & bit) == 0) {
+    return false;
+  }
+  value = (cache.load(std::memory_order_relaxed) & bit) != 0;
+  return true;
+}
+
+template<typename T>
+bool storeCachedBit(std::atomic<T>& cache, std::atomic<T>& initialized, T bit, bool value) {
+  if (value) {
+    cache.fetch_or(bit, std::memory_order_relaxed);
+  }
+  initialized.fetch_or(bit, std::memory_order_release);
+  return value;
+}
 } // namespace
 
 std::optional<GpuTimerTier> parseGpuTimerTierOverride(const char* IGL_NULLABLE value) {
@@ -1430,14 +1454,12 @@ bool DeviceFeatureSet::hasExtension(Extensions extension) const {
   const uint64_t extensionIndex = static_cast<uint64_t>(extension);
   IGL_DEBUG_ASSERT(extensionIndex < 64);
   const uint64_t extensionBit = 1ULL << extensionIndex;
-  if ((extensionCacheInitialized_ & extensionBit) == 0) {
-    if (isExtensionSupported(extension)) {
-      extensionCache_ |= extensionBit;
-    }
-    extensionCacheInitialized_ |= extensionBit;
+  bool supported = false;
+  if (loadCachedBit(extensionCache_, extensionCacheInitialized_, extensionBit, supported)) {
+    return supported;
   }
-
-  return (extensionCache_ & extensionBit) != 0;
+  return storeCachedBit(
+      extensionCache_, extensionCacheInitialized_, extensionBit, isExtensionSupported(extension));
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
@@ -1445,28 +1467,27 @@ bool DeviceFeatureSet::hasFeature(DeviceFeatures feature) const {
   const uint64_t featureIndex = static_cast<uint64_t>(feature);
   IGL_DEBUG_ASSERT(featureIndex < 64);
   const uint64_t featureBit = 1ULL << featureIndex;
-  if ((featureCacheInitialized_ & featureBit) == 0) {
-    if (isFeatureSupported(feature)) {
-      featureCache_ |= featureBit;
-    }
-    featureCacheInitialized_ |= featureBit;
+  bool supported = false;
+  if (loadCachedBit(featureCache_, featureCacheInitialized_, featureBit, supported)) {
+    return supported;
   }
-
-  return (featureCache_ & featureBit) != 0;
+  return storeCachedBit(
+      featureCache_, featureCacheInitialized_, featureBit, isFeatureSupported(feature));
 }
 
 bool DeviceFeatureSet::hasInternalFeature(InternalFeatures feature) const {
   const uint32_t featureIndex = static_cast<uint32_t>(feature);
   IGL_DEBUG_ASSERT(featureIndex < 32);
   const uint32_t featureBit = 1u << featureIndex;
-  if ((internalFeatureCacheInitialized_ & featureBit) == 0) {
-    if (isInternalFeatureSupported(feature)) {
-      internalFeatureCache_ |= featureBit;
-    }
-    internalFeatureCacheInitialized_ |= featureBit;
+  bool supported = false;
+  if (loadCachedBit(
+          internalFeatureCache_, internalFeatureCacheInitialized_, featureBit, supported)) {
+    return supported;
   }
-
-  return (internalFeatureCache_ & featureBit) != 0;
+  return storeCachedBit(internalFeatureCache_,
+                        internalFeatureCacheInitialized_,
+                        featureBit,
+                        isInternalFeatureSupported(feature));
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
@@ -1474,14 +1495,14 @@ bool DeviceFeatureSet::hasTextureFeature(TextureFeatures feature) const {
   const uint64_t featureIndex = static_cast<uint64_t>(feature);
   IGL_DEBUG_ASSERT(featureIndex < 64);
   const uint64_t featureBit = 1ULL << featureIndex;
-  if ((textureFeatureCacheInitialized_ & featureBit) == 0) {
-    if (isTextureFeatureSupported(feature)) {
-      textureFeatureCache_ |= featureBit;
-    }
-    textureFeatureCacheInitialized_ |= featureBit;
+  bool supported = false;
+  if (loadCachedBit(textureFeatureCache_, textureFeatureCacheInitialized_, featureBit, supported)) {
+    return supported;
   }
-
-  return (textureFeatureCache_ & featureBit) != 0;
+  return storeCachedBit(textureFeatureCache_,
+                        textureFeatureCacheInitialized_,
+                        featureBit,
+                        isTextureFeatureSupported(feature));
 }
 
 bool DeviceFeatureSet::hasRequirement(DeviceRequirement requirement) const {
@@ -2424,9 +2445,14 @@ ICapabilities::TextureFormatCapabilities DeviceFeatureSet::getTextureFormatCapab
       !hasTextureFeature(TextureFeatures::Depth32FStencil8)) {
     format = TextureFormat::S8_UInt_Z24_UNorm;
   }
-  const auto it = textureCapabilityCache_.find(format);
-  if (it != textureCapabilityCache_.end()) {
-    return it->second;
+  {
+    // Held only around the lookup and the insertion below: computing capabilities queries other
+    // features, which must not run under this lock.
+    const std::lock_guard<std::mutex> lock(textureCapabilityCacheMutex_);
+    const auto it = textureCapabilityCache_.find(format);
+    if (it != textureCapabilityCache_.end()) {
+      return it->second;
+    }
   }
 
   const auto unsupported = ICapabilities::TextureFormatCapabilityBits::Unsupported;
@@ -2562,10 +2588,11 @@ ICapabilities::TextureFormatCapabilities DeviceFeatureSet::getTextureFormatCapab
   // @fb-only
   // @fb-only
   default:
-    // We are relying on the fact that TextureFormatCapabilities::Unsupported is 0
-    return textureCapabilityCache_[format];
+    // Cached as unsupported, like every format no case above handles.
+    break;
   };
 
+  const std::lock_guard<std::mutex> lock(textureCapabilityCacheMutex_);
   textureCapabilityCache_[format] = capabilities;
   return capabilities;
 }
