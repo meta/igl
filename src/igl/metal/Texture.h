@@ -95,6 +95,11 @@ class Texture final : public ITexture {
                         size_t bytesPerRow,
                         const uint32_t* IGL_NULLABLE mipLevelBytes) const final;
 
+  [[nodiscard]] Result uploadViaStagingBuffer(TextureType type,
+                                              const TextureRangeDesc& range,
+                                              const void* IGL_NULLABLE data,
+                                              size_t bytesPerRow) const;
+
   void generateMipmap(id<MTLCommandBuffer> cmdBuffer) const;
 
   // Given bytes per row of an input texture, return bytesPerRow value

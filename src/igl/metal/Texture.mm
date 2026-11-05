@@ -8,6 +8,7 @@
 #include <igl/metal/Texture.h>
 
 #include <utility>
+#include <igl/IGLSafeC.h>
 #include <igl/Macros.h>
 #include <igl/metal/CommandBuffer.h>
 #include <igl/metal/CommandQueue.h>
@@ -88,43 +89,49 @@ Result Texture::uploadInternal(TextureType type,
 
   const auto initialSlice = getMetalSlice(type, range.face, range.layer);
   const auto numSlices = getMetalSlice(type, range.numFaces, range.numLayers);
-  for (auto mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels; ++mipLevel) {
-    const auto mipRange = range.atMipLevel(mipLevel);
-    for (auto slice = initialSlice; slice < initialSlice + numSlices; ++slice) {
-      const auto sliceRange = atMetalSlice(type, mipRange, slice);
-      const auto* sliceData = getSubRangeStart(data, range, sliceRange, bytesPerRow);
-      const auto region = MTLRegionMake3D(sliceRange.x,
-                                          sliceRange.y,
-                                          sliceRange.z,
-                                          sliceRange.width,
-                                          sliceRange.height,
-                                          sliceRange.depth);
-      switch (type) {
-      case TextureType::Cube:
-      case TextureType::TwoD:
-      case TextureType::TwoDArray: {
-        [get() replaceRegion:region
-                 mipmapLevel:sliceRange.mipLevel
-                       slice:getMetalSlice(type, sliceRange.face, sliceRange.layer)
-                   withBytes:sliceData
-                 bytesPerRow:toMetalBytesPerRow(rangeBytesPerRow)
-               bytesPerImage:0];
-        break;
-      }
-      case TextureType::ThreeD: {
-        [get() replaceRegion:region
-                 mipmapLevel:sliceRange.mipLevel
-                       slice:0 /* 3D array textures not supported */
-                   withBytes:sliceData
-                 bytesPerRow:toMetalBytesPerRow(rangeBytesPerRow)
-               bytesPerImage:toMetalBytesPerRow(rangeBytesPerRow * sliceRange.height)];
-        break;
-      }
-      case TextureType::ExternalImage:
-      case TextureType::Invalid:
-      default:
-        IGL_DEBUG_ABORT("Unknown texture type");
-        break;
+
+  if (get().storageMode == MTLStorageModePrivate) {
+    return uploadViaStagingBuffer(type, range, data, bytesPerRow);
+  } else {
+    for (auto mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels;
+         ++mipLevel) {
+      const auto mipRange = range.atMipLevel(mipLevel);
+      for (auto slice = initialSlice; slice < initialSlice + numSlices; ++slice) {
+        const auto sliceRange = atMetalSlice(type, mipRange, slice);
+        const auto* sliceData = getSubRangeStart(data, range, sliceRange, bytesPerRow);
+        const auto region = MTLRegionMake3D(sliceRange.x,
+                                            sliceRange.y,
+                                            sliceRange.z,
+                                            sliceRange.width,
+                                            sliceRange.height,
+                                            sliceRange.depth);
+        switch (type) {
+        case TextureType::Cube:
+        case TextureType::TwoD:
+        case TextureType::TwoDArray: {
+          [get() replaceRegion:region
+                   mipmapLevel:sliceRange.mipLevel
+                         slice:getMetalSlice(type, sliceRange.face, sliceRange.layer)
+                     withBytes:sliceData
+                   bytesPerRow:toMetalBytesPerRow(rangeBytesPerRow)
+                 bytesPerImage:0];
+          break;
+        }
+        case TextureType::ThreeD: {
+          [get() replaceRegion:region
+                   mipmapLevel:sliceRange.mipLevel
+                         slice:0 /* 3D array textures not supported */
+                     withBytes:sliceData
+                   bytesPerRow:toMetalBytesPerRow(rangeBytesPerRow)
+                 bytesPerImage:toMetalBytesPerRow(rangeBytesPerRow * sliceRange.height)];
+          break;
+        }
+        case TextureType::ExternalImage:
+        case TextureType::Invalid:
+        default:
+          IGL_DEBUG_ABORT("Unknown texture type");
+          break;
+        }
       }
     }
   }
@@ -200,6 +207,180 @@ Result Texture::getBytes(const TextureRangeDesc& range, void* outData, size_t by
     bgrToRgb(static_cast<unsigned char*>(outData), range.width, range.height, bytesPerPixel);
   }
   return Result(Result::Code::Ok);
+}
+
+namespace {
+
+/// @brief Blit options that copyFromBuffer needs for the given texture format.
+///
+/// PVRTC blocks are stored row-major in a buffer, which the blit has to be told explicitly.
+MTLBlitOption getBlitOptions(TextureFormat format) noexcept {
+  const bool isPVRTC =
+      format == TextureFormat::RGBA_PVRTC_2BPPV1 || format == TextureFormat::RGB_PVRTC_2BPPV1 ||
+      format == TextureFormat::RGBA_PVRTC_4BPPV1 || format == TextureFormat::RGB_PVRTC_4BPPV1;
+  return isPVRTC ? MTLBlitOptionRowLinearPVRTC : MTLBlitOptionNone;
+}
+} // namespace
+
+/// Uploads private texture data synchronously through a shared staging buffer.
+Result Texture::uploadViaStagingBuffer(TextureType type,
+                                       const TextureRangeDesc& range,
+                                       const void* IGL_NULLABLE data,
+                                       size_t bytesPerRow) const {
+  IGL_PROFILER_FUNCTION();
+  if (!data) {
+    return Result{Result::Code::ArgumentNull, "Need a valid input buffer"};
+  }
+  const TextureFormatProperties& properties = getProperties();
+  const bool autoGenerate =
+      mipmapGeneration_ == TextureDesc::TextureMipmapGeneration::AutoGenerateOnUpload;
+  if (autoGenerate && range.mipLevel != 0) {
+    return Result{Result::Code::InvalidOperation,
+                  "AutoGenerateOnUpload requires mipLevel to be uploaded to be 0"};
+  }
+  const bool packed422 = getFormat() == TextureFormat::R4G2B2_UNorm_Apple ||
+                         getFormat() == TextureFormat::R4G2B2_UNorm_Rev_Apple;
+  if (properties.isCompressed() || packed422) {
+    const Dimensions dimensions = getDimensions();
+    const uint32_t blockWidth = packed422 ? 2u : properties.blockWidth;
+    for (uint32_t level = range.mipLevel; level < range.mipLevel + range.numMipLevels; ++level) {
+      const TextureRangeDesc mipRange = range.atMipLevel(level);
+      const uint32_t mipWidth = std::max(dimensions.width >> level, 1u);
+      const uint32_t mipHeight = std::max(dimensions.height >> level, 1u);
+      const uint32_t mipDepth = std::max(dimensions.depth >> level, 1u);
+      if (mipRange.x % blockWidth != 0 || mipRange.y % properties.blockHeight != 0 ||
+          mipRange.z % properties.blockDepth != 0 ||
+          (mipRange.width % blockWidth != 0 && mipRange.x + mipRange.width != mipWidth) ||
+          (mipRange.height % properties.blockHeight != 0 &&
+           mipRange.y + mipRange.height != mipHeight) ||
+          (mipRange.depth % properties.blockDepth != 0 &&
+           mipRange.z + mipRange.depth != mipDepth)) {
+        return Result{Result::Code::ArgumentInvalid, "Upload region must align to texture blocks"};
+      }
+    }
+  }
+  const size_t stagingLength = properties.getBytesPerRange(range);
+  if (getFormat() == TextureFormat::Invalid || stagingLength == 0) {
+    return Result{Result::Code::Unsupported, "Texture format does not support buffer uploads"};
+  }
+
+  @autoreleasepool {
+    const id<MTLTexture> destination = get();
+    if (!destination || destination.framebufferOnly || destination.sampleCount != 1) {
+      return Result{Result::Code::InvalidOperation, "Texture does not support blit uploads"};
+    }
+    const bool generateMipmaps = autoGenerate && destination.mipmapLevelCount > 1;
+    if (generateMipmaps && (capabilities_.getTextureFormatCapabilities(getFormat()) &
+                            ICapabilities::TextureFormatCapabilityBits::SampledFiltered) == 0) {
+      return Result{Result::Code::Unsupported, "Texture format does not support mipmap generation"};
+    }
+    const auto* device = static_cast<const Device*>(&capabilities_);
+    if (@available(macOS 10.14, iOS 12.0, *)) {
+      if (stagingLength > device->get().maxBufferLength) {
+        return Result{Result::Code::ArgumentOutOfRange,
+                      "Texture upload exceeds maximum buffer size"};
+      }
+    }
+    id<MTLBuffer> stagingBuffer = [device->get() newBufferWithLength:stagingLength
+                                                             options:MTLResourceStorageModeShared];
+    stagingBuffer.label = @"Texture upload staging buffer";
+    if (!stagingBuffer || !stagingBuffer.contents) {
+      return Result{Result::Code::RuntimeError, "Failed to allocate texture staging buffer"};
+    }
+    auto* const stagingBase = static_cast<uint8_t*>(stagingBuffer.contents);
+
+    std::shared_ptr<ICommandQueue> cmdQueue =
+        const_cast<Device*>(device)->getMostRecentCommandQueue();
+    if (!cmdQueue) {
+      Result result;
+      cmdQueue = const_cast<Device*>(device)->createCommandQueue({}, &result);
+      if (!result.isOk()) {
+        return result;
+      }
+    }
+    if (!cmdQueue) {
+      return Result{Result::Code::RuntimeError, "Failed to create texture upload command queue"};
+    }
+    const id<MTLCommandBuffer> mtlCmdBuffer =
+        [static_cast<CommandQueue&>(*cmdQueue).get() commandBuffer];
+    if (!mtlCmdBuffer) {
+      return Result{Result::Code::RuntimeError, "Failed to create texture upload command buffer"};
+    }
+    const id<MTLBlitCommandEncoder> encoder = [mtlCmdBuffer blitCommandEncoder];
+    if (!encoder) {
+      return Result{Result::Code::RuntimeError, "Failed to create texture upload blit encoder"};
+    }
+
+    const MTLBlitOption blitOptions = getBlitOptions(getFormat());
+    size_t stagingOffset = 0;
+    const auto* const src = static_cast<const uint8_t*>(data);
+    size_t srcOffset = 0;
+    for (uint32_t mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels;
+         ++mipLevel) {
+      const TextureRangeDesc mipRange = range.atMipLevel(mipLevel);
+      for (uint32_t layer = range.layer; layer < range.layer + range.numLayers; ++layer) {
+        for (uint32_t face = range.face; face < range.face + range.numFaces; ++face) {
+          const TextureRangeDesc sliceRange = mipRange.atLayer(layer).atFace(face);
+          const uint32_t stagingBytesPerRow = properties.getBytesPerRow(sliceRange);
+          const size_t tileSize = properties.getBytesPerLayer(sliceRange);
+          const size_t srcBytesPerRow = bytesPerRow == 0 ? stagingBytesPerRow : bytesPerRow;
+          if (stagingBytesPerRow == 0 || srcBytesPerRow < stagingBytesPerRow ||
+              stagingOffset > stagingLength || tileSize > stagingLength - stagingOffset) {
+            [encoder endEncoding];
+            return Result{Result::Code::ArgumentOutOfRange, "Invalid texture staging layout"};
+          }
+          const TextureRangeDesc imageRange =
+              TextureRangeDesc::new2D(0, 0, sliceRange.width, sliceRange.height);
+          const size_t stagingBytesPerImage = properties.getBytesPerLayer(imageRange);
+          const size_t rowsPerImage = stagingBytesPerImage / stagingBytesPerRow;
+          const size_t numImages = tileSize / stagingBytesPerImage;
+          const size_t srcBytesPerImage = rowsPerImage * srcBytesPerRow;
+          for (size_t image = 0; image < numImages; ++image) {
+            const size_t stagingImageOffset = stagingOffset + image * stagingBytesPerImage;
+            const size_t srcImageOffset = srcOffset + image * srcBytesPerImage;
+            for (size_t row = 0; row < rowsPerImage; ++row) {
+              const size_t rowOffset = stagingImageOffset + row * stagingBytesPerRow;
+              if (try_checked_memcpy(stagingBase + rowOffset,
+                                     stagingLength - rowOffset,
+                                     src + srcImageOffset + row * srcBytesPerRow,
+                                     stagingBytesPerRow) != 0) {
+                [encoder endEncoding];
+                return Result{Result::Code::ArgumentOutOfRange,
+                              "Texture staging copy exceeds buffer"};
+              }
+            }
+          }
+          srcOffset += numImages * srcBytesPerImage;
+
+          const size_t sourceBytesPerImage = type == TextureType::ThreeD ? stagingBytesPerImage : 0;
+          [encoder copyFromBuffer:stagingBuffer
+                     sourceOffset:stagingOffset
+                sourceBytesPerRow:stagingBytesPerRow
+              sourceBytesPerImage:sourceBytesPerImage
+                       sourceSize:MTLSizeMake(sliceRange.width, sliceRange.height, sliceRange.depth)
+                        toTexture:destination
+                 destinationSlice:getMetalSlice(type, face, layer)
+                 destinationLevel:mipLevel
+                destinationOrigin:MTLOriginMake(sliceRange.x, sliceRange.y, sliceRange.z)
+                          options:blitOptions];
+          stagingOffset += tileSize;
+        }
+      }
+    }
+    if (generateMipmaps) {
+      [encoder generateMipmapsForTexture:destination];
+    }
+    [encoder endEncoding];
+    [mtlCmdBuffer commit];
+    [mtlCmdBuffer waitUntilCompleted];
+    if (mtlCmdBuffer.status != MTLCommandBufferStatusCompleted) {
+      return Result{Result::Code::RuntimeError, "Texture upload command buffer failed"};
+    }
+    if (autoGenerate) {
+      mipmapsAreAvailableAndUploaded_ = true;
+    }
+    return Result{};
+  }
 }
 
 size_t Texture::toMetalBytesPerRow(size_t bytesPerRow) const {
