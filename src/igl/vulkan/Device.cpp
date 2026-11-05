@@ -1179,4 +1179,8 @@ void Device::setCurrentThreadInternal() {
   ctx_->setCurrentContextThread();
 }
 
+bool Device::isDeviceLostInternal() const noexcept {
+  return ctx_->isDeviceLost();
+}
+
 } // namespace igl::vulkan

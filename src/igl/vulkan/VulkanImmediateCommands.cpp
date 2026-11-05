@@ -95,10 +95,8 @@ void VulkanImmediateCommands::purge() {
       VK_ASSERT(vf_.vkResetFences(device_, 1, &buf.fence.vkFence_));
       buf.cmdBuf = VK_NULL_HANDLE;
       numAvailableCommandBuffers_++;
-    } else {
-      if (result != VK_TIMEOUT) {
-        VK_ASSERT(result);
-      }
+    } else if (result != VK_TIMEOUT && !checkDeviceLost(result)) {
+      VK_ASSERT(result);
     }
   }
 }
@@ -191,6 +189,7 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
   }
 
   if (fenceResult != VK_SUCCESS) {
+    checkDeviceLost(fenceResult);
     IGL_LOG_ERROR_ONCE(
         "VulkanImmediateCommands::wait - Waiting for command buffer fence failed with error %i",
         static_cast<int>(fenceResult));
@@ -216,7 +215,10 @@ void VulkanImmediateCommands::waitAll() {
   }
 
   if (numFences) {
-    VK_ASSERT(vf_.vkWaitForFences(device_, numFences, fences, VK_TRUE, UINT64_MAX));
+    const VkResult result = vf_.vkWaitForFences(device_, numFences, fences, VK_TRUE, UINT64_MAX);
+    if (!checkDeviceLost(result)) {
+      VK_ASSERT(result);
+    }
   }
 
   purge();
@@ -254,7 +256,19 @@ bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
     return true;
   }
 
-  return vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0) == VK_SUCCESS;
+  const VkResult result = vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0);
+  checkDeviceLost(result);
+  return result == VK_SUCCESS;
+}
+
+bool VulkanImmediateCommands::checkDeviceLost(VkResult result) const noexcept {
+  if (result != VK_ERROR_DEVICE_LOST) {
+    return false;
+  }
+  if (!deviceLost_.exchange(true)) {
+    IGL_LOG_ERROR("VulkanImmediateCommands: the Vulkan device was lost (%s)\n", debugName_.c_str());
+  }
+  return true;
 }
 
 VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
@@ -324,7 +338,10 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkQueueSubmit2KHR()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
-    VK_ASSERT(vf_.vkQueueSubmit2KHR(queue_, 1u, &si, wrapper.fence.vkFence_));
+    const VkResult result = vf_.vkQueueSubmit2KHR(queue_, 1u, &si, wrapper.fence.vkFence_);
+    if (!checkDeviceLost(result)) {
+      VK_ASSERT(result);
+    }
     IGL_PROFILER_ZONE_END();
   } else {
     // @lint-ignore CLANGTIDY
@@ -382,7 +399,10 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkQueueSubmit()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
-    VK_ASSERT(vf_.vkQueueSubmit(queue_, 1u, &si, vkFence));
+    const VkResult result = vf_.vkQueueSubmit(queue_, 1u, &si, vkFence);
+    if (!checkDeviceLost(result)) {
+      VK_ASSERT(result);
+    }
     IGL_PROFILER_ZONE_END();
   }
 

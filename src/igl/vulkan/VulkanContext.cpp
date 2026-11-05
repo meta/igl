@@ -3365,4 +3365,18 @@ void VulkanContext::setCurrentContextThread() {
   pimpl_->contextThread = std::this_thread::get_id();
 }
 
+bool VulkanContext::isDeviceLost() const noexcept {
+  if (deviceLost_.load(std::memory_order_relaxed)) {
+    return true;
+  }
+  const bool lost =
+      (immediate_ && immediate_->isDeviceLost()) ||
+      (stagingDevice_ && stagingDevice_->immediate && stagingDevice_->immediate->isDeviceLost());
+  if (lost) {
+    // Device loss is permanent, so later calls can skip the queue checks.
+    deviceLost_.store(true, std::memory_order_relaxed);
+  }
+  return lost;
+}
+
 } // namespace igl::vulkan

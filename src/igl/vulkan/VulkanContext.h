@@ -314,6 +314,10 @@ class VulkanContext final {
   void ensureCurrentContextThread() const;
   void setCurrentContextThread();
 
+  /// @brief Returns true once a command submission or fence wait on one of this context's command
+  /// queues returned VK_ERROR_DEVICE_LOST. Device loss is permanent. Safe to call from any thread.
+  [[nodiscard]] bool isDeviceLost() const noexcept;
+
 #if defined(IGL_WITH_TRACY_GPU)
   TracyVkCtx tracyCtx_ = nullptr;
   VkCommandPool profilingCommandPool_ = VK_NULL_HANDLE;
@@ -455,6 +459,10 @@ class VulkanContext final {
 
   mutable std::atomic<size_t> drawCallCount_{0};
   mutable std::atomic<size_t> shaderCompilationCount_{0};
+
+  // Latched by isDeviceLost() once one of the command queues (VulkanImmediateCommands) reports a
+  // loss.
+  mutable std::atomic<bool> deviceLost_{false};
 
   // stores an index into renderPasses_
   mutable std::

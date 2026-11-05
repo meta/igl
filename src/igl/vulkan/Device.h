@@ -119,6 +119,8 @@ class Device final : public IDevice {
 
   void setCurrentThread() override;
 
+  [[nodiscard]] bool isDeviceLost() const noexcept override;
+
   VulkanContext& getVulkanContext() {
     return *ctx_;
   }
@@ -213,6 +215,8 @@ class Device final : public IDevice {
   [[nodiscard]] size_t getShaderCompilationCountInternal() const;
 
   void setCurrentThreadInternal();
+
+  [[nodiscard]] bool isDeviceLostInternal() const noexcept;
 
   std::unique_ptr<VulkanContext> ctx_;
 
@@ -369,6 +373,10 @@ inline bool Device::getFeatureLimits(DeviceFeatureLimits featureLimits, size_t& 
 
 inline void Device::setCurrentThread() {
   setCurrentThreadInternal();
+}
+
+[[nodiscard]] inline bool Device::isDeviceLost() const noexcept {
+  return isDeviceLostInternal();
 }
 
 } // namespace igl::vulkan

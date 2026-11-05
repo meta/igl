@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <vector>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/VulkanFence.h>
@@ -202,6 +203,13 @@ class VulkanImmediateCommands final {
   /// function DOES NOT retrieve the FD from the Vulkan implementation
   [[nodiscard]] int cachedFDFromSubmitHandle(SubmitHandle handle) const noexcept;
 
+  /// @brief Returns true once a Vulkan call made by this object has returned
+  /// VK_ERROR_DEVICE_LOST. Device loss is permanent, so it never becomes false again. Safe to call
+  /// from any thread.
+  [[nodiscard]] bool isDeviceLost() const noexcept {
+    return deviceLost_.load(std::memory_order_relaxed);
+  }
+
  private:
   friend class CommandQueue;
   friend class igl::tests::VulkanImmediateCommandsTest;
@@ -215,6 +223,9 @@ class VulkanImmediateCommands final {
   /// has a submit id greater than the submit id associated with the same command buffer stored
   /// internally in `VulkanImmediateCommands`. A SubmitHandle handle is also recycled if it's empty
   [[nodiscard]] bool isRecycled(SubmitHandle handle) const;
+
+  /// @brief Returns true if `result` is VK_ERROR_DEVICE_LOST, after recording it in `deviceLost_`
+  bool checkDeviceLost(VkResult result) const noexcept;
 
  private:
   const VulkanFunctionTable& vf_;
@@ -245,6 +256,10 @@ class VulkanImmediateCommands final {
   bool useTimelineSemaphore_ = false;
   bool useTimelineSemaphoreAndSynchronization2_ = false;
   bool chainSubmitsWithSemaphores_ = true;
+
+  /// @brief Set once a Vulkan call returned VK_ERROR_DEVICE_LOST. Updated from const methods
+  /// (`isReady()`), and read from any thread by `isDeviceLost()`
+  mutable std::atomic<bool> deviceLost_{false};
 };
 
 } // namespace igl::vulkan

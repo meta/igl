@@ -116,6 +116,31 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     return VK_SUCCESS;
   }
 
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  loseDeviceOnQueueSubmit([[maybe_unused]] VkQueue queue,
+                          [[maybe_unused]] uint32_t count,
+                          [[maybe_unused]] const VkSubmitInfo* submits,
+                          [[maybe_unused]] VkFence fence) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  loseDeviceOnQueueSubmit2([[maybe_unused]] VkQueue queue,
+                           [[maybe_unused]] uint32_t count,
+                           [[maybe_unused]] const VkSubmitInfo2* submits,
+                           [[maybe_unused]] VkFence fence) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  loseDeviceOnFenceWait([[maybe_unused]] VkDevice device,
+                        [[maybe_unused]] uint32_t count,
+                        [[maybe_unused]] const VkFence* fences,
+                        [[maybe_unused]] VkBool32 waitAll,
+                        [[maybe_unused]] uint64_t timeout) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+
   [[nodiscard]] VulkanFunctionTable captureSubmits() {
     VulkanFunctionTable vf = getVulkanContext().vf_;
     submitPayload = {};
@@ -670,6 +695,46 @@ TEST_F(VulkanImmediateCommandsTest, StoreFDAndCachedFDRoundTrip) {
   EXPECT_EQ(ctx.immediate_->cachedFDFromSubmitHandle(handle), kTestFD);
 
   ctx.immediate_->wait(handle);
+}
+
+TEST_F(VulkanImmediateCommandsTest, DeviceLostOnSubmitIsReported) {
+  auto& ctx = getVulkanContext();
+  VulkanFunctionTable vf = ctx.vf_;
+  vf.vkQueueSubmit = loseDeviceOnQueueSubmit;
+  vf.vkQueueSubmit2KHR = loseDeviceOnQueueSubmit2;
+  // Nothing reaches the queue, so the fences complete through the test function table.
+  vf.vkWaitForFences = completeFenceWait;
+
+  for (const bool synchronization2 : {false, true}) {
+    vulkan::VulkanImmediateCommands commands(vf,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             synchronization2,
+                                             synchronization2,
+                                             "Device lost on submit test");
+    EXPECT_FALSE(commands.isDeviceLost());
+    commands.submit(commands.acquire());
+    EXPECT_TRUE(commands.isDeviceLost()) << "synchronization2: " << synchronization2;
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, DeviceLostOnFenceWaitIsReported) {
+  auto& ctx = getVulkanContext();
+  VulkanFunctionTable vf = captureSubmits();
+  vf.vkWaitForFences = loseDeviceOnFenceWait;
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Device lost on fence wait test");
+
+  const auto handle = commands.submit(commands.acquire());
+  EXPECT_FALSE(commands.isDeviceLost());
+  EXPECT_EQ(commands.wait(handle), VK_ERROR_DEVICE_LOST);
+  EXPECT_TRUE(commands.isDeviceLost());
 }
 
 } // namespace igl::tests
