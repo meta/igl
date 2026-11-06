@@ -996,7 +996,9 @@ void RenderCommandEncoder::draw(size_t vertexCount,
 
   ensureVertexBuffers();
 
-  flushDynamicState();
+  if (!flushDynamicState()) {
+    return;
+  }
 
 #if IGL_VULKAN_PRINT_COMMANDS
   IGL_LOG_INFO("%p vkCmdDraw(%u, %u, %u, %u)\n",
@@ -1032,7 +1034,9 @@ void RenderCommandEncoder::drawIndexed(size_t indexCount,
 
   ensureVertexBuffers();
 
-  flushDynamicState();
+  if (!flushDynamicState()) {
+    return;
+  }
 
 #if IGL_VULKAN_PRINT_COMMANDS
   IGL_LOG_INFO("%p vkCmdDrawIndexed(%u, %u, %u, %i, %u)\n",
@@ -1067,7 +1071,9 @@ void RenderCommandEncoder::drawMeshTasks(const Dimensions& threadgroupsPerGrid,
 
   IGL_DEBUG_ASSERT(rps_, "Did you forget to call bindRenderPipelineState()?");
 
-  flushDynamicState();
+  if (!flushDynamicState()) {
+    return;
+  }
 
   ctx_.vf_.vkCmdDrawMeshTasksEXT(
       cmdBuffer_, threadgroupsPerGrid.width, threadgroupsPerGrid.height, threadgroupsPerGrid.depth);
@@ -1085,7 +1091,9 @@ void RenderCommandEncoder::multiDrawIndirect(IBuffer& indirectBuffer,
 
   ensureVertexBuffers();
 
-  flushDynamicState();
+  if (!flushDynamicState()) {
+    return;
+  }
 
   ctx_.drawCallCount_ += drawCallCountEnabled_;
 
@@ -1110,7 +1118,9 @@ void RenderCommandEncoder::multiDrawIndexedIndirect(IBuffer& indirectBuffer,
 
   ensureVertexBuffers();
 
-  flushDynamicState();
+  if (!flushDynamicState()) {
+    return;
+  }
 
   ctx_.drawCallCount_ += drawCallCountEnabled_;
 
@@ -1277,14 +1287,19 @@ void RenderCommandEncoder::validatePipelineForSubpass() const {
 }
 #endif // IGL_DEBUG_ABORT_ENABLED
 
-void RenderCommandEncoder::flushDynamicState() {
+bool RenderCommandEncoder::flushDynamicState() {
   IGL_PROFILER_FUNCTION();
 
 #if IGL_DEBUG_ABORT_ENABLED
   validatePipelineForSubpass();
 #endif // IGL_DEBUG_ABORT_ENABLED
 
-  binder_.bindPipeline(rps_->getVkPipeline(dynamicState_), &rps_->getSpvModuleInfo());
+  VkPipeline pipeline = rps_->getVkPipeline(dynamicState_);
+  if (!pipeline) {
+    return false;
+  }
+
+  binder_.bindPipeline(pipeline, &rps_->getSpvModuleInfo());
 
   flushDynamicDepthStencilState();
 
@@ -1313,7 +1328,7 @@ void RenderCommandEncoder::flushDynamicState() {
           rps_->getRenderPipelineDesc().debugName.c_str());
       IGL_LOG_INFO(IGL_FORMAT("Bind group textures mask: {:b}\n", usageMaskBindGroup).c_str());
       IGL_LOG_INFO(IGL_FORMAT("Pipeline expects        : {:b}\n", usageMaskPipeline).c_str());
-      return;
+      return false;
     }
 
 #if IGL_VULKAN_PRINT_COMMANDS
@@ -1343,7 +1358,7 @@ void RenderCommandEncoder::flushDynamicState() {
           rps_->getRenderPipelineDesc().debugName.c_str());
       IGL_LOG_INFO(IGL_FORMAT("Bind group buffers mask: {:b}\n", usageMaskBindGroup).c_str());
       IGL_LOG_INFO(IGL_FORMAT("Pipeline expects       : {:b}\n", usageMaskPipeline).c_str());
-      return;
+      return false;
     }
 
 #if IGL_VULKAN_PRINT_COMMANDS
@@ -1395,6 +1410,7 @@ void RenderCommandEncoder::flushDynamicState() {
                                      0,
                                      nullptr);
   }
+  return true;
 }
 
 void RenderCommandEncoder::ensureVertexBuffers() {

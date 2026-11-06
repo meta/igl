@@ -156,7 +156,7 @@ class RenderCommandEncoder : public IRenderCommandEncoder {
   /// @brief Ensures that the vertex buffers are bound by performing checks. If the function doesn't
   /// assert at some point, the vertex buffer(s) is bound correctly.
   void ensureVertexBuffers();
-  void flushDynamicState();
+  bool flushDynamicState();
   void flushDynamicDepthStencilState();
 
   void initialize(const RenderPassDesc& renderPass,
