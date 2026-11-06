@@ -211,6 +211,10 @@ Result Texture::getBytes(const TextureRangeDesc& range, void* outData, size_t by
 
 namespace {
 
+size_t alignUp(size_t value, size_t alignment) noexcept {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
 /// @brief Blit options that copyFromBuffer needs for the given texture format.
 ///
 /// PVRTC blocks are stored row-major in a buffer, which the blit has to be told explicitly.
@@ -259,7 +263,14 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
       }
     }
   }
-  const size_t stagingLength = properties.getBytesPerRange(range);
+  TextureRangeDesc rangeAlignUp = range;
+  if (@available(macOS 12.5, iOS 15.0, tvOS 16.0, *)) {
+    if (get().pixelFormat == MTLPixelFormatR8Unorm &&
+        get().compressionType == MTLTextureCompressionTypeLossy) {
+      rangeAlignUp.width = alignUp(range.width, 16);
+    }
+  }
+  const size_t stagingLength = properties.getBytesPerRange(rangeAlignUp);
   if (getFormat() == TextureFormat::Invalid || stagingLength == 0) {
     return Result{Result::Code::Unsupported, "Texture format does not support buffer uploads"};
   }
@@ -318,10 +329,13 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
     for (uint32_t mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels;
          ++mipLevel) {
       const TextureRangeDesc mipRange = range.atMipLevel(mipLevel);
+      const TextureRangeDesc mipRangeAlignUp = rangeAlignUp.atMipLevel(mipLevel);
       for (uint32_t layer = range.layer; layer < range.layer + range.numLayers; ++layer) {
         for (uint32_t face = range.face; face < range.face + range.numFaces; ++face) {
           const TextureRangeDesc sliceRange = mipRange.atLayer(layer).atFace(face);
+          const TextureRangeDesc sliceRangeAlignUp = mipRangeAlignUp.atLayer(layer).atFace(face);
           const uint32_t stagingBytesPerRow = properties.getBytesPerRow(sliceRange);
+          const uint32_t stagingBytesPerRowAlignUp = properties.getBytesPerRow(sliceRangeAlignUp);
           const size_t tileSize = properties.getBytesPerLayer(sliceRange);
           const size_t srcBytesPerRow = bytesPerRow == 0 ? stagingBytesPerRow : bytesPerRow;
           if (stagingBytesPerRow == 0 || srcBytesPerRow < stagingBytesPerRow ||
@@ -339,7 +353,7 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
             const size_t stagingImageOffset = stagingOffset + image * stagingBytesPerImage;
             const size_t srcImageOffset = srcOffset + image * srcBytesPerImage;
             for (size_t row = 0; row < rowsPerImage; ++row) {
-              const size_t rowOffset = stagingImageOffset + row * stagingBytesPerRow;
+              const size_t rowOffset = stagingImageOffset + row * stagingBytesPerRowAlignUp;
               if (try_checked_memcpy(stagingBase + rowOffset,
                                      stagingLength - rowOffset,
                                      src + srcImageOffset + row * srcBytesPerRow,
@@ -355,7 +369,7 @@ Result Texture::uploadViaStagingBuffer(TextureType type,
           const size_t sourceBytesPerImage = type == TextureType::ThreeD ? stagingBytesPerImage : 0;
           [encoder copyFromBuffer:stagingBuffer
                      sourceOffset:stagingOffset
-                sourceBytesPerRow:stagingBytesPerRow
+                sourceBytesPerRow:stagingBytesPerRowAlignUp
               sourceBytesPerImage:sourceBytesPerImage
                        sourceSize:MTLSizeMake(sliceRange.width, sliceRange.height, sliceRange.depth)
                         toTexture:destination
