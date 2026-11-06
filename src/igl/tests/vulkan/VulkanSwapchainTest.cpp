@@ -131,47 +131,12 @@ class VulkanSwapchainRecoveryTest : public ::testing::TestWithParam<bool> {
     auto context = vulkan::HWDevice::createContext(config, nullptr);
     ASSERT_NE(context, nullptr);
     auto& table = const_cast<VulkanFunctionTable&>(context->vf_);
-    table.vkCreateHeadlessSurfaceEXT = [](VkInstance,
-                                          const VkHeadlessSurfaceCreateInfoEXT*,
-                                          const VkAllocationCallbacks*,
-                                          VkSurfaceKHR* surface) {
-      *surface = mockHandle<VkSurfaceKHR>();
-      return VK_SUCCESS;
-    };
-    table.vkDestroySurfaceKHR = [](VkInstance, VkSurfaceKHR, const VkAllocationCallbacks*) {};
-    table.vkGetPhysicalDeviceSurfaceSupportKHR =
-        [](VkPhysicalDevice, uint32_t, VkSurfaceKHR, VkBool32* supported) {
-          *supported = VK_TRUE;
-          return VK_SUCCESS;
-        };
-    table.vkGetPhysicalDeviceSurfaceCapabilitiesKHR =
-        [](VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR* caps) {
-          *caps = {.minImageCount = kImageCount,
-                   .maxImageCount = kImageCount,
-                   .currentExtent = {kSize, kSize},
-                   .maxImageArrayLayers = 1,
-                   .currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-                   .supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-                   .supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
-          return VK_SUCCESS;
-        };
-    table.vkGetPhysicalDeviceSurfaceFormatsKHR =
-        [](VkPhysicalDevice, VkSurfaceKHR, uint32_t* count, VkSurfaceFormatKHR* formats) {
-          *count = 1;
-          if (formats != nullptr) {
-            *formats = {.format = VK_FORMAT_R8G8B8A8_UNORM,
-                        .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-          }
-          return VK_SUCCESS;
-        };
-    table.vkGetPhysicalDeviceSurfacePresentModesKHR =
-        [](VkPhysicalDevice, VkSurfaceKHR, uint32_t* count, VkPresentModeKHR* modes) {
-          *count = 1;
-          if (modes != nullptr) {
-            *modes = VK_PRESENT_MODE_FIFO_KHR;
-          }
-          return VK_SUCCESS;
-        };
+    table.vkCreateHeadlessSurfaceEXT = mockCreateHeadlessSurface;
+    table.vkDestroySurfaceKHR = mockDestroySurface;
+    table.vkGetPhysicalDeviceSurfaceSupportKHR = mockGetSurfaceSupport;
+    table.vkGetPhysicalDeviceSurfaceCapabilitiesKHR = mockGetSurfaceCapabilities;
+    table.vkGetPhysicalDeviceSurfaceFormatsKHR = mockGetSurfaceFormats;
+    table.vkGetPhysicalDeviceSurfacePresentModesKHR = mockGetSurfacePresentModes;
     context->createHeadlessSurface();
     Result result;
     const auto devices =
@@ -192,53 +157,11 @@ class VulkanSwapchainRecoveryTest : public ::testing::TestWithParam<bool> {
     auto& ctx = device_->getVulkanContext();
     auto& deviceTable = const_cast<VulkanFunctionTable&>(ctx.vf_);
     original_ = deviceTable;
-    deviceTable.vkCreateSwapchainKHR = [](VkDevice,
-                                          const VkSwapchainCreateInfoKHR*,
-                                          const VkAllocationCallbacks*,
-                                          VkSwapchainKHR* swapchain) {
-      *swapchain = mockHandle<VkSwapchainKHR>();
-      return VK_SUCCESS;
-    };
-    deviceTable.vkDestroySwapchainKHR = [](VkDevice, VkSwapchainKHR, const VkAllocationCallbacks*) {
-    };
-    deviceTable.vkGetSwapchainImagesKHR =
-        [](VkDevice, VkSwapchainKHR, uint32_t* count, VkImage* images) {
-          *count = kImageCount;
-          if (images != nullptr) {
-            for (uint32_t index = 0; index < kImageCount; ++index) {
-              images[index] = active->images_[index].getVkImage();
-            }
-          }
-          return VK_SUCCESS;
-        };
-    deviceTable.vkSetDebugUtilsObjectNameEXT = [](VkDevice device,
-                                                  const VkDebugUtilsObjectNameInfoEXT* info) {
-      if (info->objectType == VK_OBJECT_TYPE_SWAPCHAIN_KHR ||
-          active->original_.vkSetDebugUtilsObjectNameEXT == nullptr) {
-        return VK_SUCCESS;
-      }
-      return active->original_.vkSetDebugUtilsObjectNameEXT(device, info);
-    };
-    deviceTable.vkAcquireNextImageKHR = [](VkDevice device,
-                                           VkSwapchainKHR,
-                                           uint64_t,
-                                           VkSemaphore semaphore,
-                                           VkFence fence,
-                                           uint32_t* imageIndex) {
-      if (++active->acquireCalls_ == 1) {
-        *imageIndex = UINT32_MAX;
-        if (fence != VK_NULL_HANDLE) {
-          EXPECT_EQ(active->original_.vkGetFenceStatus(device, fence), VK_NOT_READY);
-        }
-        return VK_ERROR_OUT_OF_DATE_KHR;
-      }
-      *imageIndex = 1;
-      const VkSubmitInfo signal = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                                   .signalSemaphoreCount = 1,
-                                   .pSignalSemaphores = &semaphore};
-      return active->original_.vkQueueSubmit(
-          active->device_->getVulkanContext().deviceQueues_.graphicsQueue, 1, &signal, fence);
-    };
+    deviceTable.vkCreateSwapchainKHR = mockCreateSwapchain;
+    deviceTable.vkDestroySwapchainKHR = mockDestroySwapchain;
+    deviceTable.vkGetSwapchainImagesKHR = mockGetSwapchainImages;
+    deviceTable.vkSetDebugUtilsObjectNameEXT = mockSetDebugUtilsObjectName;
+    deviceTable.vkAcquireNextImageKHR = mockAcquireNextImage;
     for (uint32_t index = 0; index < kImageCount; ++index) {
       images_.push_back(ctx.createImage(VK_IMAGE_TYPE_2D,
                                         {.width = kSize, .height = kSize, .depth = 1},
@@ -284,6 +207,119 @@ class VulkanSwapchainRecoveryTest : public ::testing::TestWithParam<bool> {
   }
 
  protected:
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  mockCreateHeadlessSurface(VkInstance /*unused*/,
+                            const VkHeadlessSurfaceCreateInfoEXT* /*unused*/,
+                            const VkAllocationCallbacks* /*unused*/,
+                            VkSurfaceKHR* surface) {
+    *surface = mockHandle<VkSurfaceKHR>();
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR void VKAPI_CALL mockDestroySurface(VkInstance /*unused*/,
+                                                       VkSurfaceKHR /*unused*/,
+                                                       const VkAllocationCallbacks* /*unused*/) {}
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockGetSurfaceSupport(VkPhysicalDevice /*unused*/,
+                                                              uint32_t /*unused*/,
+                                                              VkSurfaceKHR /*unused*/,
+                                                              VkBool32* supported) {
+    *supported = VK_TRUE;
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockGetSurfaceCapabilities(VkPhysicalDevice /*unused*/,
+                                                                   VkSurfaceKHR /*unused*/,
+                                                                   VkSurfaceCapabilitiesKHR* caps) {
+    *caps = {.minImageCount = kImageCount,
+             .maxImageCount = kImageCount,
+             .currentExtent = {kSize, kSize},
+             .maxImageArrayLayers = 1,
+             .currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+             .supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+             .supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockGetSurfaceFormats(VkPhysicalDevice /*unused*/,
+                                                              VkSurfaceKHR /*unused*/,
+                                                              uint32_t* count,
+                                                              VkSurfaceFormatKHR* formats) {
+    *count = 1;
+    if (formats != nullptr) {
+      *formats = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+                  .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    }
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockGetSurfacePresentModes(VkPhysicalDevice /*unused*/,
+                                                                   VkSurfaceKHR /*unused*/,
+                                                                   uint32_t* count,
+                                                                   VkPresentModeKHR* modes) {
+    *count = 1;
+    if (modes != nullptr) {
+      *modes = VK_PRESENT_MODE_FIFO_KHR;
+    }
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  mockCreateSwapchain(VkDevice /*unused*/,
+                      const VkSwapchainCreateInfoKHR* /*unused*/,
+                      const VkAllocationCallbacks* /*unused*/,
+                      VkSwapchainKHR* swapchain) {
+    *swapchain = mockHandle<VkSwapchainKHR>();
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR void VKAPI_CALL mockDestroySwapchain(VkDevice /*unused*/,
+                                                         VkSwapchainKHR /*unused*/,
+                                                         const VkAllocationCallbacks* /*unused*/) {}
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockGetSwapchainImages(VkDevice /*unused*/,
+                                                               VkSwapchainKHR /*unused*/,
+                                                               uint32_t* count,
+                                                               VkImage* images) {
+    *count = kImageCount;
+    if (images != nullptr) {
+      for (uint32_t index = 0; index < kImageCount; ++index) {
+        images[index] = active->images_[index].getVkImage();
+      }
+    }
+    return VK_SUCCESS;
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL
+  mockSetDebugUtilsObjectName(VkDevice device, const VkDebugUtilsObjectNameInfoEXT* info) {
+    if (info->objectType == VK_OBJECT_TYPE_SWAPCHAIN_KHR ||
+        active->original_.vkSetDebugUtilsObjectNameEXT == nullptr) {
+      return VK_SUCCESS;
+    }
+    return active->original_.vkSetDebugUtilsObjectNameEXT(device, info);
+  }
+
+  static VKAPI_ATTR VkResult VKAPI_CALL mockAcquireNextImage(VkDevice device,
+                                                             VkSwapchainKHR /*unused*/,
+                                                             uint64_t /*unused*/,
+                                                             VkSemaphore semaphore,
+                                                             VkFence fence,
+                                                             uint32_t* imageIndex) {
+    if (++active->acquireCalls_ == 1) {
+      *imageIndex = UINT32_MAX;
+      if (fence != VK_NULL_HANDLE) {
+        EXPECT_EQ(active->original_.vkGetFenceStatus(device, fence), VK_NOT_READY);
+      }
+      return VK_ERROR_OUT_OF_DATE_KHR;
+    }
+    *imageIndex = 1;
+    const VkSubmitInfo signal = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                                 .signalSemaphoreCount = 1,
+                                 .pSignalSemaphores = &semaphore};
+    return active->original_.vkQueueSubmit(
+        active->device_->getVulkanContext().deviceQueues_.graphicsQueue, 1, &signal, fence);
+  }
+
   static void recordDebugAbort(const char* /*unused*/,
                                const char* /*unused*/,
                                const char* /*unused*/,
