@@ -3329,6 +3329,13 @@ bool VulkanContext::supportsMultiviewSubpasses() const {
   return supportsSubpasses() && features_.featuresMultiview.multiview == VK_TRUE;
 }
 
+bool VulkanContext::supportsTimers() const {
+  const VkPhysicalDeviceLimits& limits = getVkPhysicalDeviceProperties().limits;
+  return limits.timestampPeriod > 0.0f && limits.timestampComputeAndGraphics == VK_TRUE &&
+         getGraphicsQueueTimestampValidBits() > 0 &&
+         !features_.enabled("VK_KHR_portability_subset");
+}
+
 void VulkanContext::syncAcquireNext() noexcept {
   IGL_PROFILER_FUNCTION();
 

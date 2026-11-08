@@ -896,9 +896,7 @@ bool Device::hasFeatureInternal(DeviceFeatures feature) const {
   case DeviceFeatures::TextureViews:
     return true;
   case DeviceFeatures::Timers:
-    return deviceProperties.limits.timestampPeriod > 0.0f &&
-           (deviceProperties.limits.timestampComputeAndGraphics == VK_TRUE) &&
-           ctx_->getGraphicsQueueTimestampValidBits() > 0;
+    return ctx_->supportsTimers();
   case DeviceFeatures::TimestampQueries:
     return deviceProperties.limits.timestampPeriod > 0.0f &&
            (deviceProperties.limits.timestampComputeAndGraphics == VK_TRUE);

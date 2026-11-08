@@ -307,6 +307,13 @@ class VulkanContext final {
   /// is enabled.
   [[nodiscard]] bool supportsMultiviewSubpasses() const;
 
+  /// @brief Returns true if command buffers can be timed with a Timer (DeviceFeatures::Timers): the
+  /// device can write timestamps with meaningful bits in the graphics queue and
+  /// VK_KHR_portability_subset is not enabled, because MoltenVK resolves every timestamp of a
+  /// command buffer to a single value taken when that command buffer completes, which always
+  /// measures an elapsed time of zero.
+  [[nodiscard]] bool supportsTimers() const;
+
   [[nodiscard]] const VkSurfaceCapabilitiesKHR& getSurfaceCapabilities() const noexcept {
     return deviceSurfaceCaps_;
   }
