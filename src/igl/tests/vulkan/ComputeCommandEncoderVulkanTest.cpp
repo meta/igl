@@ -348,7 +348,7 @@ TEST_F(ComputeCommandEncoderVulkanTest, DirectDispatch) {
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_NE(pipeline, nullptr);
 
-  const std::vector<float> inputData = {10.0f, 20.0f, 30.0f, 40.0f};
+  const std::vector<float> inputData = {10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f};
   const BufferDesc inputBufferDesc{
       .type = BufferDesc::BufferTypeBits::Storage,
       .data = inputData.data(),
@@ -376,7 +376,7 @@ TEST_F(ComputeCommandEncoderVulkanTest, DirectDispatch) {
   computeEncoder->bindBuffer(data::shader::kSimpleComputeInputIndex, inputBuffer.get());
   computeEncoder->bindBuffer(data::shader::kSimpleComputeOutputIndex, outputBuffer.get());
 
-  computeEncoder->dispatchThreadGroups(Dimensions(1, 1, 1), Dimensions(4, 1, 1));
+  computeEncoder->dispatchThreadGroups(Dimensions(1, 1, 1), Dimensions(6, 1, 1));
   computeEncoder->endEncoding();
 
   cmdQueue_->submit(*cmdBuffer);

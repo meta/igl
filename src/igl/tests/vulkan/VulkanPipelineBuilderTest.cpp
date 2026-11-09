@@ -237,6 +237,11 @@ TEST_F(VulkanPipelineBuilderTest, RasterizationSamples) {
 
   builder.shaderStage(vertStage);
   builder.shaderStage(fragStage);
+  builder.dynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+  std::vector<VkPipelineColorBlendAttachmentState> blendStates(1);
+  blendStates[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  builder.colorBlendAttachmentStates(blendStates);
 
   // Build pipeline with 4x MSAA - should succeed if rasterizationSamples is properly applied
   res = builder.build(ctx.vf_,
@@ -368,8 +373,16 @@ TEST_F(VulkanPipelineBuilderTest, AlphaToCoverageEnable) {
 
   builder1.shaderStage(vertStage);
   builder1.shaderStage(fragStage);
+  builder1.dynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
   builder2.shaderStage(vertStage);
   builder2.shaderStage(fragStage);
+  builder2.dynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+  std::vector<VkPipelineColorBlendAttachmentState> blendStates1(1);
+  blendStates1[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  auto blendStates2 = blendStates1;
+  builder1.colorBlendAttachmentStates(blendStates1);
+  builder2.colorBlendAttachmentStates(blendStates2);
 
   // Build pipeline with alpha-to-coverage enabled - should succeed
   res = builder1.build(ctx.vf_,

@@ -92,6 +92,9 @@ class VulkanStagingDevice final {
     return maxStagingBufferSize_;
   }
 
+  /// @brief Returns the alignment required for staging copies of this image format.
+  [[nodiscard]] VkDeviceSize getImageCopyAlignment(const TextureFormatProperties& properties) const;
+
   /// @brief Function to merge regions of the staging buffer that are contiguous, and deallocate
   /// unused staging buffers.
   void mergeRegionsAndFreeBuffers();

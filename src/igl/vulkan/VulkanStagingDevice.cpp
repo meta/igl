@@ -8,6 +8,7 @@
 #include <igl/vulkan/VulkanStagingDevice.h>
 
 #include <algorithm>
+#include <numeric>
 #include <igl/IGLSafeC.h>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/VulkanBuffer.h>
@@ -349,14 +350,18 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
   IGL_LOG_INFO("Image upload requested for data with %u bytes\n", storageSize);
 #endif
 
-  // get next staging buffer free offset
-  MemoryRegion memoryChunk = nextFreeBlock(storageSize, true);
+  // Keep alignment padding in the allocated region for reclamation after submission.
+  const VkDeviceSize alignment = getImageCopyAlignment(properties);
+  MemoryRegion memoryChunk = nextFreeBlock(
+      std::min(static_cast<VkDeviceSize>(storageSize) + alignment - 1, maxStagingBufferSize_),
+      true);
+  const VkDeviceSize stagingOffset = (memoryChunk.offset + alignment - 1) / alignment * alignment;
 
-  IGL_DEBUG_ASSERT(memoryChunk.size >= storageSize);
+  IGL_DEBUG_ASSERT(memoryChunk.size >= stagingOffset - memoryChunk.offset + storageSize);
   auto& stagingBuffer = stagingBuffers_[memoryChunk.stagingBufferIndex];
 
   // 1. Copy the pixel data into the host visible staging buffer
-  stagingBuffer->bufferSubData(memoryChunk.offset, storageSize, data);
+  stagingBuffer->bufferSubData(stagingOffset, storageSize, data);
 
   const auto& wrapper = immediate->acquire();
   const uint32_t initialLayer = getVkLayer(type, range.face, range.layer);
@@ -382,7 +387,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
 
     // Luminance (1 plane)
     copyRegions.emplace_back(VkBufferImageCopy{
-        .bufferOffset = memoryChunk.offset,
+        .bufferOffset = stagingOffset,
         .imageSubresource =
             VkImageSubresourceLayers{
                 .aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT,
@@ -399,7 +404,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
     if (image.imageFormat_ == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM) {
       imageAspect |= VK_IMAGE_ASPECT_PLANE_1_BIT;
       copyRegions.emplace_back(VkBufferImageCopy{
-          .bufferOffset = memoryChunk.offset + planeSize0,
+          .bufferOffset = stagingOffset + planeSize0,
           .imageSubresource =
               VkImageSubresourceLayers{
                   .aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT,
@@ -413,7 +418,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
     } else if (image.imageFormat_ == VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM) {
       imageAspect |= VK_IMAGE_ASPECT_PLANE_1_BIT | VK_IMAGE_ASPECT_PLANE_2_BIT;
       copyRegions.emplace_back(VkBufferImageCopy{
-          .bufferOffset = memoryChunk.offset + planeSize0,
+          .bufferOffset = stagingOffset + planeSize0,
           .imageSubresource =
               VkImageSubresourceLayers{
                   .aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT,
@@ -425,7 +430,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
           .imageExtent = {.width = w / 2, .height = h / 2, .depth = 1u},
       });
       copyRegions.emplace_back(VkBufferImageCopy{
-          .bufferOffset = memoryChunk.offset + planeSize0 + planeSize1,
+          .bufferOffset = stagingOffset + planeSize0 + planeSize1,
           .imageSubresource =
               VkImageSubresourceLayers{
                   .aspectMask = VK_IMAGE_ASPECT_PLANE_2_BIT,
@@ -521,7 +526,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
 
     if (image.type_ == VK_IMAGE_TYPE_2D) {
       copyRegions.emplace_back(VkBufferImageCopy{
-          .bufferOffset = memoryChunk.offset + offset,
+          .bufferOffset = stagingOffset + offset,
           .bufferRowLength = texelsPerRow,
           .imageSubresource =
               VkImageSubresourceLayers{
@@ -539,7 +544,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
       });
     } else {
       copyRegions.emplace_back(VkBufferImageCopy{
-          .bufferOffset = memoryChunk.offset + offset,
+          .bufferOffset = stagingOffset + offset,
           .bufferRowLength = texelsPerRow,
           .bufferImageHeight = 0,
           .imageSubresource =
@@ -684,10 +689,14 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
   IGL_LOG_INFO("Image download requested for data with %u bytes\n", storageSize);
 #endif
 
-  // get next staging buffer free offset
-  const MemoryRegion memoryChunk = nextFreeBlock(storageSize, true);
+  // Keep alignment padding in the allocated region for reclamation after the copy.
+  const VkDeviceSize alignment = getImageCopyAlignment(properties);
+  const MemoryRegion memoryChunk = nextFreeBlock(
+      std::min(static_cast<VkDeviceSize>(storageSize) + alignment - 1, maxStagingBufferSize_),
+      true);
+  const VkDeviceSize stagingOffset = (memoryChunk.offset + alignment - 1) / alignment * alignment;
 
-  IGL_DEBUG_ASSERT(memoryChunk.size >= storageSize);
+  IGL_DEBUG_ASSERT(memoryChunk.size >= stagingOffset - memoryChunk.offset + storageSize);
   const auto& wrapper1 = immediate->acquire();
 
   // 1. Transition to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
@@ -713,7 +722,7 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
 
   // 2.  Copy the pixel data from the image into the staging buffer
   const VkBufferImageCopy copy = {
-      .bufferOffset = memoryChunk.offset,
+      .bufferOffset = stagingOffset,
       .bufferRowLength = mustRepack ? 0
                                     : bytesPerRow / static_cast<uint32_t>(properties.bytesPerBlock),
       .imageSubresource =
@@ -747,7 +756,7 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
     stagingBuffer->invalidateMappedMemory(memoryChunk.offset, memoryChunk.size);
   }
 
-  const uint8_t* src = stagingBuffer->getMappedPtr() + memoryChunk.offset;
+  const uint8_t* src = stagingBuffer->getMappedPtr() + stagingOffset;
   uint8_t* dst = static_cast<uint8_t*>(data);
 
   // Vulkan only handles cases where row lengths are multiples of texel block size.
@@ -793,6 +802,16 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
 VkDeviceSize VulkanStagingDevice::getAlignedSize(VkDeviceSize size) const {
   constexpr VkDeviceSize kStagingBufferAlignment = 16; // updated to support BC7 compressed image
   return (size + kStagingBufferAlignment - 1) & ~(kStagingBufferAlignment - 1);
+}
+
+VkDeviceSize VulkanStagingDevice::getImageCopyAlignment(
+    const TextureFormatProperties& properties) const {
+  IGL_PROFILER_FUNCTION();
+  // Multiplanar formats encode plane storage separately and have bytesPerBlock == 0.
+  const VkDeviceSize texelBlockAlignment =
+      properties.isDepthOrStencil() || properties.numPlanes > 1 ? 4 : properties.bytesPerBlock;
+  return std::lcm(std::lcm(getAlignedSize(1), texelBlockAlignment),
+                  ctx_.getVkPhysicalDeviceProperties().limits.optimalBufferCopyOffsetAlignment);
 }
 
 void VulkanStagingDevice::waitAndReset() {

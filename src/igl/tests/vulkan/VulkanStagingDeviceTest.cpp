@@ -20,7 +20,11 @@
 #include <igl/Framebuffer.h>
 #include <igl/Texture.h>
 #include <igl/vulkan/Device.h>
+#include <igl/vulkan/Texture.h>
+#include <igl/vulkan/VulkanBuffer.h>
 #include <igl/vulkan/VulkanContext.h>
+#include <igl/vulkan/VulkanHelpers.h>
+#include <igl/vulkan/VulkanTexture.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
@@ -143,6 +147,149 @@ TEST_F(VulkanStagingDeviceTest, ImageDataUpload) {
   EXPECT_TRUE(ret.isOk()) << ret.message.c_str();
 }
 
+TEST_F(VulkanStagingDeviceTest, Private3DUploadRoundTripAfter2DUpload) {
+  ASSERT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture3D)) << "3D textures are unavailable";
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  constexpr uint32_t kWidth = 3;
+  constexpr uint32_t kHeight = 2;
+  constexpr uint32_t kDepth = 3;
+  constexpr size_t kBytesPerSlice = kWidth * kHeight * 4;
+  constexpr size_t kDataSize = kBytesPerSlice * kDepth;
+  VkImageFormatProperties formatProperties{};
+  ASSERT_EQ(ctx.vf_.vkGetPhysicalDeviceImageFormatProperties(ctx.getVkPhysicalDevice(),
+                                                             VK_FORMAT_R8G8B8A8_UNORM,
+                                                             VK_IMAGE_TYPE_3D,
+                                                             VK_IMAGE_TILING_OPTIMAL,
+                                                             VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                                                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                                             0,
+                                                             &formatProperties),
+            VK_SUCCESS)
+      << "Private RGBA8 3D upload/readback is unsupported";
+  ASSERT_GE(formatProperties.maxExtent.width, kWidth);
+  ASSERT_GE(formatProperties.maxExtent.height, kHeight);
+  ASSERT_GE(formatProperties.maxExtent.depth, kDepth);
+
+  Result result;
+  const TextureDesc primeDesc{
+      .width = 1,
+      .height = 1,
+      .usage = TextureDesc::TextureUsageBits::Sampled,
+      .type = TextureType::TwoD,
+      .format = TextureFormat::RGBA_UNorm8,
+      .storage = ResourceStorage::Private,
+  };
+  const auto prime = iglDev_->createTexture(primeDesc, &result);
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_NE(prime, nullptr);
+  const std::array<uint8_t, 4> primePixels = {0xA1, 0xB2, 0xC3, 0xD4};
+  result = prime->upload(prime->getFullRange(), primePixels.data());
+  ASSERT_TRUE(result.isOk()) << result.message;
+  const VkDeviceSize freeAfterPrime = ctx.stagingDevice_->getFreeStagingBufferSize();
+  ASSERT_GT(freeAfterPrime, kDataSize + 256);
+
+  const TextureDesc desc{
+      .width = kWidth,
+      .height = kHeight,
+      .depth = kDepth,
+      .usage = TextureDesc::TextureUsageBits::Sampled,
+      .type = TextureType::ThreeD,
+      .format = TextureFormat::RGBA_UNorm8,
+      .storage = ResourceStorage::Private,
+  };
+  const auto texture = iglDev_->createTexture(desc, &result);
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_NE(texture, nullptr);
+  ASSERT_EQ(texture->getStorage(), ResourceStorage::Private);
+  std::array<uint8_t, kDataSize> pixels{};
+  for (size_t i = 0; i < pixels.size(); ++i) {
+    pixels[i] = static_cast<uint8_t>(1 + i % kBytesPerSlice + 64 * (i / kBytesPerSlice));
+  }
+  result = texture->upload(texture->getFullRange(), pixels.data());
+  ASSERT_TRUE(result.isOk()) << result.message;
+  EXPECT_LT(ctx.stagingDevice_->getFreeStagingBufferSize(), freeAfterPrime);
+
+  auto& image = static_cast<vulkan::Texture&>(*texture).getVulkanTexture().image;
+  ASSERT_EQ(image.type_, VK_IMAGE_TYPE_3D);
+  ASSERT_FALSE(image.isMappedPtrAccessible());
+  const auto readback = ctx.createBuffer(kDataSize,
+                                         VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                         &result,
+                                         "3D staging round-trip readback");
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_NE(readback, nullptr);
+  ASSERT_NE(readback->getMappedPtr(), nullptr);
+  const auto& commands = ctx.stagingDevice_->immediate->acquire();
+  const VkImageSubresourceRange subresources{
+      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .baseMipLevel = 0,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .layerCount = 1,
+  };
+  ivkImageMemoryBarrier(&ctx.vf_,
+                        commands.cmdBuf,
+                        image.getVkImage(),
+                        VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_ACCESS_TRANSFER_READ_BIT,
+                        image.imageLayout_,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        subresources);
+  image.imageLayout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  const VkBufferImageCopy copy{
+      .bufferOffset = 0,
+      .bufferRowLength = 0,
+      .bufferImageHeight = 0,
+      .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                           .mipLevel = 0,
+                           .baseArrayLayer = 0,
+                           .layerCount = 1},
+      .imageOffset = {.x = 0, .y = 0, .z = 0},
+      .imageExtent = {.width = kWidth, .height = kHeight, .depth = kDepth},
+  };
+  ctx.vf_.vkCmdCopyImageToBuffer(commands.cmdBuf,
+                                 image.getVkImage(),
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 readback->getVkBuffer(),
+                                 1,
+                                 &copy);
+  const VkBufferMemoryBarrier hostBarrier{
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .buffer = readback->getVkBuffer(),
+      .offset = 0,
+      .size = VK_WHOLE_SIZE,
+  };
+  ctx.vf_.vkCmdPipelineBarrier(commands.cmdBuf,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_HOST_BIT,
+                               0,
+                               0,
+                               nullptr,
+                               1,
+                               &hostBarrier,
+                               0,
+                               nullptr);
+  ASSERT_EQ(ctx.stagingDevice_->immediate->wait(ctx.stagingDevice_->immediate->submit(commands),
+                                                ctx.config_.fenceTimeoutNanoseconds),
+            VK_SUCCESS);
+  if (!readback->isCoherentMemory()) {
+    readback->invalidateMappedMemory(0, kDataSize);
+  }
+  for (size_t i = 0; i < pixels.size(); ++i) {
+    EXPECT_EQ(readback->getMappedPtr()[i], pixels[i])
+        << "byte " << i << ", slice " << i / kBytesPerSlice;
+  }
+}
+
 TEST_F(VulkanStagingDeviceTest, GetImageData2D) {
   Result ret;
 
@@ -212,6 +359,194 @@ TEST_F(VulkanStagingDeviceTest, PartialBufferUpdate) {
   }
 
   buffer->unmap();
+}
+
+TEST_F(VulkanStagingDeviceTest, PrivateMultiplanarUploadRoundTripAfter2DUpload) {
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  constexpr uint32_t kWidth = 4;
+  constexpr uint32_t kHeight = 4;
+  constexpr size_t kDataSize = kWidth * kHeight * 3 / 2;
+  Result result;
+  const TextureDesc primeDesc{
+      .width = 1,
+      .height = 1,
+      .usage = TextureDesc::TextureUsageBits::Sampled,
+      .type = TextureType::TwoD,
+      .format = TextureFormat::RGBA_UNorm8,
+      .storage = ResourceStorage::Private,
+  };
+  const auto prime = iglDev_->createTexture(primeDesc, &result);
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_NE(prime, nullptr);
+  const std::array<uint8_t, 4> primePixels = {0xA1, 0xB2, 0xC3, 0xD4};
+  result = prime->upload(prime->getFullRange(), primePixels.data());
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_GT(ctx.stagingDevice_->getFreeStagingBufferSize(), kDataSize + 256);
+
+  std::array<uint8_t, kDataSize> pixels{};
+  for (size_t i = 0; i < pixels.size(); ++i) {
+    pixels[i] = static_cast<uint8_t>(17 + 7 * i);
+  }
+  for (const TextureFormat format : {TextureFormat::YUV_NV12, TextureFormat::YUV_420p}) {
+    const VkFormat vkFormat = vulkan::textureFormatToVkFormat(format);
+    const auto properties = TextureFormatProperties::fromTextureFormat(format);
+    VkImageFormatProperties formatProperties{};
+    ASSERT_EQ(ctx.vf_.vkGetPhysicalDeviceImageFormatProperties(ctx.getVkPhysicalDevice(),
+                                                               vkFormat,
+                                                               VK_IMAGE_TYPE_2D,
+                                                               VK_IMAGE_TILING_OPTIMAL,
+                                                               VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                                               0,
+                                                               &formatProperties),
+              VK_SUCCESS)
+        << "Private multiplanar upload/readback is unsupported for format "
+        << static_cast<uint32_t>(format);
+    ASSERT_GE(formatProperties.maxExtent.width, kWidth);
+    ASSERT_GE(formatProperties.maxExtent.height, kHeight);
+    ASSERT_GE(formatProperties.maxExtent.depth, 1u);
+    ASSERT_GE(formatProperties.maxMipLevels, 1u);
+    ASSERT_GE(formatProperties.maxArrayLayers, 1u);
+    ASSERT_NE(formatProperties.sampleCounts & VK_SAMPLE_COUNT_1_BIT, 0u);
+    auto image = ctx.createImage(VK_IMAGE_TYPE_2D,
+                                 VkExtent3D{.width = kWidth, .height = kHeight, .depth = 1},
+                                 vkFormat,
+                                 1,
+                                 1,
+                                 VK_IMAGE_TILING_OPTIMAL,
+                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                 0,
+                                 VK_SAMPLE_COUNT_1_BIT,
+                                 &result,
+                                 "Multiplanar staging round-trip image");
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_NE(image.getVkImage(), VK_NULL_HANDLE);
+    ASSERT_FALSE(image.isMappedPtrAccessible());
+    ctx.stagingDevice_->imageData(image,
+                                  TextureType::TwoD,
+                                  TextureRangeDesc::new2D(0, 0, kWidth, kHeight),
+                                  properties,
+                                  0,
+                                  VK_IMAGE_ASPECT_COLOR_BIT,
+                                  pixels.data());
+
+    const auto readback = ctx.createBuffer(kDataSize,
+                                           VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                           &result,
+                                           "Multiplanar staging round-trip readback");
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_NE(readback, nullptr);
+    ASSERT_NE(readback->getMappedPtr(), nullptr);
+    const auto& commands = ctx.stagingDevice_->immediate->acquire();
+    ivkImageMemoryBarrier(&ctx.vf_,
+                          commands.cmdBuf,
+                          image.getVkImage(),
+                          VK_ACCESS_TRANSFER_WRITE_BIT,
+                          VK_ACCESS_TRANSFER_READ_BIT,
+                          image.imageLayout_,
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                          VkImageSubresourceRange{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                  .levelCount = 1,
+                                                  .layerCount = 1});
+    const std::array<VkBufferImageCopy, 3> copies = {{
+        {.bufferOffset = 0,
+         .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT, .layerCount = 1},
+         .imageExtent = {.width = kWidth, .height = kHeight, .depth = 1}},
+        {.bufferOffset = kWidth * kHeight,
+         .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT, .layerCount = 1},
+         .imageExtent = {.width = kWidth / 2, .height = kHeight / 2, .depth = 1}},
+        {.bufferOffset = kWidth * kHeight * 5 / 4,
+         .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_PLANE_2_BIT, .layerCount = 1},
+         .imageExtent = {.width = kWidth / 2, .height = kHeight / 2, .depth = 1}},
+    }};
+    ctx.vf_.vkCmdCopyImageToBuffer(commands.cmdBuf,
+                                   image.getVkImage(),
+                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   readback->getVkBuffer(),
+                                   properties.numPlanes,
+                                   copies.data());
+    const VkBufferMemoryBarrier hostBarrier{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = readback->getVkBuffer(),
+        .offset = 0,
+        .size = VK_WHOLE_SIZE,
+    };
+    ctx.vf_.vkCmdPipelineBarrier(commands.cmdBuf,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_HOST_BIT,
+                                 0,
+                                 0,
+                                 nullptr,
+                                 1,
+                                 &hostBarrier,
+                                 0,
+                                 nullptr);
+    ASSERT_EQ(ctx.stagingDevice_->immediate->wait(ctx.stagingDevice_->immediate->submit(commands),
+                                                  ctx.config_.fenceTimeoutNanoseconds),
+              VK_SUCCESS);
+    if (!readback->isCoherentMemory()) {
+      readback->invalidateMappedMemory(0, kDataSize);
+    }
+    for (size_t i = 0; i < pixels.size(); ++i) {
+      EXPECT_EQ(readback->getMappedPtr()[i], pixels[i])
+          << "format " << static_cast<uint32_t>(format) << ", byte " << i;
+    }
+  }
+}
+
+TEST_F(VulkanStagingDeviceTest, ImageCopyAlignmentIncludesColorTexelBlockSize) {
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  constexpr VkDeviceSize kBaseAlignment = 16;
+  const VkDeviceSize deviceAlignment =
+      ctx.getVkPhysicalDeviceProperties().limits.optimalBufferCopyOffsetAlignment;
+  const VkDeviceSize baseAlignment = std::max(kBaseAlignment, deviceAlignment);
+  const auto rgbaProperties =
+      TextureFormatProperties::fromTextureFormat(TextureFormat::RGBA_UNorm8);
+  EXPECT_EQ(ctx.stagingDevice_->getImageCopyAlignment(rgbaProperties), baseAlignment);
+  const auto rgbProperties = TextureFormatProperties::fromTextureFormat(TextureFormat::RGB_F16);
+  ASSERT_EQ(rgbProperties.bytesPerBlock, 6u);
+  EXPECT_EQ(ctx.stagingDevice_->getImageCopyAlignment(rgbProperties), baseAlignment * 3);
+}
+
+TEST_F(VulkanStagingDeviceTest, ImageCopyAlignmentUsesFourByteDepthStencilUnits) {
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  constexpr VkDeviceSize kBaseAlignment = 16;
+  const VkDeviceSize deviceAlignment =
+      ctx.getVkPhysicalDeviceProperties().limits.optimalBufferCopyOffsetAlignment;
+  const VkDeviceSize expectedAlignment = std::max(kBaseAlignment, deviceAlignment);
+  const auto depthProperties = TextureFormatProperties::fromTextureFormat(TextureFormat::Z_UNorm24);
+  ASSERT_EQ(depthProperties.bytesPerBlock, 3u);
+  EXPECT_EQ(ctx.stagingDevice_->getImageCopyAlignment(depthProperties), expectedAlignment);
+  const auto stencilProperties = TextureFormatProperties::fromTextureFormat(TextureFormat::S_UInt8);
+  EXPECT_EQ(ctx.stagingDevice_->getImageCopyAlignment(stencilProperties), expectedAlignment);
+}
+
+TEST_F(VulkanStagingDeviceTest, ImageCopyAlignmentIsNonzeroForMultiplanarFormats) {
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  constexpr VkDeviceSize kBaseAlignment = 16;
+  const VkDeviceSize deviceAlignment =
+      ctx.getVkPhysicalDeviceProperties().limits.optimalBufferCopyOffsetAlignment;
+  const VkDeviceSize expectedAlignment = std::max(kBaseAlignment, deviceAlignment);
+  for (const TextureFormat format : {TextureFormat::YUV_NV12, TextureFormat::YUV_420p}) {
+    const auto properties = TextureFormatProperties::fromTextureFormat(format);
+    ASSERT_GT(properties.numPlanes, 1u);
+    ASSERT_EQ(properties.bytesPerBlock, 0u);
+    EXPECT_EQ(ctx.stagingDevice_->getImageCopyAlignment(properties), expectedAlignment);
+  }
 }
 
 TEST_F(VulkanStagingDeviceTest, MaxStagingBufferSizePositive) {

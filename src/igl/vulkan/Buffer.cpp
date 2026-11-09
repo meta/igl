@@ -61,9 +61,9 @@ Result Buffer::create(const BufferDesc& desc) {
   }
   if ((desc_.type & BufferDesc::BufferTypeBits::Uniform) != 0) {
     // TRANSFER_DST lets ICommandBuffer::updateBuffer() write any uniform buffer, including host
-    // visible ones.
-    usageFlags |=
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | optionalBDA;
+    // visible ones. Ring-buffer updates also copy from the previous allocation.
+    usageFlags |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT | optionalBDA;
   }
 
   if ((desc_.type & BufferDesc::BufferTypeBits::Storage) != 0) {
