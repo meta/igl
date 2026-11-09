@@ -50,7 +50,7 @@
 #include <format>
 #define IGL_FORMAT std::format
 #else
-#include <fmt/core.h>
+#include <fmt/format.h>
 #define IGL_FORMAT fmt::format
 #endif // __cpp_lib_format
 #endif // !defined(IGL_FORMAT)
