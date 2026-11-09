@@ -15,6 +15,7 @@
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanRenderPassBuilder.h>
+#include <igl/vulkan/VulkanVma.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
@@ -39,6 +40,27 @@ class VulkanContextExtendedTest : public ::testing::Test {
   igl::vulkan::VulkanContext& getVulkanContext() {
     auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
+  }
+
+  uint32_t vmaAllocationCount() {
+    VmaTotalStatistics stats{};
+    vmaCalculateStatistics(static_cast<VmaAllocator>(getVulkanContext().getVmaAllocator()), &stats);
+    return stats.total.statistics.allocationCount;
+  }
+
+  static void submitAndWait(ICommandQueue& cmdQueue) {
+    Result ret;
+    auto cmdBuf = cmdQueue.createCommandBuffer({}, &ret);
+    ASSERT_TRUE(ret.isOk());
+    cmdQueue.submit(*cmdBuf);
+    cmdBuf->waitUntilCompleted();
+  }
+
+  // Staging buffers created with the device are freed within the first few submissions.
+  static void settle(ICommandQueue& cmdQueue) {
+    for (int i = 0; i < 4; ++i) {
+      submitAndWait(cmdQueue);
+    }
   }
 };
 
@@ -73,6 +95,89 @@ TEST_F(VulkanContextExtendedTest, DeferredTaskExecution) {
   cmdQueue->submit(*cmdBuf);
 
   ctx.waitDeferredTasks();
+}
+
+TEST_F(VulkanContextExtendedTest, ReleasedTextureIsFreedAfterTwoSubmitsAndWaits) {
+  ASSERT_FALSE(getVulkanContext().config_.enableDescriptorIndexing);
+
+  Result ret;
+  auto cmdQueue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_TRUE(ret.isOk());
+  settle(*cmdQueue);
+  const uint32_t allocationsBefore = vmaAllocationCount();
+
+  {
+    const TextureDesc desc = TextureDesc::new2D(
+        TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled);
+    auto texture = iglDev_->createTexture(desc, &ret);
+    ASSERT_TRUE(ret.isOk());
+    ASSERT_NE(texture, nullptr);
+    EXPECT_EQ(vmaAllocationCount(), allocationsBefore + 1);
+  }
+
+  submitAndWait(*cmdQueue);
+  submitAndWait(*cmdQueue);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore);
+}
+
+TEST_F(VulkanContextExtendedTest, ReleasedTextureOutlivesAnOpenCommandBuffer) {
+  ASSERT_FALSE(getVulkanContext().config_.enableDescriptorIndexing);
+
+  Result ret;
+  auto cmdQueue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_TRUE(ret.isOk());
+  settle(*cmdQueue);
+  const uint32_t allocationsBefore = vmaAllocationCount();
+
+  // Recording may have used the texture, so it has to stay alive until this buffer is submitted.
+  auto openCmdBuf = cmdQueue->createCommandBuffer({}, &ret);
+  ASSERT_TRUE(ret.isOk());
+  {
+    const TextureDesc desc = TextureDesc::new2D(
+        TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled);
+    auto texture = iglDev_->createTexture(desc, &ret);
+    ASSERT_TRUE(ret.isOk());
+    ASSERT_NE(texture, nullptr);
+  }
+
+  submitAndWait(*cmdQueue);
+  submitAndWait(*cmdQueue);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore + 1);
+
+  cmdQueue->submit(*openCmdBuf);
+  openCmdBuf->waitUntilCompleted();
+  submitAndWait(*cmdQueue);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore);
+}
+
+TEST_F(VulkanContextExtendedTest, TextureViewKeepsItsBaseTextureAlive) {
+  ASSERT_FALSE(getVulkanContext().config_.enableDescriptorIndexing);
+
+  Result ret;
+  auto cmdQueue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_TRUE(ret.isOk());
+  settle(*cmdQueue);
+  const uint32_t allocationsBefore = vmaAllocationCount();
+
+  const TextureDesc desc = TextureDesc::new2D(
+      TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled);
+  auto baseTexture = iglDev_->createTexture(desc, &ret);
+  ASSERT_TRUE(ret.isOk());
+  ASSERT_NE(baseTexture, nullptr);
+  auto view = iglDev_->createTextureView(baseTexture, {.debugName = "view"}, &ret);
+  ASSERT_TRUE(ret.isOk());
+  ASSERT_NE(view, nullptr);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore + 1);
+
+  baseTexture.reset();
+  submitAndWait(*cmdQueue);
+  submitAndWait(*cmdQueue);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore + 1);
+
+  view.reset();
+  submitAndWait(*cmdQueue);
+  submitAndWait(*cmdQueue);
+  EXPECT_EQ(vmaAllocationCount(), allocationsBefore);
 }
 
 TEST_F(VulkanContextExtendedTest, GetPipelineCacheData) {

@@ -1810,13 +1810,15 @@ void VulkanContext::pruneTextures() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
 
   // here we remove deleted textures - everything which has only 1 reference is owned by this
-  // context and can be released safely
-
-  // textures
-  {
+  // context and can be released safely. Releasing a texture view can leave its base texture with
+  // only this context's reference, so repeat until nothing more is released.
+  bool released = true;
+  while (released) {
+    released = false;
     for (uint32_t i = 1; i < static_cast<uint32_t>(textures_.objects_.size()); i++) {
       if (textures_.objects_[i] && textures_.objects_[i].use_count() == 1) {
         textures_.destroy(textures_.getHandle(i));
+        released = true;
       }
     }
   }

@@ -7,6 +7,7 @@
 
 #include "VulkanImmediateCommands.h"
 
+#include <algorithm>
 #include <array>
 #include <type_traits>
 #include <igl/vulkan/Common.h>
@@ -483,6 +484,12 @@ bool VulkanImmediateCommands::signalSemaphore(VkSemaphore semaphore, uint64_t si
 
 VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::getLastSubmitHandle() const {
   return lastSubmitHandle_;
+}
+
+bool VulkanImmediateCommands::isAnyCommandBufferEncoding() const noexcept {
+  return std::any_of(buffers_.begin(), buffers_.end(), [](const CommandBufferWrapper& buf) {
+    return buf.isEncoding;
+  });
 }
 
 VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::getNextSubmitHandle() const {

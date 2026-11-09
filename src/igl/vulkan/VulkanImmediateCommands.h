@@ -169,6 +169,9 @@ class VulkanImmediateCommands final {
     }
   }
 
+  /// @brief Returns true if a command buffer has been acquired and not yet submitted or discarded
+  [[nodiscard]] bool isAnyCommandBufferEncoding() const noexcept;
+
   /// @brief Returns the last SubmitHandle, which was submitted when `submit()` was last called
   [[nodiscard]] SubmitHandle getLastSubmitHandle() const;
   [[nodiscard]] SubmitHandle getNextSubmitHandle() const;

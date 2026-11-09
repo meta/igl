@@ -133,6 +133,14 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
   if (shouldPresent) {
     ctx.present();
   }
+  // Without descriptor indexing no descriptor set refers to texture slots, so textures that only
+  // this context still references can be released here. When no other command buffer is being
+  // recorded, no unsubmitted work can use them, and their deferred destruction is tied to this
+  // submission, whose fence also covers every earlier submission. A later submit-and-wait then
+  // frees every texture the app released.
+  if (!ctx.config_.enableDescriptorIndexing && !ctx.immediate_->isAnyCommandBufferEncoding()) {
+    ctx.pruneTextures();
+  }
   return finishCommandBuffer(submitHandle);
 }
 

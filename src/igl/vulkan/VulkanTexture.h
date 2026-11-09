@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <memory>
 #include <igl/vulkan/VulkanImage.h>
 #include <igl/vulkan/VulkanImageView.h>
 
@@ -23,6 +24,10 @@ class VulkanTexture final {
   VulkanTexture& operator=(VulkanTexture&&) noexcept = default;
 
  public:
+  // Set on a texture view, whose `image` does not own the underlying VkImage: the texture that owns
+  // it. Declared first so it is released after this view's image view.
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  std::shared_ptr<VulkanTexture> baseTexture_;
   VulkanImage image;
   // NOLINTNEXTLINE(readability-identifier-naming)
   VulkanImageView imageView_;

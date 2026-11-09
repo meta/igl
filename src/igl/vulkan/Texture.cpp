@@ -313,7 +313,7 @@ Result Texture::createView(const Texture& baseTexture, const TextureViewDesc& de
   const std::string debugNameImageView =
       !desc_.debugName.empty() ? IGL_FORMAT("Image View: {}", desc.debugName.c_str()) : "";
 
-  // make a non-owning copy
+  // A non-owning copy: the view's VulkanTexture holds the base texture, which owns the VkImage.
   VulkanImage image(vulkanTexture.image);
   image.isExternallyManaged_ = true;
 
@@ -389,6 +389,10 @@ Result Texture::createView(const Texture& baseTexture, const TextureViewDesc& de
   const VulkanContext& ctx = device_.getVulkanContext();
 
   texture_ = ctx.createTexture(std::move(image), std::move(imageView), desc.debugName.c_str());
+  if (!IGL_DEBUG_VERIFY(texture_)) {
+    return Result(Result::Code::RuntimeError, "Cannot create a texture view");
+  }
+  texture_->baseTexture_ = baseTexture.texture_;
 
   return Result();
 }
