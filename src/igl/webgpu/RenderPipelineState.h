@@ -19,7 +19,6 @@
 
 namespace igl::webgpu {
 
-class BindLayoutCache;
 class DeviceFeatureSet;
 class RenderPipelineReflection;
 class ShaderModule;
