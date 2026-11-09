@@ -9,7 +9,7 @@
 
 #include <shell/openxr/mobile/vulkan/XrSwapchainProviderImplVulkan.h>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <shell/openxr/XrLog.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/Texture.h>
