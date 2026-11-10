@@ -47,7 +47,7 @@ constexpr size_t kColorBufIndex = 1;
 //
 // Compute shaders that write a color (passed via buffer) to every pixel of a storage image.
 // The color is passed as a float4 so we can control exactly what value is written per-backend
-// (e.g., linear orange for Metal sRGB, direct orange for Vulkan sRGB).
+// (e.g., linear orange for Metal and Vulkan sRGB, where imageStore() encodes linear to sRGB).
 //
 
 constexpr std::string_view kOglImageStoreShader =
@@ -153,15 +153,18 @@ void ComputeImageStoreTest::runImageStoreTest(TextureFormat format) {
   ASSERT_TRUE(texture != nullptr);
 
   // Determine the color to write.
-  // Metal applies sRGB conversion on imageStore, so for sRGB textures we feed the linear
-  // equivalent so that after conversion we read back the expected sRGB orange.
-  // Vulkan (with the MoltenVK fix) does NOT apply sRGB conversion on imageStore, so we
-  // write the sRGB orange directly.
+  // Metal and Vulkan apply sRGB conversion on imageStore, so for sRGB textures we feed
+  // the linear equivalent so that after conversion we read back the expected sRGB orange.
+  // For Vulkan this is mandated by the spec (Images, "Image Writes": if the image format
+  // is sRGB, a linear to sRGB conversion is applied), and MoltenVK implements it via
+  // Metal. Feeding the sRGB orange directly would treat it as linear and encode it a
+  // second time: 0.502 linear encodes to ~0.735 sRGB, i.e. byte 188 instead of 128.
   const bool isSRGB = (format == TextureFormat::RGBA_SRGB);
   const bool isMetal = (iglDev_->getBackendType() == igl::BackendType::Metal);
+  const bool isVulkan = (iglDev_->getBackendType() == igl::BackendType::Vulkan);
 
   glm::vec4 writeColor(kOrangeR / 255.0f, kOrangeG / 255.0f, kOrangeB / 255.0f, kOrangeA / 255.0f);
-  if (isSRGB && isMetal) {
+  if (isSRGB && (isMetal || isVulkan)) {
     writeColor = util::convertSRGBToLinear(writeColor);
   }
 
