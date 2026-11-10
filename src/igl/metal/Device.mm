@@ -177,7 +177,14 @@ std::shared_ptr<ISamplerState> Device::createSamplerState(const SamplerStateDesc
  * for dimensions, layers, samples, and mip levels. Rejects
  * array textures unless type is TwoDArray, and rejects
  * exportable textures. For multisample textures, mip level
- * count is forced to 1.
+ * count is forced to 1. Multisample textures use Private
+ * storage: Metal rejects multisample textures with Shared
+ * or Managed storage in `validateWithDevice:`, which aborts
+ * the process instead of returning an error, so a descriptor
+ * that does not already request Private/Memoryless storage
+ * is upgraded rather than handed to Metal unchanged. An unsupported
+ * sample count is rejected with `Unsupported` for the same
+ * reason.
  *
  * @param[in] desc Texture descriptor specifying format,
  *        dimensions, usage, storage, and other properties.
@@ -238,25 +245,44 @@ std::shared_ptr<ITexture> Device::createTexture( // NOLINT(bugprone-exception-es
   metalDesc.sampleCount = 1;
   if (metalDesc.textureType == MTLTextureType2DMultisample) {
     metalDesc.mipmapLevelCount = 1;
-    if (sanitized.numSamples > 0) {
-      IGL_DEBUG_ASSERT([device_ supportsTextureSampleCount:sanitized.numSamples]);
-      metalDesc.sampleCount = sanitized.numSamples;
+    if (![device_ supportsTextureSampleCount:sanitized.numSamples]) {
+      Result::setResult(outResult,
+                        Result::Code::Unsupported,
+                        "Device does not support the requested texture sample count");
+      return nullptr;
     }
+    metalDesc.sampleCount = sanitized.numSamples;
   }
 #if TARGET_OS_OSX
   // MTLTextureType2DMultisampleArray not available in iOS
   if (@available(macOS 10.14, *)) {
     if (metalDesc.textureType == MTLTextureType2DMultisampleArray) {
       metalDesc.mipmapLevelCount = 1;
+      if (![device_ supportsTextureSampleCount:sanitized.numSamples]) {
+        Result::setResult(outResult,
+                          Result::Code::Unsupported,
+                          "Device does not support the requested texture sample count");
+        return nullptr;
+      }
+      metalDesc.sampleCount = sanitized.numSamples;
     }
   }
 #endif
   const bool supportsMemoryless = deviceFeatureSet_.supportsMemorylessTextures();
   metalDesc.usage = Texture::toMTLTextureUsage(sanitized.usage);
-  metalDesc.storageMode = toMTLStorageMode(sanitized.storage, supportsMemoryless);
+  // Metal rejects multisample textures with Shared or Managed storage. Upgrade any other
+  // requested storage (including the default Invalid, which maps to Shared/Managed) to Private,
+  // matching how `toMTLStorageMode()` falls back to Private for Memoryless textures on devices
+  // without tile memory.
+  const ResourceStorage textureStorage = sanitized.numSamples > 1 &&
+                                                 sanitized.storage != ResourceStorage::Private &&
+                                                 sanitized.storage != ResourceStorage::Memoryless
+                                             ? ResourceStorage::Private
+                                             : sanitized.storage;
+  metalDesc.storageMode = toMTLStorageMode(textureStorage, supportsMemoryless);
 
   metalDesc.resourceOptions = MTLResourceCPUCacheModeDefaultCache |
-                              toMTLResourceStorageMode(sanitized.storage, supportsMemoryless);
+                              toMTLResourceStorageMode(textureStorage, supportsMemoryless);
 
   id<MTLTexture> metalObject = [device_ newTextureWithDescriptor:metalDesc];
   if (!metalObject) {
@@ -266,7 +292,7 @@ std::shared_ptr<ITexture> Device::createTexture( // NOLINT(bugprone-exception-es
   }
   metalObject.label = [NSString stringWithUTF8String:desc.debugName.c_str()];
   auto iglObject = std::make_shared<Texture>(
-      metalObject, *this, desc.mipmapGeneration, sanitized.usage, desc.storage);
+      metalObject, *this, desc.mipmapGeneration, sanitized.usage, textureStorage);
   if (hasResourceTracker()) {
     iglObject->initResourceTracker(getResourceTracker(), desc.debugName);
   }
