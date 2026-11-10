@@ -675,6 +675,10 @@ VulkanContext::VulkanContext(VulkanContextConfig config,
 
   createInstance();
 
+  if (!loaderVersionSupported_) {
+    return;
+  }
+
   if (config_.headless) {
     IGL_DEBUG_ASSERT(features_.has_VK_EXT_headless_surface,
                      "VK_EXT_headless_surface extension is not supported");
@@ -838,6 +842,17 @@ void VulkanContext::createInstance() {
 
   IGL_DEBUG_ASSERT(vkInstance_ == VK_NULL_HANDLE, "createInstance() is not reentrant");
 
+  uint32_t instanceApiVersion = VK_API_VERSION_1_0;
+  if (vf_.vkEnumerateInstanceVersion) {
+    VK_ASSERT(vf_.vkEnumerateInstanceVersion(&instanceApiVersion));
+  }
+  const Result versionResult = checkVulkanApiVersion(instanceApiVersion);
+  loaderVersionSupported_ = versionResult.isOk();
+  if (!loaderVersionSupported_) {
+    IGL_LOG_ERROR("%s\n", versionResult.message.c_str());
+    return;
+  }
+
   // Enumerate all instance extensions
   features_.enumerate(vf_);
   // NOLINTBEGIN(readability-identifier-naming)
@@ -915,9 +930,6 @@ void VulkanContext::createInstance() {
   // vkCmdSetDepthTestEnable(), etc.); if the app declares a lower apiVersion than those functions'
   // core version, the loader returns null for them from vkGetDeviceProcAddr() even on a 1.3+
   // device, causing a null-pointer crash at draw time.
-  uint32_t instanceApiVersion = VK_API_VERSION_1_2;
-  vf_.vkEnumerateInstanceVersion(&instanceApiVersion);
-
   const VkApplicationInfo appInfo = {
       .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
       .pApplicationName = config_.applicationName,
@@ -1029,6 +1041,8 @@ Result VulkanContext::queryDevices(const HWDeviceQueryDesc& desc,
   };
 
   const HWDeviceType desiredDeviceType = desc.hardwareType;
+  uint32_t highestSkippedVersion = 0;
+  bool skippedLegacyDevice = false;
 
   for (uint32_t i = 0; i < deviceCount; ++i) {
     VkPhysicalDevice physicalDevice = vkDevices[i];
@@ -1042,6 +1056,12 @@ Result VulkanContext::queryDevices(const HWDeviceQueryDesc& desc,
       continue;
     }
 
+    if (!checkVulkanApiVersion(deviceProperties.apiVersion).isOk()) {
+      highestSkippedVersion = std::max(highestSkippedVersion, deviceProperties.apiVersion);
+      skippedLegacyDevice = true;
+      continue;
+    }
+
     outDevices.emplace_back(reinterpret_cast<uintptr_t>(vkDevices[i]),
                             deviceType,
                             deviceProperties.vendorID,
@@ -1050,6 +1070,9 @@ Result VulkanContext::queryDevices(const HWDeviceQueryDesc& desc,
   }
 
   if (outDevices.empty()) {
+    if (skippedLegacyDevice) {
+      return checkVulkanApiVersion(highestSkippedVersion);
+    }
     return Result(Result::Code::Unsupported, "No Vulkan devices matching your criteria");
   }
 
@@ -1072,6 +1095,16 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
 
   vkPhysicalDevice_ =
       reinterpret_cast<VkPhysicalDevice>(desc.guid); // NOLINT(performance-no-int-to-ptr)
+
+  VkPhysicalDeviceProperties deviceProperties{};
+  vf_.vkGetPhysicalDeviceProperties(vkPhysicalDevice_, &deviceProperties);
+  const Result versionResult = checkVulkanApiVersion(deviceProperties.apiVersion);
+  if (!versionResult.isOk()) {
+    return versionResult;
+  }
+  if (!vf_.vkGetPhysicalDeviceFeatures2 || !vf_.vkGetPhysicalDeviceProperties2) {
+    return Result(Result::Code::Unsupported, "Vulkan 1.1 functions are not loaded");
+  }
 
   // Caches the memory types
   vf_.vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice_, &memoryProperties);

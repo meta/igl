@@ -17,7 +17,11 @@ std::unique_ptr<VulkanContext> HWDevice::createContext(const VulkanContextConfig
                                                        void* IGL_NULLABLE display) {
   // @fb-only
   // NOLINTNEXTLINE(facebook-hte-NullableDereference)
-  return std::make_unique<VulkanContext>(config, window, display);
+  auto context = std::make_unique<VulkanContext>(config, window, display);
+  if (!context->loaderVersionSupported_) {
+    return nullptr;
+  }
+  return context;
 }
 
 std::vector<HWDeviceDesc> HWDevice::queryDevices(VulkanContext& ctx,
@@ -44,7 +48,12 @@ std::unique_ptr<Device> HWDevice::create(std::unique_ptr<VulkanContext> ctx,
                                          Result* IGL_NULLABLE outResult) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
 
-  IGL_DEBUG_ASSERT(ctx);
+  if (!ctx) {
+    Result::setResult(outResult,
+                      Result(Result::Code::Unsupported,
+                             "Vulkan context is unavailable; Vulkan 1.1 or newer is required"));
+    return nullptr;
+  }
 
   auto result =
       ctx->initContext(desc, numExtraDeviceExtensions, extraDeviceExtensions, features, debugName);

@@ -266,7 +266,11 @@ class VulkanFeatures final {
                                VkPhysicalDevice physicalDevice,
                                uint32_t apiVersion);
   void resetRequestedFeatures() noexcept;
-  [[nodiscard]] std::array<VkBaseOutStructure*, 24> featureStructures() noexcept;
+  struct FeatureStructure {
+    VkBaseOutStructure* structure;
+    size_t size;
+  };
+  [[nodiscard]] std::array<FeatureStructure, 24> featureStructures() noexcept;
   [[nodiscard]] VkBaseOutStructure* requestedFeatureStructure(FeatureRequest& request) noexcept;
 };
 

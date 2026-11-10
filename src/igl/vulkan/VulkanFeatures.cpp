@@ -13,6 +13,14 @@
 
 namespace igl::vulkan {
 
+namespace {
+void clearFeaturePayload(VkBaseOutStructure* IGL_NONNULL structure, size_t size) noexcept {
+  std::memset(reinterpret_cast<uint8_t*>(structure) + sizeof(VkBaseOutStructure),
+              0,
+              size - sizeof(VkBaseOutStructure));
+}
+} // namespace
+
 // NOLINTNEXTLINE(bugprone-exception-escape)
 VulkanFeatures::VulkanFeatures(VulkanContextConfig config) noexcept :
   // Vulkan 1.1
@@ -232,38 +240,42 @@ const void* VulkanFeatures::feature(VkStructureType type) const noexcept {
   return nullptr;
 }
 
-std::array<VkBaseOutStructure*, 24> VulkanFeatures::featureStructures() noexcept {
-  return {reinterpret_cast<VkBaseOutStructure*>(&vkPhysicalDeviceFeatures2),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresSamplerYcbcrConversion),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderDrawParameters),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresMultiview),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresIndexTypeUint8),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresSynchronization2),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresTimelineSemaphore),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresVulkanMemoryModel),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderFloat16Int8),
-          reinterpret_cast<VkBaseOutStructure*>(&features16BitStorage),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresBufferDeviceAddress),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresDescriptorIndexing),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresMultiviewPerViewViewports),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresFragmentDensityMap),
-          reinterpret_cast<VkBaseOutStructure*>(&features8BitStorage),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresUniformBufferStandardLayout),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresScalarBlockLayout),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresMeshShader),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresFragmentShadingRate),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresDescriptorBuffer),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresTextureCompressionAstcHdr),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresExtendedDynamicState),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresExtendedDynamicState2),
-          reinterpret_cast<VkBaseOutStructure*>(&featuresShaderIntegerDotProduct)};
+std::array<VulkanFeatures::FeatureStructure, 24> VulkanFeatures::featureStructures() noexcept {
+  const auto entry = [](auto& feature) {
+    return FeatureStructure{.structure = reinterpret_cast<VkBaseOutStructure*>(&feature),
+                            .size = sizeof(feature)};
+  };
+  return {entry(vkPhysicalDeviceFeatures2),
+          entry(featuresSamplerYcbcrConversion),
+          entry(featuresShaderDrawParameters),
+          entry(featuresMultiview),
+          entry(featuresIndexTypeUint8),
+          entry(featuresSynchronization2),
+          entry(featuresTimelineSemaphore),
+          entry(featuresVulkanMemoryModel),
+          entry(featuresShaderFloat16Int8),
+          entry(features16BitStorage),
+          entry(featuresBufferDeviceAddress),
+          entry(featuresDescriptorIndexing),
+          entry(featuresMultiviewPerViewViewports),
+          entry(featuresFragmentDensityMap),
+          entry(features8BitStorage),
+          entry(featuresUniformBufferStandardLayout),
+          entry(featuresScalarBlockLayout),
+          entry(featuresMeshShader),
+          entry(featuresFragmentShadingRate),
+          entry(featuresDescriptorBuffer),
+          entry(featuresTextureCompressionAstcHdr),
+          entry(featuresExtendedDynamicState),
+          entry(featuresExtendedDynamicState2),
+          entry(featuresShaderIntegerDotProduct)};
 }
 
 VkBaseOutStructure* VulkanFeatures::requestedFeatureStructure(FeatureRequest& request) noexcept {
   auto* selected = reinterpret_cast<VkBaseOutStructure*>(request.selected.data());
-  for (auto* structure : featureStructures()) {
-    if (structure->sType == selected->sType) {
-      return structure;
+  for (const auto& feature : featureStructures()) {
+    if (feature.structure->sType == selected->sType) {
+      return feature.structure;
     }
   }
   return selected;
@@ -339,9 +351,7 @@ void VulkanFeatures::resetRequestedFeatures() noexcept {
   for (auto& request : featureRequests_) {
     if (request.addedToChain) {
       auto* structure = requestedFeatureStructure(request);
-      std::memset(reinterpret_cast<uint8_t*>(structure) + sizeof(VkBaseOutStructure),
-                  0,
-                  request.size - sizeof(VkBaseOutStructure));
+      clearFeaturePayload(structure, request.size);
     }
     const VkStructureType type =
         reinterpret_cast<const VkBaseOutStructure*>(request.requested.data())->sType;
@@ -356,8 +366,15 @@ void VulkanFeatures::resetRequestedFeatures() noexcept {
 void VulkanFeatures::populateWithAvailablePhysicalDeviceFeatures(
     const VulkanContext& context,
     VkPhysicalDevice physicalDevice) noexcept {
-  IGL_DEBUG_ASSERT(context.vf_.vkGetPhysicalDeviceFeatures2,
-                   "Pointer to function vkGetPhysicalDeviceFeatures2() is nullptr");
+  if (!context.vf_.vkGetPhysicalDeviceFeatures2) {
+    IGL_LOG_ERROR("Pointer to function vkGetPhysicalDeviceFeatures2() is nullptr\n");
+    resetRequestedFeatures();
+    for (const auto& feature : featureStructures()) {
+      clearFeaturePayload(feature.structure, feature.size);
+    }
+    assembleFeatureChain(context.config_);
+    return;
+  }
   uint32_t numExtensions = 0;
   context.vf_.vkEnumerateDeviceExtensionProperties(
       physicalDevice, nullptr, &numExtensions, nullptr);
@@ -491,8 +508,8 @@ void VulkanFeatures::assembleFeatureChain(const VulkanContextConfig& contextConf
   // Reset all pNext pointers. We might be copying the chain from another VulkanFeatures object,
   // so we need to reset the pNext pointers to avoid dangling pointers. Some of the extensions'
   // pointers are guarded by #ifdefs below
-  for (auto* structure : featureStructures()) {
-    structure->pNext = nullptr;
+  for (const auto& feature : featureStructures()) {
+    feature.structure->pNext = nullptr;
   }
 
   // Add the required and optional features to the VkPhysicalDeviceFetaures2_

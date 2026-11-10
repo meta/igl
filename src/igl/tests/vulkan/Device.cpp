@@ -460,6 +460,7 @@ GTEST_TEST(VulkanContext, DescriptorIndexing) {
   std::unique_ptr<igl::vulkan::Device> iglDev = nullptr;
 
   auto ctx = igl::vulkan::HWDevice::createContext(config, nullptr);
+  ASSERT_NE(ctx, nullptr);
 
   Result ret;
 

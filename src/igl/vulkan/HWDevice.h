@@ -29,6 +29,7 @@ class HWDevice final {
    * extensions to enable for the context.
    * @param display is a pointer to an Xlib Display connection to the X server. Used only when
    * `VK_USE_PLATFORM_XLIB_KHR` is defined.
+   * @return nullptr when the Vulkan loader supports an API version below 1.1.
    */
   static std::unique_ptr<VulkanContext> createContext(const VulkanContextConfig& config,
                                                       void* IGL_NULLABLE window,

@@ -9,7 +9,9 @@
 
 #include <igl/vulkan/VulkanFeatures.h>
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 #include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/HWDevice.h>
@@ -20,6 +22,65 @@
 #endif
 
 namespace igl::tests {
+
+class VulkanApiVersionTest : public ::testing::Test {};
+
+TEST_F(VulkanApiVersionTest, RejectsVulkan10) {
+  EXPECT_EQ(vulkan::checkVulkanApiVersion(VK_API_VERSION_1_0).code, Result::Code::Unsupported);
+  const Result result = vulkan::checkVulkanApiVersion(VK_MAKE_API_VERSION(0, 1, 0, 99));
+  EXPECT_EQ(result.code, Result::Code::Unsupported);
+  EXPECT_EQ(result.message, "Vulkan 1.1 or newer is required (found 1.0.99)");
+  EXPECT_EQ(vulkan::checkVulkanApiVersion(VK_MAKE_API_VERSION(0, 1, 0, 4095)).code,
+            Result::Code::Unsupported);
+}
+
+TEST_F(VulkanApiVersionTest, AcceptsVulkan11AndNewer) {
+  EXPECT_TRUE(vulkan::checkVulkanApiVersion(VK_API_VERSION_1_1).isOk());
+  EXPECT_TRUE(vulkan::checkVulkanApiVersion(VK_MAKE_API_VERSION(0, 1, 1, 4095)).isOk());
+  EXPECT_TRUE(vulkan::checkVulkanApiVersion(VK_API_VERSION_1_2).isOk());
+  EXPECT_TRUE(vulkan::checkVulkanApiVersion(VK_API_VERSION_1_3).isOk());
+}
+
+TEST_F(VulkanApiVersionTest, CreateRejectsMissingContext) {
+  Result result;
+  const auto device = vulkan::HWDevice::create(
+      nullptr, HWDeviceDesc(0, HWDeviceType::Unknown), 0, 0, 0, nullptr, nullptr, nullptr, &result);
+  EXPECT_EQ(device, nullptr);
+  EXPECT_EQ(result.code, Result::Code::Unsupported);
+}
+
+#if IGL_PLATFORM_MACOSX && !defined(IGL_USE_STATIC_KOSMICKRISP)
+TEST_F(VulkanApiVersionTest, InstanceCreationFailureKeepsContext) {
+  vulkan::setupMoltenVKEnvironment();
+  const vulkan::VulkanContextConfig config = {.enableValidation = false, .enableExtraLogs = false};
+  {
+    const auto context = vulkan::HWDevice::createContext(config, nullptr);
+    ASSERT_NE(context, nullptr);
+    uint32_t count = 0;
+    ASSERT_EQ(context->vf_.vkEnumerateInstanceLayerProperties(&count, nullptr), VK_SUCCESS);
+    std::vector<VkLayerProperties> layers(count);
+    ASSERT_EQ(context->vf_.vkEnumerateInstanceLayerProperties(&count, layers.data()), VK_SUCCESS);
+    if (std::any_of(layers.begin(), layers.end(), [](const auto& layer) {
+          return std::strcmp(layer.layerName, "VK_LAYER_LUNARG_gfxreconstruct") == 0;
+        })) {
+      GTEST_SKIP() << "The gfxreconstruct layer is available";
+    }
+  }
+  auto failedConfig = config;
+  failedConfig.enableGfxReconstruct = true;
+  const bool debugBreakEnabled = igl::isDebugBreakEnabled();
+  igl::setDebugBreakEnabled(false);
+  const auto context = vulkan::HWDevice::createContext(failedConfig, nullptr);
+  igl::setDebugBreakEnabled(debugBreakEnabled);
+  ASSERT_NE(context, nullptr);
+  EXPECT_EQ(context->getVkInstance(), VK_NULL_HANDLE);
+  Result result;
+  const auto devices =
+      vulkan::HWDevice::queryDevices(*context, HWDeviceQueryDesc(HWDeviceType::Unknown), &result);
+  EXPECT_TRUE(devices.empty());
+  EXPECT_EQ(result.code, Result::Code::Unsupported);
+}
+#endif
 
 //
 // VulkanFeaturesTest
@@ -36,6 +97,30 @@ TEST_F(VulkanFeaturesTest, Construct) {
   const igl::vulkan::VulkanFeatures features(config);
 
   EXPECT_EQ(features.featuresShaderFloat16Int8.pNext, nullptr);
+}
+
+TEST_F(VulkanFeaturesTest, MissingFeatureQueryClearsCachedValues) {
+#if IGL_PLATFORM_MACOSX
+  vulkan::setupMoltenVKEnvironment();
+#endif
+  const vulkan::VulkanContextConfig config = {.enableValidation = false, .enableExtraLogs = false};
+  const auto context = vulkan::HWDevice::createContext(config, nullptr);
+  ASSERT_NE(context, nullptr);
+  vulkan::VulkanFeatures features(config);
+  features.featuresShaderFloat16Int8.shaderFloat16 = VK_TRUE;
+  auto& functions = const_cast<VulkanFunctionTable&>(context->vf_);
+  const PFN_vkGetPhysicalDeviceFeatures2 getFeatures = functions.vkGetPhysicalDeviceFeatures2;
+  functions.vkGetPhysicalDeviceFeatures2 = nullptr;
+  features.populateWithAvailablePhysicalDeviceFeatures(*context, VK_NULL_HANDLE);
+  functions.vkGetPhysicalDeviceFeatures2 = getFeatures;
+  const VkPhysicalDeviceFeatures empty{};
+  EXPECT_EQ(std::memcmp(&features.vkPhysicalDeviceFeatures2.features, &empty, sizeof(empty)), 0);
+  EXPECT_EQ(features.featuresMultiview.multiview, VK_FALSE);
+  EXPECT_EQ(features.featuresSamplerYcbcrConversion.samplerYcbcrConversion, VK_FALSE);
+  EXPECT_EQ(features.featuresBufferDeviceAddress.bufferDeviceAddress, VK_FALSE);
+  EXPECT_EQ(features.featuresShaderFloat16Int8.shaderFloat16, VK_FALSE);
+  EXPECT_EQ(features.vkPhysicalDeviceFeatures2.sType, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
+  EXPECT_NE(features.vkPhysicalDeviceFeatures2.pNext, nullptr);
 }
 
 // Copying ***************************************************************************

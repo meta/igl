@@ -383,6 +383,7 @@ class VulkanContext final {
   uint32_t getBindGroupUsageMask(BindGroupBufferHandle handle) const;
 
  private:
+  friend class HWDevice;
   friend class Device;
   friend class VulkanStagingDevice;
   friend class VulkanSwapchain;
@@ -394,6 +395,7 @@ class VulkanContext final {
   std::unique_ptr<VulkanFunctionTable> tableImpl_;
 
   VkInstance IGL_NULLABLE vkInstance_ = VK_NULL_HANDLE;
+  bool loaderVersionSupported_ = false;
   VkDebugUtilsMessengerEXT vkDebugUtilsMessenger_ = VK_NULL_HANDLE;
   VkSurfaceKHR vkSurface_ = VK_NULL_HANDLE;
   VkPhysicalDevice IGL_NULLABLE vkPhysicalDevice_ = VK_NULL_HANDLE;

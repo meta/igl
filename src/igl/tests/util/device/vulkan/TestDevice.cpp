@@ -68,6 +68,9 @@ std::unique_ptr<igl::vulkan::Device> createTestDevice(
   Result ret;
 
   auto ctx = igl::vulkan::HWDevice::createContext(config, nullptr);
+  if (!ctx) {
+    return nullptr;
+  }
 
   std::vector<HWDeviceDesc> devices =
       igl::vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &ret);

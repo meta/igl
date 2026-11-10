@@ -196,6 +196,18 @@ constexpr VkImageLayout kInputAttachmentImageLayout = VK_IMAGE_LAYOUT_SHADER_REA
 // values
 
 Result getResultFromVkResult(VkResult result);
+
+inline Result checkVulkanApiVersion(uint32_t apiVersion) {
+  if (apiVersion >= VK_API_VERSION_1_1) {
+    return Result();
+  }
+  return Result(Result::Code::Unsupported,
+                IGL_FORMAT("Vulkan 1.1 or newer is required (found {}.{}.{})",
+                           VK_API_VERSION_MAJOR(apiVersion),
+                           VK_API_VERSION_MINOR(apiVersion),
+                           VK_API_VERSION_PATCH(apiVersion)));
+}
+
 void setResultFrom(Result* IGL_NULLABLE outResult, VkResult result);
 VkFormat textureFormatToVkFormat(TextureFormat format);
 TextureFormat vkFormatToTextureFormat(VkFormat format);
