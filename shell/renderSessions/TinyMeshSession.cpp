@@ -360,17 +360,18 @@ TinyMeshSession::TinyMeshSession(std::shared_ptr<Platform> platform) :
 void TinyMeshSession::initialize() noexcept {
   device_ = &getPlatform().getDevice();
 
-  // Vertex buffer, Index buffer and Vertex Input. Buffers are allocated in GPU memory.
+  // Vertex buffer, Index buffer and Vertex Input.
+  // Shared, not Private: virtualized Metal GPUs fail to create Private buffers with data.
   vb0_ = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Vertex,
                                           .data = kVertexData0,
                                           .length = sizeof(kVertexData0),
-                                          .storage = ResourceStorage::Private,
+                                          .storage = ResourceStorage::Shared,
                                           .debugName = "Buffer: vertex"},
                                nullptr);
   ib0_ = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Index,
                                           .data = kIndexData,
                                           .length = sizeof(kIndexData),
-                                          .storage = ResourceStorage::Private,
+                                          .storage = ResourceStorage::Shared,
                                           .debugName = "Buffer: index"},
                                nullptr);
   const size_t perObjectStride = getPerObjectStride(*device_);
