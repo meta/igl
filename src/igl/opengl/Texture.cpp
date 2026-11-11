@@ -349,14 +349,19 @@ bool Texture::toFormatDescGL(const IContext& ctx,
     }
     return true;
 
-  case TextureFormat::RGBA_SRGB:
-    format = deviceFeatures.hasExtension(Extensions::Srgb) ? GL_SRGB_ALPHA : GL_RGBA;
+  case TextureFormat::RGBA_SRGB: {
+    const bool usesGles3OrNewer = DeviceFeatureSet::usesOpenGLES() &&
+                                  deviceFeatures.getGLVersion() >= GLVersion::v3_0_ES;
+    const bool usesLegacySrgbFormat = deviceFeatures.hasExtension(Extensions::Srgb) &&
+                                      !usesGles3OrNewer;
+    format = usesLegacySrgbFormat ? GL_SRGB_ALPHA : GL_RGBA;
     type = GL_UNSIGNED_BYTE;
     internalFormat = GL_SRGB8_ALPHA8;
     if (texImage && !deviceFeatures.hasTextureFeature(TextureFeatures::ColorTexImageSrgba8)) {
       internalFormat = GL_SRGB_ALPHA;
     }
     return true;
+  }
 
   case TextureFormat::BGRA_SRGB:
     format = GL_BGRA;
