@@ -299,6 +299,11 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
 #error Unsupported OS
 #endif
 
+    if (!ctx) {
+      IGL_LOG_ERROR("Vulkan 1.1 or newer is required.\n");
+      return nullptr;
+    }
+
     std::vector<HWDeviceDesc> devices =
         vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::DiscreteGpu), nullptr);
     if (devices.empty()) {
@@ -310,9 +315,16 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
       devices = vulkan::HWDevice::queryDevices(
           *ctx, HWDeviceQueryDesc(HWDeviceType::SoftwareGpu), nullptr);
     }
+    if (devices.empty()) {
+      IGL_LOG_ERROR("No suitable Vulkan device.\n");
+      return nullptr;
+    }
     device = vulkan::HWDevice::create(
         std::move(ctx), devices[0], static_cast<uint32_t>(width_), static_cast<uint32_t>(height_));
-    IGL_DEBUG_ASSERT(device);
+    if (!device) {
+      IGL_LOG_ERROR("Failed to create a device.\n");
+      return nullptr;
+    }
   }
 
   // Vertex buffer, Index buffer and Vertex Input. Buffers are allocated in GPU memory.
@@ -675,6 +687,10 @@ int main(int argc, char* argv[]) {
   }
 
   window = initIGL(isHeadless, enableVulkanValidationLayers);
+  if (!device) {
+    glfwTerminate();
+    return 1;
+  }
 
   createFramebuffer(getVulkanNativeDrawable());
   createRenderPipeline();

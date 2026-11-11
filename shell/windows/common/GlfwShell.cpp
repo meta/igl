@@ -225,7 +225,7 @@ bool GlfwShell::initialize(int argc,
   }
 
   platform_ = createPlatform();
-  if (IGL_DEBUG_VERIFY_NOT(!platform_)) {
+  if (!platform_) {
     return false;
   }
   session_ = factory->createRenderSession(platform_);

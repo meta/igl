@@ -634,7 +634,7 @@ igl::FPSCounter fps_;
 constexpr uint32_t kNumBufferedFrames = 3;
 
 // NOLINTBEGIN(facebook-static-object-destructor-check)
-std::unique_ptr<IDevice> device_;
+std::unique_ptr<IDevice> device_; // NOLINT(readability-identifier-naming)
 std::shared_ptr<ICommandQueue> commandQueue_;
 RenderPassDesc renderPassOffscreen_;
 RenderPassDesc renderPassMain_;
@@ -963,6 +963,10 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
 #else
 #error Unsupported OS
 #endif
+      if (!ctx) {
+        IGL_LOG_ERROR("Vulkan 1.1 or newer is required.\n");
+        return nullptr;
+      }
       const HWDeviceType hardwareType = kPreferIntegratedGPU ? HWDeviceType::IntegratedGpu
                                                              : HWDeviceType::DiscreteGpu;
       std::vector<HWDeviceDesc> devices =
@@ -978,13 +982,19 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
         devices = vulkan::HWDevice::queryDevices(
             *ctx, HWDeviceQueryDesc(HWDeviceType::SoftwareGpu), nullptr);
       }
-      IGL_DEBUG_ASSERT(!devices.empty(), "GPU is not found");
+      if (devices.empty()) {
+        IGL_LOG_ERROR("No suitable Vulkan device.\n");
+        return nullptr;
+      }
       device_ = vulkan::HWDevice::create(std::move(ctx),
                                          devices[0],
                                          static_cast<uint32_t>(width_),
                                          static_cast<uint32_t>(height_));
 #endif
-      IGL_DEBUG_ASSERT(device_);
+      if (!device_) {
+        IGL_LOG_ERROR("Failed to create a device.\n");
+        return nullptr;
+      }
     }
   }
 
@@ -2652,6 +2662,10 @@ int main(int argc, char* argv[]) {
   }
 
   GLFWwindow* window = initIGL(isHeadless, enableVulkanValidationLayers);
+  if (!device_) {
+    glfwTerminate();
+    return EXIT_FAILURE;
+  }
   initModel(kNumSamplesMSAA);
 
   if (kEnableCompression) {

@@ -232,6 +232,11 @@ static GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanVali
 #error Unsupported OS
 #endif
 
+    if (!ctx) {
+      IGL_LOG_ERROR("Vulkan 1.1 or newer is required.\n");
+      return nullptr;
+    }
+
     std::vector<HWDeviceDesc> devices =
         vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::DiscreteGpu), nullptr);
     if (devices.empty()) {
@@ -243,11 +248,18 @@ static GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanVali
       devices = vulkan::HWDevice::queryDevices(
           *ctx, HWDeviceQueryDesc(HWDeviceType::SoftwareGpu), nullptr);
     }
+    if (devices.empty()) {
+      IGL_LOG_ERROR("No suitable Vulkan device.\n");
+      return nullptr;
+    }
 
     device = vulkan::HWDevice::create(
         std::move(ctx), devices[0], static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 #endif
-    IGL_DEBUG_ASSERT(device);
+    if (!device) {
+      IGL_LOG_ERROR("Failed to create a device.\n");
+      return nullptr;
+    }
   }
 
   commandQueue = device->createCommandQueue({}, nullptr);
@@ -403,6 +415,10 @@ int main(int argc, char* argv[]) {
   }
 
   GLFWwindow* window = initIGL(isHeadless, enableVulkanValidationLayers);
+  if (!device) {
+    glfwTerminate();
+    return 1;
+  }
 
   createFramebuffer(getNativeDrawable());
   createRenderPipeline();

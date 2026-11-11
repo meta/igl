@@ -92,6 +92,10 @@ std::unique_ptr<IDevice> XrAppImplVulkan::initIGL(XrInstance instance, XrSystemI
   };
 
   auto context = igl::vulkan::HWDevice::createContext(cfg, nullptr);
+  if (!context) {
+    IGL_LOG_ERROR("IGL: Vulkan 1.1 or newer is required.\n");
+    return nullptr;
+  }
 
   PFN_xrGetVulkanGraphicsDeviceKHR pfnGetVulkanGraphicsDeviceKHR = nullptr;
   XR_CHECK(

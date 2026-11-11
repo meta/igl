@@ -588,14 +588,18 @@ void TinyRenderer::init(AAssetManager* mgr,
     factory.configureVulkanContext(shellParams_, config);
 
     auto ctx = vulkan::HWDevice::createContext(config, nativeWindow);
+    if (!ctx) {
+      __android_log_print(ANDROID_LOG_ERROR, "igl", "Vulkan 1.1 or newer is required.\n");
+      return;
+    }
 
     auto devices =
         vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &result);
 
-    if (!result.isOk()) {
+    if (!result.isOk() || devices.empty()) {
       __android_log_print(ANDROID_LOG_ERROR, "igl", "Error: %s\n", result.message.c_str());
+      return;
     }
-    IGL_DEBUG_ASSERT(result.isOk());
 
     if (shellParams_.isHeadless) {
       // Use viewport size from shell params for headless mode
@@ -734,6 +738,9 @@ void TinyRenderer::recreateSwapchain(ANativeWindow* nativeWindow, bool createSur
 
 void TinyRenderer::rebuildSwapchain(bool createSurface) {
 #if IGL_BACKEND_VULKAN
+  if (!platform_ || !session_) {
+    return;
+  }
   if (nativeWindow_ == nullptr && !shellParams_.isHeadless) {
     // No window to build against: it was released and no replacement arrived (a null
     // Surface reaches onSurfacesChanged() as "nothing new", not as "window gone"). There is
@@ -891,6 +898,9 @@ void TinyRenderer::stereoPresent(IDevice& device) {
 }
 
 bool TinyRenderer::render(float displayScale) {
+  if (!platform_ || !session_) {
+    return false;
+  }
   // process user input
   IGL_DEBUG_ASSERT(platform_ != nullptr);
   platform_->getInputDispatcher().processEvents();
@@ -1037,7 +1047,7 @@ void TinyRenderer::onSurfacesChanged(ANativeWindow* nativeWindow, int width, int
   if (nativeWindow != nullptr) {
     adoptNativeWindow(nativeWindow);
   }
-  if (shellParams_.isHeadless) {
+  if (!platform_ || !session_ || shellParams_.isHeadless) {
     return;
   }
   width_ = static_cast<uint32_t>(width);
@@ -1074,6 +1084,9 @@ void TinyRenderer::onSurfacesChanged(ANativeWindow* nativeWindow, int width, int
 }
 
 void TinyRenderer::touchEvent(bool isDown, float x, float y, float dx, float dy) {
+  if (!platform_) {
+    return;
+  }
   const float scale = platform_->getDisplayContext().pixelsPerPoint;
   IGL_DEBUG_ASSERT(scale > 0.0f);
   platform_->getInputDispatcher().queueEvent(

@@ -83,11 +83,22 @@ void initIGL() {
   // create a device
   const igl::vulkan::VulkanContextConfig ctxConfig;
   auto ctx = vulkan::HWDevice::createContext(ctxConfig, window);
+  if (!ctx) {
+    IGL_SAMPLE_LOG_ERROR("Vulkan 1.1 or newer is required.");
+    return;
+  }
   std::vector<HWDeviceDesc> devices =
       vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::IntegratedGpu), nullptr);
+  if (devices.empty()) {
+    IGL_SAMPLE_LOG_ERROR("No suitable Vulkan device.");
+    return;
+  }
   device = vulkan::HWDevice::create(
       std::move(ctx), devices[0], static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-  IGL_DEBUG_ASSERT(device);
+  if (!device) {
+    IGL_SAMPLE_LOG_ERROR("Failed to create a Vulkan device.");
+    return;
+  }
 
   // Command queue: backed by different types of GPU HW queues
   CommandQueueDesc desc{};
@@ -190,6 +201,9 @@ void initialize(android_app* app) {
 
   initWindow(app->window);
   initIGL();
+  if (!device) {
+    return;
+  }
 
   createFramebuffer(getVulkanNativeDrawable());
   createRenderPipeline();

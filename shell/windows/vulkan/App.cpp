@@ -88,6 +88,10 @@ std::shared_ptr<Platform> VulkanShell::createPlatform() noexcept {
       (void*)glfwGetX11Display() // NOLINT(performance-no-int-to-ptr)
 #endif
   );
+  if (!ctx) {
+    IGL_LOG_ERROR("Vulkan 1.1 or newer is required.\n");
+    return nullptr;
+  }
 
   // Prioritize discrete GPUs. If not found, use any that is available.
   std::vector<HWDeviceDesc> devices =
@@ -101,12 +105,19 @@ std::shared_ptr<Platform> VulkanShell::createPlatform() noexcept {
     devices =
         vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::SoftwareGpu), nullptr);
   }
-  IGL_DEBUG_ASSERT(!devices.empty(), "Could not find Vulkan device with requested capabilities");
+  if (devices.empty()) {
+    IGL_LOG_ERROR("Could not find Vulkan device with requested capabilities.\n");
+    return nullptr;
+  }
 
   auto vulkanDevice = vulkan::HWDevice::create(std::move(ctx),
                                                devices[0],
                                                static_cast<uint32_t>(shellParams().viewportSize.x),
                                                static_cast<uint32_t>(shellParams().viewportSize.y));
+  if (!vulkanDevice) {
+    IGL_LOG_ERROR("Failed to create a Vulkan device.\n");
+    return nullptr;
+  }
 
   // Verify multiview support — if unsupported, report and run as usual
   if (shellParams().forceMultiview && !vulkanDevice->hasFeature(DeviceFeatures::Multiview)) {

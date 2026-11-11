@@ -407,6 +407,10 @@ using namespace igl;
 
     auto context =
         igl::vulkan::HWDevice::createContext(vulkanContextConfig, (__bridge void*)vulkanView);
+    if (!context) {
+      IGLLog(IGLLogError, "Vulkan 1.1 or newer is required.\n");
+      return;
+    }
     auto devices = igl::vulkan::HWDevice::queryDevices(
         *context, igl::HWDeviceQueryDesc(igl::HWDeviceType::DiscreteGpu), nullptr);
     if (devices.empty()) {
@@ -417,8 +421,16 @@ using namespace igl;
       devices = igl::vulkan::HWDevice::queryDevices(
           *context, igl::HWDeviceQueryDesc(igl::HWDeviceType::SoftwareGpu), nullptr);
     }
+    if (devices.empty()) {
+      IGLLog(IGLLogError, "No suitable Vulkan device.\n");
+      return;
+    }
     auto device = igl::vulkan::HWDevice::create(
         std::move(context), devices[0], 0, 0, 0, nullptr, nullptr, "IGL Shell", nullptr);
+    if (!device) {
+      IGLLog(IGLLogError, "Failed to create a Vulkan device.\n");
+      return;
+    }
 
     _shellPlatform = std::make_shared<igl::shell::PlatformMac>(std::move(device));
     [vulkanView prepareVulkan:_shellPlatform.get()];
@@ -547,6 +559,9 @@ static CVReturn metalDisplayLinkCallback(CVDisplayLinkRef /*displayLink*/,
 }
 
 - (void)viewDidAppear {
+  if (!_shellPlatform) {
+    return;
+  }
   if (_shellParams.isHeadless) {
     // Headless mode: pause the MTKView display link and use a dedicated
     // render thread with offscreen textures for unrestricted FPS.
@@ -830,7 +845,7 @@ static CVReturn metalDisplayLinkCallback(CVDisplayLinkRef /*displayLink*/,
 }
 
 - (BOOL)acceptsFirstResponder {
-  return YES;
+  return _shellPlatform != nullptr;
 }
 
 - (NSPoint)locationForEvent:(NSEvent*)event {
@@ -866,11 +881,17 @@ static uint32_t getModifiers(NSEvent* event) {
 }
 
 - (void)keyUp:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::KeyEvent(false, event.keyCode, getModifiers(event)));
 }
 
 - (void)keyDown:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::KeyEvent(true, event.keyCode, getModifiers(event)));
   // NOLINTNEXTLINE(clang-analyzer-nullability.NullablePassedToNonnull)
@@ -881,66 +902,99 @@ static uint32_t getModifiers(NSEvent* event) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Left, true, curPoint.x, curPoint.y));
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Right, true, curPoint.x, curPoint.y));
 }
 
 - (void)otherMouseDown:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Middle, true, curPoint.x, curPoint.y));
 }
 
 - (void)mouseUp:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Left, false, curPoint.x, curPoint.y));
 }
 
 - (void)rightMouseUp:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Right, false, curPoint.x, curPoint.y));
 }
 
 - (void)otherMouseUp:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseButtonEvent(igl::shell::MouseButton::Middle, false, curPoint.x, curPoint.y));
 }
 
 - (void)mouseMoved:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseMotionEvent(curPoint.x, curPoint.y, event.deltaX, event.deltaY));
 }
 
 - (void)mouseDragged:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseMotionEvent(curPoint.x, curPoint.y, event.deltaX, event.deltaY));
 }
 
 - (void)rightMouseDragged:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseMotionEvent(curPoint.x, curPoint.y, event.deltaX, event.deltaY));
 }
 
 - (void)otherMouseDragged:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   NSPoint curPoint = [self locationForEvent:event];
   _shellPlatform->getInputDispatcher().queueEvent(
       igl::shell::MouseMotionEvent(curPoint.x, curPoint.y, event.deltaX, event.deltaY));
 }
 
 - (void)scrollWheel:(NSEvent*)event {
+  if (!_shellPlatform) {
+    return;
+  }
   _shellPlatform->getInputDispatcher().queueEvent(igl::shell::MouseWheelEvent(
       event.scrollingDeltaX * _kMouseSpeed, event.scrollingDeltaY * _kMouseSpeed));
 }
