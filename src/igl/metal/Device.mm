@@ -52,7 +52,10 @@ std::shared_ptr<ICommandQueue> Device::createCommandQueue( // NOLINT(bugprone-ex
   auto resource =
       std::make_shared<CommandQueue>(*this, metalObject, bufferSyncManager_, deviceStatistics_);
 
-  mostRecentCommandQueue_ = resource;
+  {
+    const std::lock_guard<std::mutex> lock(mostRecentCommandQueueMutex_);
+    mostRecentCommandQueue_ = resource;
+  }
 
   Result::setOk(outResult);
   return resource;
@@ -1203,6 +1206,7 @@ MTLResourceOptions Device::toMTLResourceStorageMode(ResourceStorage storage,
 }
 
 std::shared_ptr<ICommandQueue> Device::getMostRecentCommandQueue() const noexcept {
+  const std::lock_guard<std::mutex> lock(mostRecentCommandQueueMutex_);
   return mostRecentCommandQueue_;
 }
 

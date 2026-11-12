@@ -10,6 +10,7 @@
 @protocol MTLDevice;
 #import <Metal/MTLTypes.h>
 #include <ldrutils/lutils/Pool.h>
+#include <mutex>
 #include <igl/CommandEncoder.h>
 #include <igl/Device.h>
 #include <igl/Shader.h>
@@ -133,6 +134,7 @@ class Device : public IDevice {
   static MTLResourceOptions toMTLResourceStorageMode(ResourceStorage storage,
                                                      bool supportsMemoryless);
 
+  /// Safe to call from any thread, alongside createCommandQueue().
   std::shared_ptr<ICommandQueue> getMostRecentCommandQueue() const noexcept;
 
  public:
@@ -160,6 +162,7 @@ class Device : public IDevice {
   DeviceFeatureSet deviceFeatureSet_;
   std::shared_ptr<BufferSynchronizationManager> bufferSyncManager_;
   mutable DeviceStatistics deviceStatistics_;
+  mutable std::mutex mostRecentCommandQueueMutex_;
   std::shared_ptr<ICommandQueue> mostRecentCommandQueue_;
 };
 
