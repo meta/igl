@@ -256,7 +256,7 @@ void transitionToShaderReadOnly(VkCommandBuffer cmdBuf, ITexture* texture);
 
 /// @brief Overrides the layout stored in the `texture` with the one in `layout`. This function does
 /// not perform a transition, it only updates the texture's member variable that stores its current
-/// layout
+/// layout, which a reusable command buffer whose recording fails then keeps
 void overrideImageLayout(ITexture* texture, VkImageLayout layout);
 
 /// @brief Checks that the input attachments and the storage images of a shader module follow the

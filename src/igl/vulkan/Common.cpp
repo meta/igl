@@ -748,7 +748,11 @@ void overrideImageLayout(ITexture* texture, VkImageLayout layout) {
     return;
   }
   const Texture* tex = static_cast<Texture*>(texture);
-  tex->getVulkanTexture().image.imageLayout_ = layout;
+  const VulkanImage& image = tex->getVulkanTexture().image;
+  if (image.ctx_) {
+    image.ctx_->journalImageLayout(VK_NULL_HANDLE, image);
+  }
+  image.imageLayout_ = layout;
 }
 
 Result validateShaderModuleBindings(const util::SpvModuleInfo& info, const std::string& debugName) {

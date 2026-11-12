@@ -521,8 +521,21 @@ void Texture::generateMipmap(ICommandBuffer& cmdBuffer, const TextureRangeDesc* 
   }
 
   auto& vkCmdBuffer = static_cast<CommandBuffer&>(cmdBuffer);
-  logMipmapFailure(texture_->image.generateMipmap(vkCmdBuffer.getVkCommandBuffer(),
-                                                  range ? *range : desc_.asRange()));
+  const VkCommandBuffer cmdBuf = vkCmdBuffer.getVkCommandBuffer();
+  if (vkCmdBuffer.isReusable()) {
+    // null while the current slot holds a recording, or once the recording of the slot failed
+    if (cmdBuf == VK_NULL_HANDLE) {
+      return;
+    }
+    // the mipmaps of a UNORM image with sRGB views go through a scratch image that this call owns
+    if (texture_->image.isSrgbMutableFormat_) {
+      vkCmdBuffer.failRecording(Result(Result::Code::Unsupported,
+                                       "A reusable command buffer cannot generate the mipmaps of "
+                                       "a UNORM image with sRGB views"));
+      return;
+    }
+  }
+  logMipmapFailure(texture_->image.generateMipmap(cmdBuf, range ? *range : desc_.asRange()));
 }
 // NOLINTEND(facebook-hte-NullableDereference)
 

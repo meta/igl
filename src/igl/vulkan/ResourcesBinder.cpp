@@ -30,7 +30,8 @@ ResourcesBinder::ResourcesBinder(const CommandBuffer* commandBuffer,
   cmdBuffer_(commandBuffer ? commandBuffer->getVkCommandBuffer() : VK_NULL_HANDLE),
   bindPoint_(bindPoint),
   nextSubmitHandle_(commandBuffer ? commandBuffer->getNextSubmitHandle()
-                                  : VulkanImmediateCommands::SubmitHandle{}) {
+                                  : VulkanImmediateCommands::SubmitHandle{}),
+  arenas_(commandBuffer ? commandBuffer->getDescriptorPoolsArenas() : nullptr) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx_);
 }
@@ -300,6 +301,7 @@ void ResourcesBinder::updateBindingsByDescriptorSet(VkPipelineLayout layout,
                                 layout,
                                 bindPoint_,
                                 nextSubmitHandle_,
+                                arenas_,
                                 bindingsTextures_,
                                 *state.dslCombinedImageSamplers,
                                 state.info);
@@ -309,6 +311,7 @@ void ResourcesBinder::updateBindingsByDescriptorSet(VkPipelineLayout layout,
                                layout,
                                bindPoint_,
                                nextSubmitHandle_,
+                               arenas_,
                                bindingsBuffers_,
                                *state.dslBuffers,
                                state.info);
@@ -318,6 +321,7 @@ void ResourcesBinder::updateBindingsByDescriptorSet(VkPipelineLayout layout,
                                      layout,
                                      bindPoint_,
                                      nextSubmitHandle_,
+                                     arenas_,
                                      bindingsStorageImages_,
                                      *state.dslStorageImages,
                                      state.info);

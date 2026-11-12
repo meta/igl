@@ -493,6 +493,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                           subresourceRange);
 
+    ctx_.journalImageLayout(wrapper.cmdBuf, image);
     image.imageLayout_ = targetLayout;
 
     ivkCmdEndDebugUtilsLabel(&ctx_.vf_, wrapper.cmdBuf);
@@ -650,6 +651,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
                         dstStageMask,
                         subresourceRange);
 
+  ctx_.journalImageLayout(wrapper.cmdBuf, image);
   image.imageLayout_ = targetLayout;
 
   ivkCmdEndDebugUtilsLabel(&ctx_.vf_, wrapper.cmdBuf);

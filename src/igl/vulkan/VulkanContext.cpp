@@ -30,6 +30,7 @@
 #include <igl/SamplerState.h>
 #include <igl/glslang/GlslCompiler.h>
 #include <igl/vulkan/Buffer.h>
+#include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/RenderPipelineState.h>
 #include <igl/vulkan/ResourcesBinder.h>
 #include <igl/vulkan/SamplerState.h>
@@ -263,7 +264,13 @@ class DescriptorPoolsArena final {
   DescriptorPoolsArena& operator=(DescriptorPoolsArena&&) = delete;
   // NOLINTNEXTLINE(bugprone-exception-escape)
   ~DescriptorPoolsArena() {
-    extinct_.push_back({.pool = pool_, .handle = {}});
+    if (pool_ != VK_NULL_HANDLE) {
+      extinct_.push_back({.pool = pool_, .handle = {}});
+    }
+    // releasePools() handed them over
+    if (extinct_.empty()) {
+      return;
+    }
     ctx_.deferredTask(std::packaged_task<void()>(
         [extinct = std::move(extinct_), vf = ctx_.vf_, device = device_]() {
           for (const auto& p : extinct) {
@@ -273,6 +280,19 @@ class DescriptorPoolsArena final {
   }
   [[nodiscard]] VkDescriptorSetLayout getVkDescriptorSetLayout() const {
     return dsl_;
+  }
+  // Moves the descriptor pools of the arena into `pools`, for their new owner to destroy them
+  void releasePools(std::vector<VkDescriptorPool>& pools) {
+    for (const ExtinctDescriptorPool& p : extinct_) {
+      pools.push_back(p.pool);
+    }
+    extinct_.clear();
+    if (pool_ != VK_NULL_HANDLE) {
+      pools.push_back(pool_);
+    }
+    pool_ = VK_NULL_HANDLE;
+    allocatedDSet_.clear();
+    numRemainingDSetsInPool_ = 0;
   }
   // @fb-only
   [[nodiscard]] VkDescriptorSet getNextDescriptorSet(
@@ -529,38 +549,27 @@ struct DescriptorSetLayoutCacheKeyHash {
 
 } // namespace
 
-struct VulkanContextImpl final {
-  std::thread::id contextThread = std::this_thread::get_id();
-
-  // Vulkan Memory Allocator
-  VmaAllocator vma = VK_NULL_HANDLE;
+// The descriptor pool arenas of the descriptor set layouts. A reusable command buffer has arenas of
+// its own, whose descriptor sets live as long as its recordings.
+// @fb-only
+struct DescriptorPoolsArenas final {
   // :)
   std::unordered_map<VkDescriptorSetLayout, std::unique_ptr<DescriptorPoolsArena>>
       arenaCombinedImageSamplers;
   std::unordered_map<VkDescriptorSetLayout, std::unique_ptr<DescriptorPoolsArena>> arenaBuffers;
   std::unordered_map<VkDescriptorSetLayout, std::unique_ptr<DescriptorPoolsArena>>
       arenaStorageImages;
-  // Cache of VkDescriptorSetLayout handles keyed by their descriptor bindings/flags. Since the
-  // engine only uses a handful of distinct binding layouts, this collapses per-pipeline dsl
-  // handles into a small set of shared handles, so that arenas above (keyed by handle) also
-  // become shared automatically. Owned by the context; entries live until the context is
-  // destroyed.
-  std::unordered_map<DescriptorSetLayoutCacheKey,
-                     VkDescriptorSetLayout,
-                     DescriptorSetLayoutCacheKeyHash>
-      dslCache;
-  std::unique_ptr<VulkanDescriptorSetLayout> dslBindless; // everything
-  std::unique_ptr<DescriptorBuffersArena> descriptorBuffersArena;
-  VkDescriptorPool dpBindless = VK_NULL_HANDLE;
-  VkDescriptorSet dsBindless = VK_NULL_HANDLE;
-  uint32_t currentMaxBindlessTextures = 8;
-  uint32_t currentMaxBindlessSamplers = 8;
 
-  ldr::Pool<BindGroupBufferTag, BindGroupMetadataBuffers> bindGroupBuffersPool;
-  ldr::Pool<BindGroupTextureTag, BindGroupMetadataTextures> bindGroupTexturesPool;
-
-  SamplerHandle dummySampler = {};
-  TextureHandle dummyTexture = {};
+  // Returns the descriptor pools of all the arenas, which no longer destroy them
+  [[nodiscard]] std::vector<VkDescriptorPool> releasePools() {
+    std::vector<VkDescriptorPool> pools;
+    for (auto* arenas : {&arenaCombinedImageSamplers, &arenaBuffers, &arenaStorageImages}) {
+      for (auto& entry : *arenas) {
+        entry.second->releasePools(pools);
+      }
+    }
+    return pools;
+  }
 
   // NOLINTBEGIN(readability-identifier-naming)
   DescriptorPoolsArena& getOrCreateArena_CombinedImageSamplers(const VulkanContext& ctx,
@@ -624,6 +633,36 @@ struct VulkanContextImpl final {
                                                                "arenaBuffers_");
     return *arenaBuffers[dsl].get();
   }
+};
+
+struct VulkanContextImpl final {
+  std::thread::id contextThread = std::this_thread::get_id();
+
+  // Vulkan Memory Allocator
+  VmaAllocator vma = VK_NULL_HANDLE;
+  // the arenas of all the command buffers that are not reusable
+  DescriptorPoolsArenas arenas;
+  // Cache of VkDescriptorSetLayout handles keyed by their descriptor bindings/flags. Since the
+  // engine only uses a handful of distinct binding layouts, this collapses per-pipeline dsl
+  // handles into a small set of shared handles, so that arenas above (keyed by handle) also
+  // become shared automatically. Owned by the context; entries live until the context is
+  // destroyed.
+  std::unordered_map<DescriptorSetLayoutCacheKey,
+                     VkDescriptorSetLayout,
+                     DescriptorSetLayoutCacheKeyHash>
+      dslCache;
+  std::unique_ptr<VulkanDescriptorSetLayout> dslBindless; // everything
+  std::unique_ptr<DescriptorBuffersArena> descriptorBuffersArena;
+  VkDescriptorPool dpBindless = VK_NULL_HANDLE;
+  VkDescriptorSet dsBindless = VK_NULL_HANDLE;
+  uint32_t currentMaxBindlessTextures = 8;
+  uint32_t currentMaxBindlessSamplers = 8;
+
+  ldr::Pool<BindGroupBufferTag, BindGroupMetadataBuffers> bindGroupBuffersPool;
+  ldr::Pool<BindGroupTextureTag, BindGroupMetadataTextures> bindGroupTexturesPool;
+
+  SamplerHandle dummySampler = {};
+  TextureHandle dummyTexture = {};
 };
 
 VulkanContext::VulkanContext(VulkanContextConfig config,
@@ -753,9 +792,9 @@ VulkanContext::~VulkanContext() {
 
   swapchain_.reset(nullptr); // Swapchain has to be destroyed prior to Surface
 
-  pimpl_->arenaCombinedImageSamplers.clear();
-  pimpl_->arenaStorageImages.clear();
-  pimpl_->arenaBuffers.clear();
+  pimpl_->arenas.arenaCombinedImageSamplers.clear();
+  pimpl_->arenas.arenaStorageImages.clear();
+  pimpl_->arenas.arenaBuffers.clear();
 
   // Destroy all cached VkDescriptorSetLayout handles owned by the context.
   // VulkanDescriptorSetLayout instances only reference these handles through the cache and no
@@ -2230,13 +2269,15 @@ void VulkanContext::updateBindingsTextures(VkCommandBuffer IGL_NONNULL cmdBuf,
                                            VkPipelineLayout layout,
                                            VkPipelineBindPoint bindPoint,
                                            VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+                                           DescriptorPoolsArenas* IGL_NULLABLE arenas,
                                            const BindingsTextures& data,
                                            const VulkanDescriptorSetLayout& dsl,
                                            const util::SpvModuleInfo& info) const {
   IGL_PROFILER_FUNCTION();
 
-  DescriptorPoolsArena& arena = pimpl_->getOrCreateArena_CombinedImageSamplers(
-      *this, dsl.getVkDescriptorSetLayout(), dsl.numBindings);
+  DescriptorPoolsArena& arena =
+      getDescriptorPoolsArenas(arenas).getOrCreateArena_CombinedImageSamplers(
+          *this, dsl.getVkDescriptorSetLayout(), dsl.numBindings);
 
   VkDescriptorSet dset = arena.getNextDescriptorSet(*immediate_, nextSubmitHandle);
 
@@ -2295,16 +2336,17 @@ void VulkanContext::updateBindingsStorageImages(
     VkPipelineLayout layout,
     VkPipelineBindPoint bindPoint,
     VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+    DescriptorPoolsArenas* IGL_NULLABLE arenas,
     const BindingsStorageImages& data,
     const VulkanDescriptorSetLayout& dsl,
     const util::SpvModuleInfo& info) const {
   IGL_PROFILER_FUNCTION();
 
-  DescriptorPoolsArena& arena =
-      pimpl_->getOrCreateArena_StorageImages(*this,
-                                             dsl.getVkDescriptorSetLayout(),
-                                             static_cast<uint32_t>(info.images.size()),
-                                             static_cast<uint32_t>(info.inputAttachments.size()));
+  DescriptorPoolsArena& arena = getDescriptorPoolsArenas(arenas).getOrCreateArena_StorageImages(
+      *this,
+      dsl.getVkDescriptorSetLayout(),
+      static_cast<uint32_t>(info.images.size()),
+      static_cast<uint32_t>(info.inputAttachments.size()));
 
   VkDescriptorSet dset = arena.getNextDescriptorSet(*immediate_, nextSubmitHandle);
 
@@ -2384,13 +2426,14 @@ void VulkanContext::updateBindingsBuffers(VkCommandBuffer IGL_NONNULL cmdBuf,
                                           VkPipelineLayout layout,
                                           VkPipelineBindPoint bindPoint,
                                           VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+                                          DescriptorPoolsArenas* IGL_NULLABLE arenas,
                                           BindingsBuffers& data,
                                           const VulkanDescriptorSetLayout& dsl,
                                           const util::SpvModuleInfo& info) const {
   IGL_PROFILER_FUNCTION();
 
-  DescriptorPoolsArena& arena =
-      pimpl_->getOrCreateArena_Buffers(*this, dsl.getVkDescriptorSetLayout(), dsl.numBindings);
+  DescriptorPoolsArena& arena = getDescriptorPoolsArenas(arenas).getOrCreateArena_Buffers(
+      *this, dsl.getVkDescriptorSetLayout(), dsl.numBindings);
 
   VkDescriptorSet dset = arena.getNextDescriptorSet(*immediate_, nextSubmitHandle);
 
@@ -2670,6 +2713,74 @@ void VulkanContext::updateBindingsBuffersByDescriptorBuffer(
   VkDeviceSize offsets = originOffset;
   vf_.vkCmdSetDescriptorBufferOffsetsEXT(
       cmdBuf, bindPoint, layout, kBindPoint_Buffers, 1, &bufferIndex, &offsets);
+}
+
+std::shared_ptr<DescriptorPoolsArenas> VulkanContext::createDescriptorPoolsArenas() const {
+  return std::make_shared<DescriptorPoolsArenas>();
+}
+
+DescriptorPoolsArenas& VulkanContext::getDescriptorPoolsArenas(
+    DescriptorPoolsArenas* IGL_NULLABLE arenas) const {
+  if (arenas != nullptr) {
+    return *arenas;
+  }
+  return pimpl_->arenas;
+}
+
+void VulkanContext::destroyRecordings(
+    VkCommandPool commandPool,
+    const std::vector<std::shared_ptr<DescriptorPoolsArenas>>& arenas,
+    SubmitHandle lastSubmission) const {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
+
+  std::vector<VkDescriptorPool> pools;
+  for (const std::shared_ptr<DescriptorPoolsArenas>& slotArenas : arenas) {
+    if (slotArenas) {
+      std::vector<VkDescriptorPool> slotPools = slotArenas->releasePools();
+      pools.insert(pools.end(), slotPools.begin(), slotPools.end());
+    }
+  }
+  // freeing the command pool frees the command buffers of the recordings
+  std::packaged_task<void()> destroy(
+      [vf = &vf_, device = getVkDevice(), commandPool, pools = std::move(pools)]() {
+        if (commandPool != VK_NULL_HANDLE) {
+          vf->vkDestroyCommandPool(device, commandPool, nullptr);
+        }
+        for (VkDescriptorPool pool : pools) {
+          vf->vkDestroyDescriptorPool(device, pool, nullptr);
+        }
+      });
+  if (immediate_->isReady(lastSubmission)) {
+    destroy();
+  } else {
+    deferredTask(std::move(destroy), lastSubmission);
+  }
+}
+
+void VulkanContext::journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage& image) const {
+  for (ImageLayoutJournal* journal : imageLayoutJournals_) {
+    const auto layout = std::find_if(
+        journal->layouts.begin(),
+        journal->layouts.end(),
+        [&image](const ImageLayoutJournal::Layout& entry) { return entry.image == &image; });
+    if (journal->cmdBuf == cmdBuf) {
+      if (layout == journal->layouts.end()) {
+        journal->layouts.push_back({.image = &image, .layout = image.imageLayout_});
+      } else if (layout->isChangedElsewhere) {
+        // the recording changes the layout that the change elsewhere left
+        *layout = {.image = &image, .layout = image.imageLayout_};
+      }
+    } else if (layout != journal->layouts.end()) {
+      layout->isChangedElsewhere = true;
+    }
+  }
+}
+
+bool VulkanContext::isRecordingSlot(VkCommandBuffer cmdBuf) const {
+  return std::any_of(
+      imageLayoutJournals_.begin(),
+      imageLayoutJournals_.end(),
+      [cmdBuf](const ImageLayoutJournal* journal) { return journal->cmdBuf == cmdBuf; });
 }
 
 void VulkanContext::deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle) const {
@@ -3369,6 +3480,10 @@ bool VulkanContext::supportsTimers() const {
   return limits.timestampPeriod > 0.0f && limits.timestampComputeAndGraphics == VK_TRUE &&
          getGraphicsQueueTimestampValidBits() > 0 &&
          !features_.enabled("VK_KHR_portability_subset");
+}
+
+bool VulkanContext::supportsReusableCommandBuffers() const {
+  return !config_.enableDescriptorIndexing && !features_.has_VK_EXT_descriptor_buffer;
 }
 
 void VulkanContext::syncAcquireNext() noexcept {

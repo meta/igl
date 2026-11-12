@@ -279,11 +279,15 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 
 VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
     const CommandBufferWrapper& wrapper,
-    VkSemaphore presentationSemaphore) {
+    VkSemaphore presentationSemaphore,
+    VkCommandBuffer nextCmdBuf) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_SUBMIT);
 
   IGL_DEBUG_ASSERT(wrapper.isEncoding);
   VK_ASSERT(vf_.vkEndCommandBuffer(wrapper.cmdBuf));
+
+  const std::array<VkCommandBuffer, 2> cmdBufs = {wrapper.cmdBuf, nextCmdBuf};
+  const uint32_t numCmdBufs = nextCmdBuf != VK_NULL_HANDLE ? 2u : 1u;
 
   // The submission chain and presentation signals have capacity separate from injected signals.
   constexpr size_t kSubmitSemaphoreCapacity = kMaxInjectedSemaphores + 2;
@@ -321,16 +325,16 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
       };
     }
 
-    const VkCommandBufferSubmitInfo bufferSI = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-        .commandBuffer = wrapper.cmdBuf,
-    };
+    const std::array<VkCommandBufferSubmitInfo, 2> bufferSIs = {{
+        {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmdBufs[0]},
+        {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmdBufs[1]},
+    }};
     const VkSubmitInfo2 si = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
         .waitSemaphoreInfoCount = numWaitSemaphores,
         .pWaitSemaphoreInfos = waitSemaphores,
-        .commandBufferInfoCount = 1u,
-        .pCommandBufferInfos = &bufferSI,
+        .commandBufferInfoCount = numCmdBufs,
+        .pCommandBufferInfos = bufferSIs.data(),
         .signalSemaphoreInfoCount = numSignalSemaphores,
         .pSignalSemaphoreInfos = signalSemaphores,
     };
@@ -389,8 +393,8 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
         .waitSemaphoreCount = numWaitSemaphores,
         .pWaitSemaphores = numWaitSemaphores ? waitSemaphores : nullptr,
         .pWaitDstStageMask = waitStageMasks,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &wrapper.cmdBuf,
+        .commandBufferCount = numCmdBufs,
+        .pCommandBuffers = cmdBufs.data(),
         .signalSemaphoreCount = numSignalSemaphores,
         .pSignalSemaphores = signalSemaphores,
     };
@@ -442,6 +446,21 @@ void VulkanImmediateCommands::discard(const CommandBufferWrapper& wrapper) {
   numWaitSemaphores_ = 0;
   numSignalSemaphores_ = 0;
   nextSubmitHandle_ = {};
+}
+
+void VulkanImmediateCommands::release(const CommandBufferWrapper& wrapper) {
+  IGL_PROFILER_FUNCTION();
+  if (!IGL_DEBUG_VERIFY(wrapper.isEncoding)) {
+    return;
+  }
+  auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
+  VK_ASSERT(vf_.vkResetCommandBuffer(mutableWrapper.cmdBuf, VkCommandBufferResetFlags{0}));
+  mutableWrapper.cmdBuf = VK_NULL_HANDLE;
+  mutableWrapper.isEncoding = false;
+  numAvailableCommandBuffers_++;
+  if (nextSubmitHandle_ == wrapper.handle) {
+    nextSubmitHandle_ = {};
+  }
 }
 
 bool VulkanImmediateCommands::waitSemaphore(VkSemaphore semaphore, uint64_t waitValue) {

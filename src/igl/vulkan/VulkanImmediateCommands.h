@@ -144,6 +144,10 @@ class VulkanImmediateCommands final {
    */
   SubmitHandle submit(const CommandBufferWrapper& wrapper);
   void discard(const CommandBufferWrapper& wrapper);
+  /// @brief Returns `wrapper`, which was acquired and will never be submitted, to the available
+  /// command buffers. The injected semaphores stay for the next submission, and a handle of
+  /// `wrapper` no longer waits for anything.
+  void release(const CommandBufferWrapper& wrapper);
 
   /// @brief Adds a semaphore to the waits for the next submission.
   [[nodiscard]] bool waitSemaphore(VkSemaphore semaphore, uint64_t waitValue = 0);
@@ -216,7 +220,11 @@ class VulkanImmediateCommands final {
  private:
   friend class CommandQueue;
   friend class igl::tests::VulkanImmediateCommandsTest;
-  SubmitHandle submit(const CommandBufferWrapper& wrapper, VkSemaphore presentationSemaphore);
+  /// @brief If `nextCmdBuf` is not null, it is a primary command buffer that the submission runs
+  /// after the one of `wrapper`, such as the recording of a reusable command buffer.
+  SubmitHandle submit(const CommandBufferWrapper& wrapper,
+                      VkSemaphore presentationSemaphore,
+                      VkCommandBuffer nextCmdBuf = VK_NULL_HANDLE);
 
   /// @brief Resets all commands buffers and their associated fences that are valid, are not being
   /// encoded, and have completed execution by the GPU (their fences have been signaled). Resets the

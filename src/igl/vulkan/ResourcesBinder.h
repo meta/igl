@@ -21,6 +21,7 @@ struct SpvModuleInfo;
 } // namespace util
 
 class Buffer;
+struct DescriptorPoolsArenas;
 class PipelineState;
 class SamplerState;
 class Texture;
@@ -147,6 +148,8 @@ class ResourcesBinder final {
   BindingsStorageImages bindingsStorageImages_;
   VkPipelineBindPoint bindPoint_ = VK_PIPELINE_BIND_POINT_GRAPHICS;
   VulkanImmediateCommands::SubmitHandle nextSubmitHandle_ = {};
+  // the arenas of the descriptor sets: the context's if null, otherwise a reusable command buffer's
+  DescriptorPoolsArenas* IGL_NULLABLE arenas_ = nullptr;
 };
 
 } // namespace igl::vulkan

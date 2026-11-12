@@ -55,6 +55,8 @@ class VulkanTexture;
 struct BindingsBuffers;
 struct BindingsTextures;
 struct BindingsStorageImages;
+struct DescriptorPoolsArenas;
+struct ImageLayoutJournal;
 struct VulkanContextImpl;
 struct VulkanImageCreateInfo;
 struct VulkanImageViewCreateInfo;
@@ -261,6 +263,29 @@ class VulkanContext final {
   // execute a task some time in the future after the submit handle finished processing
   void deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle = SubmitHandle()) const;
 
+  /// @brief Creates descriptor pool arenas for a reusable command buffer. The descriptor sets that
+  /// its recordings bind come from them instead of the context's arenas, which recycle the
+  /// descriptor sets of every command buffer once it completes.
+  [[nodiscard]] std::shared_ptr<DescriptorPoolsArenas> createDescriptorPoolsArenas() const;
+
+  /// @brief Destroys `commandPool`, unless it is null, and the descriptor pools of `arenas`, which
+  /// recordings of a reusable command buffer use, once `lastSubmission`, the last submission that
+  /// runs one of them, completes: at once if it is empty or has completed.
+  void destroyRecordings(VkCommandPool commandPool,
+                         const std::vector<std::shared_ptr<DescriptorPoolsArenas>>& arenas,
+                         SubmitHandle lastSubmission) const;
+
+  /// @brief Keeps the layout of `image`, before a command recorded into `cmdBuf` changes it, in the
+  /// ImageLayoutJournal of the reusable command buffer that records into `cmdBuf`, unless the
+  /// journal holds a layout of `image` that no change elsewhere has replaced since, and marks it
+  /// changed elsewhere in the other journals that hold it; a null `cmdBuf` stands for a change
+  /// outside of IGL's command buffers
+  void journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage& image) const;
+
+  /// @brief Returns true if `cmdBuf` records a slot of a reusable command buffer, whose recording
+  /// runs later, and as many times as the slot runs
+  [[nodiscard]] bool isRecordingSlot(VkCommandBuffer cmdBuf) const;
+
   bool areValidationLayersEnabled() const;
 
   void* IGL_NULLABLE getVmaAllocator() const;
@@ -314,6 +339,12 @@ class VulkanContext final {
   /// measures an elapsed time of zero.
   [[nodiscard]] bool supportsTimers() const;
 
+  /// @brief Returns true if command buffers can be recorded once and replayed
+  /// (PlatformDevice::supportsReusableCommandBuffers()): neither descriptor indexing nor
+  /// VK_EXT_descriptor_buffer is enabled, because the context rewrites their descriptors while a
+  /// recording could still bind them.
+  [[nodiscard]] bool supportsReusableCommandBuffers() const;
+
   [[nodiscard]] const VkSurfaceCapabilitiesKHR& getSurfaceCapabilities() const noexcept {
     return deviceSurfaceCaps_;
   }
@@ -366,6 +397,10 @@ class VulkanContext final {
   void pruneTextures();
   void querySurfaceCapabilities();
   void processDeferredTasks() const;
+  /// @brief Returns `arenas`, the descriptor pool arenas of a reusable command buffer, or the
+  /// context's arenas if it is null
+  [[nodiscard]] DescriptorPoolsArenas& getDescriptorPoolsArenas(
+      DescriptorPoolsArenas* IGL_NULLABLE arenas) const;
   void growBindlessDescriptorPool(uint32_t newMaxTextures, uint32_t newMaxSamplers);
   BindGroupTextureHandle createBindGroup(const BindGroupTextureDesc& desc,
                                          const IRenderPipelineState* IGL_NULLABLE
@@ -435,6 +470,9 @@ class VulkanContext final {
 
   std::unique_ptr<VulkanContextImpl> pimpl_;
 
+  // the journals of the reusable command buffers that record a slot now
+  std::vector<ImageLayoutJournal*> imageLayoutJournals_;
+
   VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
 
   mutable std::unordered_map<VkFormat, VkSamplerYcbcrConversionInfo> ycbcrConversionInfos_;
@@ -491,6 +529,7 @@ class VulkanContext final {
                               VkPipelineLayout layout,
                               VkPipelineBindPoint bindPoint,
                               VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+                              DescriptorPoolsArenas* IGL_NULLABLE arenas,
                               const BindingsTextures& data,
                               const VulkanDescriptorSetLayout& dsl,
                               const util::SpvModuleInfo& info) const;
@@ -498,6 +537,7 @@ class VulkanContext final {
                              VkPipelineLayout layout,
                              VkPipelineBindPoint bindPoint,
                              VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+                             DescriptorPoolsArenas* IGL_NULLABLE arenas,
                              BindingsBuffers& data,
                              const VulkanDescriptorSetLayout& dsl,
                              const util::SpvModuleInfo& info) const;
@@ -505,6 +545,7 @@ class VulkanContext final {
                                    VkPipelineLayout layout,
                                    VkPipelineBindPoint bindPoint,
                                    VulkanImmediateCommands::SubmitHandle nextSubmitHandle,
+                                   DescriptorPoolsArenas* IGL_NULLABLE arenas,
                                    const BindingsStorageImages& data,
                                    const VulkanDescriptorSetLayout& dsl,
                                    const util::SpvModuleInfo& info) const;

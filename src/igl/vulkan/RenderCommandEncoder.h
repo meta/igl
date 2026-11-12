@@ -22,6 +22,10 @@
 #include <igl/vulkan/VulkanImage.h>
 #include <igl/vulkan/VulkanImmediateCommands.h>
 
+#if defined(IGL_WITH_TRACY_GPU)
+#include "tracy/TracyVulkan.hpp"
+#endif
+
 namespace igl::vulkan {
 
 /// @brief This class implements the igl::IRenderCommandEncoder interface for Vulkan
@@ -260,6 +264,10 @@ class RenderCommandEncoder : public IRenderCommandEncoder {
  private:
   VulkanContext& ctx_;
   VkCommandBuffer cmdBuffer_ = VK_NULL_HANDLE;
+#if defined(IGL_WITH_TRACY_GPU)
+  // records the GPU zones; null for a reusable command buffer
+  TracyVkCtx tracyCtx_ = nullptr;
+#endif
   bool isEncoding_ = false;
   bool hasDepthAttachment_ = false;
   std::shared_ptr<IFramebuffer> framebuffer_;

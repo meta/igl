@@ -25,6 +25,17 @@
 #include <igl/vulkan/VulkanTexture.h>
 #include <igl/vulkan/util/SpvReflection.h>
 
+// The encoders of a reusable command buffer have no Tracy context, and record no GPU zone
+#if defined(IGL_WITH_TRACY_GPU)
+#define IGL_ENCODER_ZONE_GPU(name) \
+  TracyVkNamedZone(tracyCtx_, ___tracy_gpu_zone, cmdBuffer_, name, tracyCtx_ != nullptr)
+#define IGL_ENCODER_ZONE_GPU_COLOR(name, color) \
+  TracyVkNamedZoneC(tracyCtx_, ___tracy_gpu_zone, cmdBuffer_, name, color, tracyCtx_ != nullptr)
+#else
+#define IGL_ENCODER_ZONE_GPU(name)
+#define IGL_ENCODER_ZONE_GPU_COLOR(name, color)
+#endif // IGL_WITH_TRACY_GPU
+
 namespace {
 
 VkAttachmentLoadOp loadActionToVkAttachmentLoadOp(igl::LoadAction a) {
@@ -56,6 +67,21 @@ VkAttachmentStoreOp storeActionToVkAttachmentStoreOp(igl::StoreAction a) {
   return VK_ATTACHMENT_STORE_OP_DONT_CARE;
 }
 
+// Sets the layout in which the render pass leaves `texture`, after the previous layout is journaled
+// for a reusable command buffer that records into `cmdBuf`
+void setLayoutAfterRenderPass(const igl::vulkan::VulkanContext& ctx,
+                              VkCommandBuffer cmdBuf,
+                              igl::ITexture* IGL_NULLABLE texture,
+                              VkImageLayout layout) {
+  if (!texture) {
+    return;
+  }
+  const igl::vulkan::VulkanImage& image =
+      static_cast<igl::vulkan::Texture&>(*texture).getVulkanTexture().image;
+  ctx.journalImageLayout(cmdBuf, image);
+  image.imageLayout_ = layout;
+}
+
 } // namespace
 
 namespace igl::vulkan {
@@ -69,6 +95,13 @@ RenderCommandEncoder::RenderCommandEncoder(const std::shared_ptr<CommandBuffer>&
   IGL_PROFILER_FUNCTION();
   IGL_DEBUG_ASSERT(commandBuffer);
   IGL_DEBUG_ASSERT(cmdBuffer_ != VK_NULL_HANDLE);
+#if defined(IGL_WITH_TRACY_GPU)
+  // every run of a reusable command buffer would write the timestamps of its GPU zones again into
+  // queries that nothing resets
+  if (commandBuffer && !commandBuffer->isReusable()) {
+    tracyCtx_ = ctx.tracyCtx_;
+  }
+#endif
 }
 
 void RenderCommandEncoder::initialize(const RenderPassDesc& renderPass,
@@ -298,7 +331,16 @@ void RenderCommandEncoder::initialize(const RenderPassDesc& renderPass,
     bindSubpassInputAttachments();
   }
 
-  ctx_.vf_.vkCmdBeginRenderPass(cmdBuffer_, &bi, VK_SUBPASS_CONTENTS_INLINE);
+  // A reusable command buffer that runs from another command buffer records the commands of the
+  // render pass into a secondary command buffer
+  cmdBuffer_ = static_cast<CommandBuffer&>(getCommandBuffer()).beginRenderPass(bi);
+  if (cmdBuffer_ == VK_NULL_HANDLE) {
+    Result::setResult(&outResult,
+                      Result::Code::RuntimeError,
+                      "Failed to record the render pass into a secondary command buffer");
+    return;
+  }
+  binder_.cmdBuffer_ = cmdBuffer_;
 
   isEncoding_ = true;
 
@@ -348,7 +390,12 @@ void RenderCommandEncoder::endEncoding() {
     ++currentSubpass_;
   }
 
-  ctx_.vf_.vkCmdEndRenderPass(cmdBuffer_);
+  cmdBuffer_ = static_cast<CommandBuffer&>(getCommandBuffer()).endRenderPass();
+  if (cmdBuffer_ == VK_NULL_HANDLE) {
+    // the reusable command buffer does not run the slot whose recording failed
+    dependencies_ = {};
+    return;
+  }
 
   for (ITexture* IGL_NULLABLE tex : dependencies_.textures) {
     // TODO: at some point we might want to know in which layout a dependent texture wants to be. We
@@ -384,18 +431,26 @@ void RenderCommandEncoder::endEncoding() {
   for (const auto& attachment : desc.colorAttachments) {
     // the image layouts of color attachments must match the final layout of the render pass, which
     // is always VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL (check VulkanRenderPassBuilder.cpp)
-    overrideImageLayout(attachment.texture.get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    overrideImageLayout(attachment.resolveTexture.get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    setLayoutAfterRenderPass(
+        ctx_, cmdBuffer_, attachment.texture.get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    setLayoutAfterRenderPass(ctx_,
+                             cmdBuffer_,
+                             attachment.resolveTexture.get(),
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     transitionToShaderReadOnly(cmdBuffer_, attachment.texture.get());
     transitionToShaderReadOnly(cmdBuffer_, attachment.resolveTexture.get());
   }
 
   // this must match the final layout of the render pass, which is always
   // VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL (check VulkanRenderPassBuilder.cpp)
-  overrideImageLayout(desc.depthAttachment.texture.get(),
-                      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-  overrideImageLayout(desc.depthAttachment.resolveTexture.get(),
-                      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  setLayoutAfterRenderPass(ctx_,
+                           cmdBuffer_,
+                           desc.depthAttachment.texture.get(),
+                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  setLayoutAfterRenderPass(ctx_,
+                           cmdBuffer_,
+                           desc.depthAttachment.resolveTexture.get(),
+                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
   transitionToShaderReadOnly(cmdBuffer_, desc.depthAttachment.texture.get());
   transitionToShaderReadOnly(cmdBuffer_, desc.depthAttachment.resolveTexture.get());
 
@@ -406,7 +461,9 @@ void RenderCommandEncoder::endEncoding() {
   }
 
 #if defined(IGL_WITH_TRACY_GPU)
-  TracyVkCollect(ctx_.tracyCtx_, cmdBuffer_);
+  if (tracyCtx_) {
+    TracyVkCollect(tracyCtx_, cmdBuffer_);
+  }
 #endif
 }
 
@@ -619,7 +676,7 @@ void RenderCommandEncoder::popDebugGroupLabel() const {
 
 void RenderCommandEncoder::bindViewport(const Viewport& viewport) {
   IGL_PROFILER_FUNCTION();
-  IGL_PROFILER_ZONE_GPU_VK("bindViewport()", ctx_.tracyCtx_, cmdBuffer_);
+  IGL_ENCODER_ZONE_GPU("bindViewport()");
 
   /**
     Using the negative viewport height Vulkan feature, we make the Vulkan "top-left" coordinate
@@ -766,7 +823,7 @@ void RenderCommandEncoder::bindBuffer(uint32_t index,
                                       size_t bufferOffset,
                                       size_t bufferSize) {
   IGL_PROFILER_FUNCTION();
-  IGL_PROFILER_ZONE_GPU_VK("bindBuffer()", ctx_.tracyCtx_, cmdBuffer_);
+  IGL_ENCODER_ZONE_GPU("bindBuffer()");
 
 #if IGL_VULKAN_PRINT_COMMANDS
   IGL_LOG_INFO("%p  bindBuffer(%u, %u)\n", cmdBuffer_, index, static_cast<uint32_t>(bufferOffset));
@@ -793,7 +850,7 @@ void RenderCommandEncoder::bindVertexBuffer(uint32_t index,
                                             size_t bufferOffset,
                                             size_t attributeStride) {
   IGL_PROFILER_FUNCTION();
-  IGL_PROFILER_ZONE_GPU_VK("bindVertexBuffer()", ctx_.tracyCtx_, cmdBuffer_);
+  IGL_ENCODER_ZONE_GPU("bindVertexBuffer()");
 
 #if IGL_VULKAN_PRINT_COMMANDS
   IGL_LOG_INFO("%p  bindVertexBuffer(%u, %p, %u)\n",
@@ -883,7 +940,7 @@ void RenderCommandEncoder::bindBytes(size_t /*index*/,
 
 void RenderCommandEncoder::bindPushConstants(const void* data, size_t length, size_t offset) {
   IGL_PROFILER_FUNCTION();
-  IGL_PROFILER_ZONE_GPU_VK("bindPushConstants()", ctx_.tracyCtx_, cmdBuffer_);
+  IGL_ENCODER_ZONE_GPU("bindPushConstants()");
 
   IGL_DEBUG_ASSERT(length % 4 == 0); // VUID-vkCmdPushConstants-size-00369: size must be a multiple
                                      // of 4
@@ -982,7 +1039,7 @@ void RenderCommandEncoder::draw(size_t vertexCount,
                                 uint32_t firstVertex,
                                 uint32_t baseInstance) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DRAW);
-  IGL_PROFILER_ZONE_GPU_COLOR_VK("draw()", ctx_.tracyCtx_, cmdBuffer_, IGL_PROFILER_COLOR_DRAW);
+  IGL_ENCODER_ZONE_GPU_COLOR("draw()", IGL_PROFILER_COLOR_DRAW);
 
   ctx_.drawCallCount_ += drawCallCountEnabled_;
 
@@ -1019,8 +1076,7 @@ void RenderCommandEncoder::drawIndexed(size_t indexCount,
                                        int32_t vertexOffset,
                                        uint32_t baseInstance) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DRAW);
-  IGL_PROFILER_ZONE_GPU_COLOR_VK(
-      "drawIndexed()", ctx_.tracyCtx_, cmdBuffer_, IGL_PROFILER_COLOR_DRAW);
+  IGL_ENCODER_ZONE_GPU_COLOR("drawIndexed()", IGL_PROFILER_COLOR_DRAW);
 
   ctx_.drawCallCount_ += drawCallCountEnabled_;
 
@@ -1059,8 +1115,7 @@ void RenderCommandEncoder::drawMeshTasks(const Dimensions& threadgroupsPerGrid,
                                          const Dimensions& /*threadsPerTaskThreadgroup*/,
                                          const Dimensions& /*threadsPerMeshThreadgroup*/) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DRAW);
-  IGL_PROFILER_ZONE_GPU_COLOR_VK(
-      "drawMeshTasks()", ctx_.tracyCtx_, cmdBuffer_, IGL_PROFILER_COLOR_DRAW);
+  IGL_ENCODER_ZONE_GPU_COLOR("drawMeshTasks()", IGL_PROFILER_COLOR_DRAW);
 
   if (!ctx_.features().has_VK_EXT_mesh_shader) {
     IGL_DEBUG_ASSERT(false, "Mesh shaders require VK_EXT_mesh_shader extension.");
@@ -1084,8 +1139,7 @@ void RenderCommandEncoder::multiDrawIndirect(IBuffer& indirectBuffer,
                                              uint32_t drawCount,
                                              uint32_t stride) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DRAW);
-  IGL_PROFILER_ZONE_GPU_COLOR_VK(
-      "multiDrawIndirect()", ctx_.tracyCtx_, cmdBuffer_, IGL_PROFILER_COLOR_DRAW);
+  IGL_ENCODER_ZONE_GPU_COLOR("multiDrawIndirect()", IGL_PROFILER_COLOR_DRAW);
 
   IGL_DEBUG_ASSERT(rps_, "Did you forget to call bindRenderPipelineState()?");
 
@@ -1111,8 +1165,7 @@ void RenderCommandEncoder::multiDrawIndexedIndirect(IBuffer& indirectBuffer,
                                                     uint32_t drawCount,
                                                     uint32_t stride) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DRAW);
-  IGL_PROFILER_ZONE_GPU_COLOR_VK(
-      "multiDrawIndexedIndirect()", ctx_.tracyCtx_, cmdBuffer_, IGL_PROFILER_COLOR_DRAW);
+  IGL_ENCODER_ZONE_GPU_COLOR("multiDrawIndexedIndirect()", IGL_PROFILER_COLOR_DRAW);
 
   IGL_DEBUG_ASSERT(rps_, "Did you forget to call bindRenderPipelineState()?");
 

@@ -7,6 +7,7 @@
 
 #include <igl/vulkan/PlatformDevice.h>
 
+#include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/Texture.h>
@@ -227,6 +228,65 @@ void PlatformDevice::deferredTask(std::packaged_task<void()>&& task, SubmitHandl
 
 int PlatformDevice::getFenceFdFromSubmitHandle(SubmitHandle handle) const {
   return device_.getVulkanContext().getFenceFdFromSubmitHandle(handle);
+}
+
+bool PlatformDevice::supportsReusableCommandBuffers() const {
+  return device_.getVulkanContext().supportsReusableCommandBuffers();
+}
+
+std::shared_ptr<ICommandBuffer> PlatformDevice::createReusableCommandBuffer(
+    const ReusableCommandBufferDesc& desc,
+    Result* IGL_NULLABLE outResult) const {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+
+  VulkanContext& ctx = device_.getVulkanContext();
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
+
+  if (!ctx.supportsReusableCommandBuffers()) {
+    Result::setResult(outResult,
+                      Result::Code::Unsupported,
+                      "Reusable command buffers need descriptor sets that nothing rewrites");
+    return nullptr;
+  }
+
+  VkCommandPool commandPool = VK_NULL_HANDLE;
+  const VkResult result = ivkCreateCommandPool(&ctx.vf_,
+                                               ctx.getVkDevice(),
+                                               VkCommandPoolCreateFlags{0},
+                                               ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                               &commandPool);
+  if (result != VK_SUCCESS) {
+    setResultFrom(outResult, result);
+    return nullptr;
+  }
+  // the command pool exists once vkCreateCommandPool() succeeds
+  // @fb-only
+  ivkSetDebugObjectName(&ctx.vf_,
+                        ctx.getVkDevice(),
+                        VK_OBJECT_TYPE_COMMAND_POOL,
+                        (uint64_t)commandPool,
+                        IGL_FORMAT("Command Pool: {}", desc.debugName).c_str());
+
+  Result::setOk(outResult);
+  return std::make_shared<CommandBuffer>(ctx, desc, commandPool);
+}
+
+bool PlatformDevice::isRecorded(const ICommandBuffer& commandBuffer) const {
+  const auto& vkCommandBuffer = static_cast<const CommandBuffer&>(commandBuffer);
+  return vkCommandBuffer.belongsTo(device_.getVulkanContext()) && vkCommandBuffer.isRecorded();
+}
+
+void PlatformDevice::executeCommands(ICommandBuffer& commandBuffer,
+                                     ICommandBuffer& reusable,
+                                     Result* IGL_NULLABLE outResult) const {
+  const VulkanContext& ctx = device_.getVulkanContext();
+  auto& vkCommandBuffer = static_cast<CommandBuffer&>(commandBuffer);
+  if (!vkCommandBuffer.belongsTo(ctx) || !static_cast<CommandBuffer&>(reusable).belongsTo(ctx)) {
+    Result::setResult(
+        outResult, Result::Code::ArgumentInvalid, "The command buffer belongs to another device");
+    return;
+  }
+  vkCommandBuffer.executeCommands(reusable, outResult);
 }
 
 } // namespace igl::vulkan

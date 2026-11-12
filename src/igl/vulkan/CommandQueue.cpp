@@ -33,9 +33,11 @@ std::shared_ptr<ICommandBuffer> CommandQueue::createCommandBuffer(const CommandB
   VulkanContext& ctx = device_.getVulkanContext();
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
 
-  ++numBuffersLeftToSubmit_;
+  ++*numBuffersLeftToSubmit_;
 
-  return std::make_shared<CommandBuffer>(ctx, desc);
+  auto cmdBuffer = std::make_shared<CommandBuffer>(ctx, desc);
+  cmdBuffer->numBuffersLeftToSubmit_ = numBuffersLeftToSubmit_;
+  return cmdBuffer;
 }
 
 SubmitHandle CommandQueue::submit(const ICommandBuffer& cmdBuffer, bool /* endOfFrame */) {
@@ -44,11 +46,22 @@ SubmitHandle CommandQueue::submit(const ICommandBuffer& cmdBuffer, bool /* endOf
   VulkanContext& ctx = device_.getVulkanContext();
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
 
+  auto* vkCmdBuffer = const_cast<CommandBuffer*>(static_cast<const CommandBuffer*>(&cmdBuffer));
+
+  // A reusable command buffer is not counted as left to submit, cannot present a swapchain image,
+  // and each run counts the draws of its slot
+  if (vkCmdBuffer->reusable_) {
+    if (!IGL_DEBUG_VERIFY(
+            !vkCmdBuffer->reusable_->executeInCommandBuffer,
+            "Run this reusable command buffer with PlatformDevice::executeCommands()")) {
+      return 0;
+    }
+    return endCommandBuffer(ctx, vkCmdBuffer, false);
+  }
+
   incrementDrawCount(cmdBuffer.getCurrentDrawCount());
 
-  --numBuffersLeftToSubmit_;
-
-  auto* vkCmdBuffer = const_cast<CommandBuffer*>(static_cast<const CommandBuffer*>(&cmdBuffer));
+  --*numBuffersLeftToSubmit_;
 
 #if IGL_COMMAND_QUEUE_DEBUG_FENCES
   // Create label with Fence handle and Fence FD, if available
@@ -85,6 +98,7 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
 
   auto* const timer = static_cast<Timer*>(cmdBuffer->desc.timer.get());
+  cmdBuffer->isSubmitted_ = true;
 
   // Submit to the graphics queue.
   const bool shouldPresent = ctx.hasSwapchain() && cmdBuffer->isFromSwapchain() && present;
@@ -94,6 +108,21 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
     ctx.processDeferredTasks();
     ctx.stagingDevice_->mergeRegionsAndFreeBuffers();
     return submitHandle.handle();
+  };
+  // discard() takes only the current command buffer. One that executes slots of reusable command
+  // buffers gives back its Vulkan command buffer even after a later one was acquired, as it does
+  // when it is destroyed without being submitted, and gives back its slots.
+  const auto discard = [&ctx, cmdBuffer]() {
+    if (!cmdBuffer->executesSlots_) {
+      ctx.immediate_->discard(*cmdBuffer->wrapper_);
+      return;
+    }
+    if (cmdBuffer->wrapper_->handle == ctx.immediate_->getNextSubmitHandle()) {
+      ctx.immediate_->discard(*cmdBuffer->wrapper_);
+    } else {
+      ctx.immediate_->release(*cmdBuffer->wrapper_);
+    }
+    cmdBuffer->releaseExecutedSlots({});
   };
   if (shouldPresent) {
     // Injected-semaphore overflow below discards the command buffer and skips present(), leaving
@@ -105,27 +134,53 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
           ctx.swapchain_->getFrameNumber() + ctx.swapchain_->getNumSwapchainImages();
       // we wait for this value next time we want to acquire this swapchain image
       if (!ctx.immediate_->signalSemaphore(ctx.timelineSemaphore_->getVkSemaphore(), signalValue)) {
-        ctx.immediate_->discard(cmdBuffer->wrapper_);
+        discard();
         return finishCommandBuffer({});
       }
       ctx.swapchain_->timelineWaitValues[ctx.swapchain_->getCurrentImageIndex()] = signalValue;
     } else {
       // this can be removed once we switch to timeline semaphores
       if (!ctx.immediate_->waitSemaphore(ctx.swapchain_->getSemaphore())) {
-        ctx.immediate_->discard(cmdBuffer->wrapper_);
+        discard();
         return finishCommandBuffer({});
       }
     }
   }
 
   if (timer) {
-    timer->end(cmdBuffer->wrapper_.cmdBuf, cmdBuffer->timerSlot_);
+    timer->end(cmdBuffer->wrapper_->cmdBuf, cmdBuffer->timerSlot_);
   }
   // Presentation can outlive the submit fence. Its semaphore is reusable only after the same
   // swapchain image is reacquired and does not consume the caller's injected-signal capacity.
   const VkSemaphore presentationSemaphore = shouldPresent ? ctx.swapchain_->getPresentSemaphore()
                                                           : VK_NULL_HANDLE;
-  const auto submitHandle = ctx.immediate_->submit(cmdBuffer->wrapper_, presentationSemaphore);
+  CommandBuffer::ReusableSlot* slot = nullptr;
+  if (cmdBuffer->reusable_) {
+    Result result;
+    slot = cmdBuffer->prepareRun(result);
+    if (!result.isOk()) {
+      IGL_LOG_ERROR("CommandQueue::submit(): %s\n", result.message.c_str());
+      return 0;
+    }
+  }
+  const auto submitHandle =
+      ctx.immediate_->submit(cmdBuffer->wrapper_ ? *cmdBuffer->wrapper_ : ctx.immediate_->acquire(),
+                             presentationSemaphore,
+                             slot ? slot->commands.front() : VK_NULL_HANDLE);
+  // the draw statistics count the draws of the slots that run
+  if (slot) {
+    slot->lastRun = submitHandle;
+    cmdBuffer->reusable_->lastSubmission = submitHandle;
+    incrementDrawCount(slot->numDraws);
+  } else {
+    incrementDrawCount(cmdBuffer->executedDrawCount_);
+  }
+  if (cmdBuffer->reusable_) {
+    // every run moves to the next slot, as a submit that reads a Ring buffer does
+    ctx.markRingBufferRead();
+  }
+  // the slots that the command buffer executes run in this submission
+  cmdBuffer->releaseExecutedSlots(submitHandle);
   if (timer) {
     timer->submitted(cmdBuffer->timerSlot_, submitHandle);
   }

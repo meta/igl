@@ -1239,6 +1239,7 @@ void VulkanImage::transitionLayout(VkCommandBuffer cmdBuf,
                         dstStageMask,
                         subresourceRange);
 
+  ctx_->journalImageLayout(cmdBuf, *this);
   imageLayout_ = newImageLayout;
 }
 
@@ -1505,6 +1506,13 @@ Result VulkanImage::generateMipmapSrgb(VkCommandBuffer commandBuffer,
   // source mip across (raw bytes; UNORM and sRGB share a format-compatibility class, so
   // vkCmdCopyImage() is exact), let the normal blit path downsample there (gamma-correct because
   // the scratch is sRGB), then copy the generated mips back.
+  // The scratch lives only as long as this call, while a recording of a reusable command buffer
+  // runs later and again.
+  if (ctx_->isRecordingSlot(commandBuffer)) {
+    return Result(Result::Code::Unsupported,
+                  "generateMipmap(): the sRGB scratch path cannot record into a reusable command "
+                  "buffer");
+  }
   IGL_DEBUG_ASSERT(!isDepthOrStencilFormat_, "sRGB scratch mipmap path is color-only");
   const uint32_t expectedNumLayers = isCubemap_ ? arrayLayers_ / 6u : arrayLayers_;
   const uint32_t expectedNumFaces = isCubemap_ ? 6u : 1u;

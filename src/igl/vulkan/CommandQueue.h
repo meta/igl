@@ -24,7 +24,7 @@ class CommandQueue final : public ICommandQueue {
   CommandQueue(Device& device, const CommandQueueDesc& desc);
 
   ~CommandQueue() override {
-    IGL_DEBUG_ASSERT(numBuffersLeftToSubmit_ == 0);
+    IGL_DEBUG_ASSERT(*numBuffersLeftToSubmit_ == 0);
   }
 
   CommandQueue(const CommandQueue&) = delete;
@@ -37,7 +37,14 @@ class CommandQueue final : public ICommandQueue {
   std::shared_ptr<ICommandBuffer> createCommandBuffer(const CommandBufferDesc& desc,
                                                       Result* IGL_NULLABLE outResult) override;
 
-  /// @brief Submits the `commandBuffer` for execution on the GPU.
+  /// @brief Submits the `commandBuffer` for execution on the GPU. A reusable command buffer (see
+  /// PlatformDevice::createReusableCommandBuffer()) runs the recording of its current slot after a
+  /// command buffer acquired for the submission, which carries the fence and the semaphores of the
+  /// submission. It returns 0, without running, while a render pass of the recording is being
+  /// encoded, if the recording of the slot failed, or if the last run of the slot does not complete
+  /// within VulkanContextConfig::fenceTimeoutNanoseconds. The draw statistics count the draws of
+  /// the slot of a reusable command buffer, and of the slots that `commandBuffer` executes when the
+  /// submission runs.
   /// @param cmdBuffer The command buffer to be submitted.
   /// @param endOfFrame Not used
   SubmitHandle submit(const ICommandBuffer& cmdBuffer, bool endOfFrame = false) override;
@@ -57,7 +64,9 @@ class CommandQueue final : public ICommandQueue {
   Device& device_;
 
   /// @brief Counter indicating whether or not there is an active command buffer. C
-  int numBuffersLeftToSubmit_ = 0;
+  /// Shared with the command buffers of the queue: one that executes slots of a reusable command
+  /// buffer leaves the count when it is destroyed without being submitted.
+  std::shared_ptr<int> numBuffersLeftToSubmit_ = std::make_shared<int>(0);
 };
 
 } // namespace igl::vulkan
