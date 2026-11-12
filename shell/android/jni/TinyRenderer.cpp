@@ -755,6 +755,9 @@ void TinyRenderer::rebuildSwapchain(bool createSurface) {
     height_ = static_cast<uint32_t>(ANativeWindow_getHeight(nativeWindow_));
   }
 
+  // May be the first device use on a new render thread, before render() claims the context.
+  platform_->getDevice().setCurrentThread();
+
   auto* platformDevice = platform_->getDevice().getPlatformDevice<igl::vulkan::PlatformDevice>();
   // need clear the cached textures before recreate swap chain.
   platformDevice->clear();
