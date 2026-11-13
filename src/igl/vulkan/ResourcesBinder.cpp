@@ -259,35 +259,45 @@ void ResourcesBinder::updateBindingsByDescriptorBuffer(VkPipelineLayout layout,
 
   IGL_DEBUG_ASSERT(layout != VK_NULL_HANDLE);
 
+  // A group whose descriptor buffer could not be allocated stays dirty: the next draw retries it
+  // (this draw proceeds with the previous bindings).
+  uint32_t stillDirty = 0;
+
   if ((isDirtyFlags_ & DirtyFlagBits_Textures) != 0) {
-    ctx_.updateBindingsTexturesByDescriptorBuffer(cmdBuffer_,
-                                                  layout,
-                                                  bindPoint_,
-                                                  nextSubmitHandle_,
-                                                  bindingsTextures_,
-                                                  *state.dslCombinedImageSamplers,
-                                                  state.info);
-  }
-  if ((isDirtyFlags_ & DirtyFlagBits_Buffers) != 0) {
-    ctx_.updateBindingsBuffersByDescriptorBuffer(cmdBuffer_,
-                                                 layout,
-                                                 bindPoint_,
-                                                 nextSubmitHandle_,
-                                                 bindingsBuffers_,
-                                                 *state.dslBuffers,
-                                                 state.info);
-  }
-  if ((isDirtyFlags_ & DirtyFlagBits_StorageImages) != 0) {
-    ctx_.updateBindingsStorageImagesByDescriptorBuffer(cmdBuffer_,
+    if (!ctx_.updateBindingsTexturesByDescriptorBuffer(cmdBuffer_,
                                                        layout,
                                                        bindPoint_,
                                                        nextSubmitHandle_,
-                                                       bindingsStorageImages_,
-                                                       *state.dslStorageImages,
-                                                       state.info);
+                                                       bindingsTextures_,
+                                                       *state.dslCombinedImageSamplers,
+                                                       state.info)) {
+      stillDirty |= DirtyFlagBits_Textures;
+    }
+  }
+  if ((isDirtyFlags_ & DirtyFlagBits_Buffers) != 0) {
+    if (!ctx_.updateBindingsBuffersByDescriptorBuffer(cmdBuffer_,
+                                                      layout,
+                                                      bindPoint_,
+                                                      nextSubmitHandle_,
+                                                      bindingsBuffers_,
+                                                      *state.dslBuffers,
+                                                      state.info)) {
+      stillDirty |= DirtyFlagBits_Buffers;
+    }
+  }
+  if ((isDirtyFlags_ & DirtyFlagBits_StorageImages) != 0) {
+    if (!ctx_.updateBindingsStorageImagesByDescriptorBuffer(cmdBuffer_,
+                                                            layout,
+                                                            bindPoint_,
+                                                            nextSubmitHandle_,
+                                                            bindingsStorageImages_,
+                                                            *state.dslStorageImages,
+                                                            state.info)) {
+      stillDirty |= DirtyFlagBits_StorageImages;
+    }
   }
 
-  isDirtyFlags_ = 0;
+  isDirtyFlags_ = stillDirty;
 }
 
 void ResourcesBinder::updateBindingsByDescriptorSet(VkPipelineLayout layout,

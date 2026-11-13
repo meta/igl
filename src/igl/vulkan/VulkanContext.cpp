@@ -412,33 +412,49 @@ class DescriptorBuffersArena final {
     buffer_ = createNewBuffer();
   }
 
-  DescriptorBuffer& getDescriptorBuffer(size_t requireSize,
+  /// Whether the first descriptor buffer was created.
+  [[nodiscard]] bool valid() const {
+    return buffer_.buffer != nullptr;
+  }
+
+  /// Returns null when a new descriptor buffer is needed and cannot be created. The arena is then
+  /// untouched (the replacement is obtained before anything changes), so a later call retries.
+  // @fb-only
+  DescriptorBuffer* getDescriptorBuffer(size_t requireSize,
                                         size_t alignment,
                                         VulkanImmediateCommands& ic,
                                         VulkanImmediateCommands::SubmitHandle nextSubmitHandle) {
     IGL_DEBUG_ASSERT(requireSize && alignment);
     IGL_DEBUG_ASSERT(requireSize <= kBufferSize);
-    buffer_.offset = alignUp(buffer_.offset, alignment);
-    if ((buffer_.offset + requireSize) <= kBufferSize) {
-      return buffer_;
+    const size_t alignedOffset = alignUp(buffer_.offset, alignment);
+    if ((alignedOffset + requireSize) <= kBufferSize) {
+      buffer_.offset = alignedOffset;
+      return &buffer_;
+    }
+
+    // An earlier buffer whose submission has finished can be reused; otherwise a new one is made.
+    bool canReuse = false;
+    DescriptorBuffer replacement;
+    if (!extinct_.empty() && extinct_.front().handle != nextSubmitHandle &&
+        ic.isReady(extinct_.front().handle)) {
+      replacement = extinct_.front();
+      canReuse = true;
+    } else {
+      replacement = createNewBuffer();
+    }
+    if (replacement.buffer == nullptr) {
+      return nullptr;
     }
 
     buffer_.handle = nextSubmitHandle;
     extinct_.push_back(buffer_);
-
-    if (extinct_.size() > 1 && extinct_.front().handle != nextSubmitHandle) {
-      DescriptorBuffer p = extinct_.front();
-      if (ic.isReady(p.handle)) {
-        buffer_ = p;
-        buffer_.offset = 0;
-        buffer_.bindCmdBuffer = VK_NULL_HANDLE;
-        extinct_.pop_front();
-        return buffer_;
-      }
+    if (canReuse) {
+      extinct_.pop_front();
+      replacement.offset = 0;
+      replacement.bindCmdBuffer = VK_NULL_HANDLE;
     }
-
-    buffer_ = createNewBuffer();
-    return buffer_;
+    buffer_ = std::move(replacement);
+    return &buffer_;
   }
 
  private:
@@ -1470,6 +1486,9 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
 
   if (features_.has_VK_EXT_descriptor_buffer) {
     pimpl_->descriptorBuffersArena = std::make_unique<DescriptorBuffersArena>(*this);
+    if (!pimpl_->descriptorBuffersArena->valid()) {
+      return Result(Result::Code::RuntimeError, "Cannot create the first descriptor buffer");
+    }
   }
 
   // default sampler
@@ -2478,7 +2497,7 @@ void VulkanContext::updateBindingsBuffers(VkCommandBuffer IGL_NONNULL cmdBuf,
   }
 }
 
-void VulkanContext::updateBindingsTexturesByDescriptorBuffer(
+bool VulkanContext::updateBindingsTexturesByDescriptorBuffer(
     VkCommandBuffer IGL_NONNULL cmdBuf,
     VkPipelineLayout layout,
     VkPipelineBindPoint bindPoint,
@@ -2487,7 +2506,7 @@ void VulkanContext::updateBindingsTexturesByDescriptorBuffer(
     const VulkanDescriptorSetLayout& dsl,
     const util::SpvModuleInfo& info) const {
   if (info.textures.empty()) {
-    return;
+    return true;
   }
 
   // make sure the guard value is always there
@@ -2505,8 +2524,13 @@ void VulkanContext::updateBindingsTexturesByDescriptorBuffer(
   auto alignment = vkPhysicalDeviceDescriptorBufferProperties_.descriptorBufferOffsetAlignment;
   auto layoutSize = dsl.layoutSize;
 
-  auto& descriptorBuffer = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
+  DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
       layoutSize, alignment, *immediate_, nextSubmitHandle);
+  if (descriptorBufferPtr == nullptr) {
+    IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
+    return false;
+  }
+  DescriptorBuffer& descriptorBuffer = *descriptorBufferPtr;
 
   void* mappedPtr = descriptorBuffer.buffer->getMappedPtr();
   auto originOffset = descriptorBuffer.offset;
@@ -2560,9 +2584,11 @@ void VulkanContext::updateBindingsTexturesByDescriptorBuffer(
   VkDeviceSize offsets = originOffset;
   vf_.vkCmdSetDescriptorBufferOffsetsEXT(
       cmdBuf, bindPoint, layout, kBindPoint_CombinedImageSamplers, 1, &bufferIndex, &offsets);
+
+  return true;
 }
 
-void VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
+bool VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
     VkCommandBuffer IGL_NONNULL cmdBuf,
     VkPipelineLayout layout,
     VkPipelineBindPoint bindPoint,
@@ -2574,7 +2600,7 @@ void VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
                    "Input attachments are not supported with VK_EXT_descriptor_buffer, "
                    "Device::createRenderPipeline() rejects such pipelines");
   if (info.images.empty()) {
-    return;
+    return true;
   }
 
   // make sure the guard value is always there
@@ -2587,8 +2613,13 @@ void VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
   auto alignment = vkPhysicalDeviceDescriptorBufferProperties_.descriptorBufferOffsetAlignment;
   auto layoutSize = dsl.layoutSize;
 
-  auto& descriptorBuffer = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
+  DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
       layoutSize, alignment, *immediate_, nextSubmitHandle);
+  if (descriptorBufferPtr == nullptr) {
+    IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
+    return false;
+  }
+  DescriptorBuffer& descriptorBuffer = *descriptorBufferPtr;
 
   void* mappedPtr = descriptorBuffer.buffer->getMappedPtr();
   auto originOffset = descriptorBuffer.offset;
@@ -2638,9 +2669,11 @@ void VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
   VkDeviceSize offsets = originOffset;
   vf_.vkCmdSetDescriptorBufferOffsetsEXT(
       cmdBuf, bindPoint, layout, kBindPoint_StorageImages, 1, &bufferIndex, &offsets);
+
+  return true;
 }
 
-void VulkanContext::updateBindingsBuffersByDescriptorBuffer(
+bool VulkanContext::updateBindingsBuffersByDescriptorBuffer(
     VkCommandBuffer IGL_NONNULL cmdBuf,
     VkPipelineLayout layout,
     VkPipelineBindPoint bindPoint,
@@ -2650,7 +2683,7 @@ void VulkanContext::updateBindingsBuffersByDescriptorBuffer(
     const util::SpvModuleInfo& info) {
   IGL_PROFILER_FUNCTION();
   if (info.buffers.empty()) {
-    return;
+    return true;
   }
 
   auto uniformBufferDescriptorSize =
@@ -2660,8 +2693,13 @@ void VulkanContext::updateBindingsBuffersByDescriptorBuffer(
   auto alignment = vkPhysicalDeviceDescriptorBufferProperties_.descriptorBufferOffsetAlignment;
   auto layoutSize = dsl.layoutSize;
 
-  auto& descriptorBuffer = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
+  DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
       layoutSize, alignment, *immediate_, nextSubmitHandle);
+  if (descriptorBufferPtr == nullptr) {
+    IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
+    return false;
+  }
+  DescriptorBuffer& descriptorBuffer = *descriptorBufferPtr;
 
   void* mappedPtr = descriptorBuffer.buffer->getMappedPtr();
   auto originOffset = descriptorBuffer.offset;
@@ -2713,6 +2751,8 @@ void VulkanContext::updateBindingsBuffersByDescriptorBuffer(
   VkDeviceSize offsets = originOffset;
   vf_.vkCmdSetDescriptorBufferOffsetsEXT(
       cmdBuf, bindPoint, layout, kBindPoint_Buffers, 1, &bufferIndex, &offsets);
+
+  return true;
 }
 
 std::shared_ptr<DescriptorPoolsArenas> VulkanContext::createDescriptorPoolsArenas() const {

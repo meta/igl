@@ -549,7 +549,7 @@ class VulkanContext final {
                                    const BindingsStorageImages& data,
                                    const VulkanDescriptorSetLayout& dsl,
                                    const util::SpvModuleInfo& info) const;
-  void updateBindingsTexturesByDescriptorBuffer(
+  [[nodiscard]] bool updateBindingsTexturesByDescriptorBuffer(
       VkCommandBuffer IGL_NONNULL cmdBuf,
       VkPipelineLayout layout,
       VkPipelineBindPoint bindPoint,
@@ -557,7 +557,7 @@ class VulkanContext final {
       const BindingsTextures& data,
       const VulkanDescriptorSetLayout& dsl,
       const util::SpvModuleInfo& info) const;
-  void updateBindingsBuffersByDescriptorBuffer(
+  [[nodiscard]] bool updateBindingsBuffersByDescriptorBuffer(
       VkCommandBuffer IGL_NONNULL cmdBuf,
       VkPipelineLayout layout,
       VkPipelineBindPoint bindPoint,
@@ -565,7 +565,7 @@ class VulkanContext final {
       BindingsBuffers& data,
       const VulkanDescriptorSetLayout& dsl,
       const util::SpvModuleInfo& info);
-  void updateBindingsStorageImagesByDescriptorBuffer(
+  [[nodiscard]] bool updateBindingsStorageImagesByDescriptorBuffer(
       VkCommandBuffer IGL_NONNULL cmdBuf,
       VkPipelineLayout layout,
       VkPipelineBindPoint bindPoint,
