@@ -7,6 +7,7 @@
 
 #pragma once
 
+@protocol MTLCommandQueue;
 @protocol MTLDevice;
 #import <Metal/MTLTypes.h>
 #include <ldrutils/lutils/Pool.h>
@@ -164,6 +165,10 @@ class Device : public IDevice {
   mutable DeviceStatistics deviceStatistics_;
   mutable std::mutex mostRecentCommandQueueMutex_;
   std::shared_ptr<ICommandQueue> mostRecentCommandQueue_;
+
+  id<MTLCommandQueue> IGL_NULLABLE getBufferInitQueue() const;
+  mutable std::once_flag bufferInitQueueFlag_;
+  mutable id<MTLCommandQueue> IGL_NULLABLE bufferInitQueue_ = nil;
 };
 
 /// Resolves whether Metal fast math should be enabled for an MSL compile from IGL's

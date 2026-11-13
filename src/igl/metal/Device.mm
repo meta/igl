@@ -8,10 +8,14 @@
 #include <igl/metal/Device.h>
 
 #import <Foundation/Foundation.h>
+#import <Metal/MTLBlitCommandEncoder.h>
+#import <Metal/MTLCommandBuffer.h>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <unordered_set>
 #include <igl/FramebufferWrapper.h>
+#include <igl/IGLSafeC.h>
 #include <igl/Macros.h>
 #include <igl/metal/Buffer.h>
 #include <igl/metal/BufferSynchronizationManager.h>
@@ -63,15 +67,73 @@ std::shared_ptr<ICommandQueue> Device::createCommandQueue( // NOLINT(bugprone-ex
 
 namespace {
 id<MTLBuffer> createMetalBuffer(id<MTLDevice> device,
+                                id<MTLCommandQueue> initQueue,
                                 const BufferDesc& desc,
-                                MTLResourceOptions options) {
+                                MTLResourceOptions options,
+                                Result* outResult) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   id<MTLBuffer> metalObject = nil;
-  if (desc.data != nullptr) {
+  if (desc.data != nullptr &&
+      (options & MTLResourceStorageModeMask) == MTLResourceStorageModePrivate) {
+    @autoreleasepool {
+      if (desc.length > std::numeric_limits<size_t>::max() - 3) {
+        Result::setResult(outResult, Result::Code::ArgumentOutOfRange, "Buffer size is too large");
+        return nil;
+      }
+      // Buffer blits on macOS require four-byte alignment, including the copied size.
+      const size_t allocationSize = (desc.length + 3) & ~size_t{3};
+      metalObject = [device newBufferWithLength:allocationSize options:options];
+      id<MTLBuffer> staging = [device newBufferWithLength:allocationSize
+                                                  options:MTLResourceStorageModeShared];
+      if (!metalObject || !staging || !staging.contents) {
+        Result::setResult(outResult,
+                          Result::Code::RuntimeError,
+                          "Failed to allocate buffers for private buffer initialization");
+        return nil;
+      }
+      if (try_checked_memcpy(staging.contents, allocationSize, desc.data, desc.length) != 0) {
+        Result::setResult(outResult,
+                          Result::Code::ArgumentOutOfRange,
+                          "Private buffer initialization exceeds its staging allocation");
+        return nil;
+      }
+      if (allocationSize != desc.length) {
+        std::memset(
+            static_cast<uint8_t*>(staging.contents) + desc.length, 0, allocationSize - desc.length);
+      }
+      id<MTLCommandBuffer> commandBuffer = [initQueue commandBuffer];
+      id<MTLBlitCommandEncoder> encoder = [commandBuffer blitCommandEncoder];
+      if (!commandBuffer || !encoder) {
+        Result::setResult(outResult,
+                          Result::Code::RuntimeError,
+                          "Failed to allocate resources for private buffer initialization");
+        return nil;
+      }
+      [encoder copyFromBuffer:staging
+                 sourceOffset:0
+                     toBuffer:metalObject
+            destinationOffset:0
+                         size:allocationSize];
+      [encoder endEncoding];
+      [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+        if (cb.status != MTLCommandBufferStatusCompleted) {
+          IGL_LOG_ERROR("Private buffer initialization did not complete successfully\n");
+        }
+      }];
+      // No CPU wait: the copy is ordered ahead of any work committed later on the same queue.
+      [commandBuffer commit];
+    }
+  } else if (desc.data != nullptr) {
     metalObject = [device newBufferWithBytes:desc.data length:desc.length options:options];
   } else {
     metalObject = [device newBufferWithLength:desc.length options:options];
   }
+  if (!metalObject) {
+    Result::setResult(outResult, Result::Code::RuntimeError, "Failed to allocate Metal buffer");
+    return nil;
+  }
   metalObject.label = [NSString stringWithUTF8String:desc.debugName.c_str()];
+  Result::setOk(outResult);
   return metalObject;
 }
 
@@ -99,6 +161,14 @@ NSArray<id<MTLDynamicLibrary>>* preloadedLibraries(const IShaderStages& stages)
 }
 } // namespace
 
+id<MTLCommandQueue> Device::getBufferInitQueue() const {
+  if (mostRecentCommandQueue_) {
+    return static_cast<CommandQueue&>(*mostRecentCommandQueue_).get();
+  }
+  std::call_once(bufferInitQueueFlag_, [this] { bufferInitQueue_ = [device_ newCommandQueue]; });
+  return bufferInitQueue_;
+}
+
 std::unique_ptr<IBuffer> Device::createBuffer( // NOLINT(bugprone-exception-escape)
     const BufferDesc& desc,
     Result* outResult) const noexcept {
@@ -112,9 +182,17 @@ std::unique_ptr<IBuffer> Device::createBuffer( // NOLINT(bugprone-exception-esca
   const MTLResourceOptions storage = toBufferResourceStorageMode(desc.storage);
   const MTLResourceOptions options = MTLResourceCPUCacheModeDefaultCache | storage;
 
-  id<MTLBuffer> metalObject = createMetalBuffer(device_, desc, options);
-  std::unique_ptr<IBuffer> resource = std::make_unique<Buffer>(
-      std::move(metalObject), options, desc.hint, 0 /* No accepted hints */, desc.type);
+  id<MTLBuffer> metalObject =
+      createMetalBuffer(device_, getBufferInitQueue(), desc, options, outResult);
+  if (!metalObject) {
+    return nullptr;
+  }
+  std::unique_ptr<IBuffer> resource = std::make_unique<Buffer>(std::move(metalObject),
+                                                               options,
+                                                               desc.hint,
+                                                               0 /* No accepted hints */,
+                                                               desc.type,
+                                                               desc.length);
   if (hasResourceTracker()) {
     resource->initResourceTracker(getResourceTracker(), desc.debugName);
   }
@@ -132,11 +210,15 @@ std::unique_ptr<IBuffer> Device::createRingBuffer( // NOLINT(bugprone-exception-
   // Create a ring of buffers
   std::vector<id<MTLBuffer>> bufferRing;
   for (size_t i = 0; i < bufferSyncManager_->getMaxInflightBuffers(); i++) {
-    id<MTLBuffer> metalObject = createMetalBuffer(device_, desc, options);
+    id<MTLBuffer> metalObject =
+        createMetalBuffer(device_, getBufferInitQueue(), desc, options, outResult);
+    if (!metalObject) {
+      return nullptr;
+    }
     bufferRing.push_back(metalObject);
   }
   std::unique_ptr<IBuffer> resource = std::make_unique<RingBuffer>(
-      std::move(bufferRing), options, bufferSyncManager_, desc.hint, desc.type);
+      std::move(bufferRing), options, bufferSyncManager_, desc.hint, desc.type, desc.length);
 
   if (hasResourceTracker()) {
     resource->initResourceTracker(getResourceTracker(), desc.debugName);

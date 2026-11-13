@@ -98,11 +98,13 @@ Buffer::Buffer(id<MTLBuffer> value,
                MTLResourceOptions options,
                BufferDesc::BufferAPIHint requestedApiHints,
                BufferDesc::BufferAPIHint acceptedApiHints,
-               BufferDesc::BufferType bufferType) :
+               BufferDesc::BufferType bufferType,
+               size_t sizeInBytes) :
   resourceOptions_(options),
   requestedApiHints_(requestedApiHints),
   acceptedApiHints_(acceptedApiHints),
-  bufferType_(bufferType) {
+  bufferType_(bufferType),
+  sizeInBytes_(sizeInBytes) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   mtlBuffers_.push_back(value);
 }
@@ -146,7 +148,7 @@ ResourceStorage Buffer::storage() const noexcept {
 }
 
 size_t Buffer::getSizeInBytes() const {
-  return [mtlBuffers_[0] length];
+  return sizeInBytes_ != 0 ? sizeInBytes_ : [mtlBuffers_[0] length];
 }
 
 uint64_t Buffer::gpuAddress(size_t /*offset*/) const {
@@ -159,8 +161,14 @@ RingBuffer::RingBuffer(std::vector<id<MTLBuffer>> ringBuffers,
                        MTLResourceOptions options,
                        std::shared_ptr<const BufferSynchronizationManager> syncManager,
                        BufferDesc::BufferAPIHint requestedApiHints,
-                       BufferDesc::BufferType bufferType) :
-  Buffer(nil, options, requestedApiHints, BufferDesc::BufferAPIHintBits::Ring, bufferType),
+                       BufferDesc::BufferType bufferType,
+                       size_t sizeInBytes) :
+  Buffer(nil,
+         options,
+         requestedApiHints,
+         BufferDesc::BufferAPIHintBits::Ring,
+         bufferType,
+         sizeInBytes),
   syncManager_(std::move(syncManager)) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   mtlBuffers_ = std::move(ringBuffers);

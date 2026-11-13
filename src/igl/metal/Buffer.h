@@ -22,7 +22,8 @@ class Buffer : public IBuffer {
          MTLResourceOptions options,
          BufferDesc::BufferAPIHint requestedApiHints,
          BufferDesc::BufferAPIHint acceptedApiHints,
-         BufferDesc::BufferType bufferType);
+         BufferDesc::BufferType bufferType,
+         size_t sizeInBytes = 0);
 
   Result upload(const void* data, const BufferRange& range) override;
 
@@ -50,6 +51,7 @@ class Buffer : public IBuffer {
   BufferDesc::BufferAPIHint requestedApiHints_;
   BufferDesc::BufferAPIHint acceptedApiHints_;
   BufferDesc::BufferType bufferType_;
+  size_t sizeInBytes_ = 0;
 };
 
 // Manages a ring of buffers.
@@ -61,7 +63,8 @@ class RingBuffer final : public Buffer {
              MTLResourceOptions options,
              std::shared_ptr<const BufferSynchronizationManager> syncManager,
              BufferDesc::BufferAPIHint requestedApiHints,
-             BufferDesc::BufferType bufferType);
+             BufferDesc::BufferType bufferType,
+             size_t sizeInBytes = 0);
 
   Result upload(const void* data, const BufferRange& range) override;
 

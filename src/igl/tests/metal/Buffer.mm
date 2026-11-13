@@ -12,6 +12,10 @@
 #include "../util/Common.h"
 #include "../util/TestDevice.h"
 
+#import <Metal/MTLBlitCommandEncoder.h>
+#import <Metal/MTLCommandBuffer.h>
+#import <Metal/MTLCommandQueue.h>
+#import <Metal/MTLDevice.h>
 #include <cstring>
 #include <igl/IGL.h>
 #include <igl/metal/Device.h>
@@ -207,6 +211,51 @@ TEST_F(MetalBufferTest, RingBufferCreation) {
   ASSERT_TRUE(res.isOk()) << res.message;
   ASSERT_NE(buffer, nullptr);
   ASSERT_EQ(buffer->getSizeInBytes(), bufferSize);
+}
+
+TEST_F(MetalBufferTest, CreatePrivateBufferWithInitialData) {
+  const uint16_t data[] = {0x1234, 0xabcd, 0x5678};
+  const BufferDesc desc{.type = BufferDesc::BufferTypeBits::Index,
+                        .data = data,
+                        .length = sizeof(data),
+                        .storage = ResourceStorage::Private};
+  Result result;
+  auto buffer = device_->createBuffer(desc, &result);
+  ASSERT_TRUE(result.isOk()) << result.message;
+  ASSERT_NE(buffer, nullptr);
+  EXPECT_EQ(buffer->getSizeInBytes(), sizeof(data));
+  EXPECT_EQ(buffer->storage(), ResourceStorage::Private);
+  EXPECT_EQ(buffer->getBufferType(), BufferDesc::BufferTypeBits::Index);
+  EXPECT_EQ(buffer->requestedApiHints(), 0);
+  EXPECT_EQ(buffer->acceptedApiHints(), 0);
+
+  id<MTLBuffer> nativeBuffer = static_cast<metal::Buffer*>(buffer.get())->get();
+  ASSERT_NE(nativeBuffer, nil);
+  constexpr size_t kCopySize = 8;
+  ASSERT_GE(nativeBuffer.length, kCopySize);
+  id<MTLBuffer> readback = [nativeBuffer.device newBufferWithLength:kCopySize
+                                                            options:MTLResourceStorageModeShared];
+  ASSERT_NE(readback, nil);
+  id<MTLCommandQueue> queue = [nativeBuffer.device newCommandQueue];
+  ASSERT_NE(queue, nil);
+  id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+  ASSERT_NE(commandBuffer, nil);
+  id<MTLBlitCommandEncoder> encoder = [commandBuffer blitCommandEncoder];
+  ASSERT_NE(encoder, nil);
+  [encoder copyFromBuffer:nativeBuffer
+             sourceOffset:0
+                 toBuffer:readback
+        destinationOffset:0
+                     size:kCopySize];
+  [encoder endEncoding];
+  [commandBuffer commit];
+  [commandBuffer waitUntilCompleted];
+  ASSERT_EQ(commandBuffer.status, MTLCommandBufferStatusCompleted);
+  ASSERT_NE(readback.contents, nullptr);
+  EXPECT_EQ(std::memcmp(readback.contents, data, sizeof(data)), 0);
+  const auto* bytes = static_cast<const uint8_t*>(readback.contents);
+  EXPECT_EQ(bytes[sizeof(data)], 0);
+  EXPECT_EQ(bytes[sizeof(data) + 1], 0);
 }
 
 } // namespace igl::tests
