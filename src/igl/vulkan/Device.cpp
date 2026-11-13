@@ -136,10 +136,12 @@ std::unique_ptr<IBuffer> Device::createBufferInternal( // NOLINT(bugprone-except
   const auto result = buffer->create(desc);
 
   if (!IGL_DEBUG_VERIFY(result.isOk())) {
+    Result::setResult(outResult, result);
     return nullptr;
   }
 
   if (!desc.data) {
+    Result::setOk(outResult);
     return buffer;
   }
 

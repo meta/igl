@@ -96,7 +96,18 @@ Result Buffer::create(const BufferDesc& desc) {
                                        : IGL_FORMAT("Buffer {}{}", bufferId, subBufferName);
     buffers_[bufferIndex] =
         ctx.createBuffer(desc_.length, usageFlags, memFlags, &result, bufferName.c_str());
-    IGL_DEBUG_ASSERT(result.isOk());
+    if (!result.isOk() || buffers_[bufferIndex] == nullptr) {
+      // Nothing is half-built: the sub-buffers created so far were never used, so they are
+      // destroyed at once and the buffer has none.
+      IGL_DEBUG_ASSERT(!result.isOk(), "createBuffer() returned null with an OK result");
+      for (size_t created = 0; created < bufferIndex; ++created) {
+        buffers_[created]->discardNeverSubmitted();
+      }
+      buffers_.reset();
+      bufferPatches_.reset();
+      return result.isOk() ? Result(Result::Code::RuntimeError, "Cannot create the buffer")
+                           : result;
+    }
   }
   if (desc_.debugName.empty()) {
     ++bufferId;

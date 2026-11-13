@@ -1432,6 +1432,16 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                      nullptr,
                                      "Buffer: dummy storage");
+  if (dummyUniformBuffer_ == nullptr || dummyStorageBuffer_ == nullptr) {
+    // Nothing has used the one that exists.
+    if (dummyUniformBuffer_ != nullptr) {
+      dummyUniformBuffer_->discardNeverSubmitted();
+    }
+    if (dummyStorageBuffer_ != nullptr) {
+      dummyStorageBuffer_->discardNeverSubmitted();
+    }
+    return Result(Result::Code::RuntimeError, "Cannot create the dummy uniform/storage buffers");
+  }
 
   // default texture, also bound in place of an unbound input attachment
   {
@@ -1790,9 +1800,14 @@ std::unique_ptr<VulkanBuffer> VulkanContext::createBuffer(VkDeviceSize bufferSiz
   ENSURE_BUFFER_SIZE(VK_BUFFER_USAGE_FLAG_BITS_MAX_ENUM, limits.maxStorageBufferRange);
 #undef ENSURE_BUFFER_SIZE
 
+  auto buffer =
+      std::make_unique<VulkanBuffer>(*this, vkDevice_, bufferSize, usageFlags, memFlags, debugName);
+  if (!buffer->valid()) {
+    Result::setResult(outResult, getResultFromVkResult(buffer->initResult()));
+    return nullptr;
+  }
   Result::setOk(outResult);
-  return std::make_unique<VulkanBuffer>(
-      *this, vkDevice_, bufferSize, usageFlags, memFlags, debugName);
+  return buffer;
 }
 
 VulkanImage VulkanContext::createImage(VkImageType imageType,

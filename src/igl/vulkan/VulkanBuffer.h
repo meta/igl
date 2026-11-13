@@ -21,6 +21,11 @@ class VulkanBuffer {
    * an optional debug name. Uses VMA if IGL is built with VMA support. If memory flags specify
    * that the buffer is visible by the host (the CPU), then the buffer's memory will be mapped into
    * the application's address space and can be accessed directly.
+   *
+   * The constructor stops at the first failing step and records its result: check `valid()` before
+   * using the buffer. An invalid buffer owns no Vulkan object and is not mapped, so its upload,
+   * download, flush and invalidate operations return early on their existing mapped-pointer
+   * checks; debug builds also assert.
    */
   VulkanBuffer(const VulkanContext& ctx,
                VkDevice device,
@@ -69,6 +74,7 @@ class VulkanBuffer {
     return vkBuffer_;
   }
   [[nodiscard]] VkDeviceAddress getVkDeviceAddress() const {
+    IGL_DEBUG_ASSERT(valid());
     IGL_DEBUG_ASSERT(vkDeviceAddress_, "Make sure config.enableBufferDeviceAddress is enabled");
     return vkDeviceAddress_;
   }
@@ -85,7 +91,26 @@ class VulkanBuffer {
     return isCoherentMemory_;
   }
 
+  /// @brief Whether construction succeeded: the buffer and its memory exist.
+  [[nodiscard]] bool valid() const noexcept {
+    return initResult_ == VK_SUCCESS;
+  }
+
+  /// @brief The result of the first construction step that failed, `VK_SUCCESS` for a valid buffer.
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
+
+  /// @brief Destroys the buffer and its memory at once, instead of through a deferred task, and
+  /// leaves the object invalid. Only for a buffer that no GPU work can reference because it was
+  /// created and then refused before any use (a failed aggregate). No-op for an invalid buffer.
+  void discardNeverSubmitted();
+
  private:
+  /// Clears the handles and records `result`. Only a failed allocation fails the constructor, so
+  /// there is nothing to destroy.
+  void failInit(VkResult result);
+
   const VulkanContext& ctx_;
   VkDevice device_ = VK_NULL_HANDLE;
   VkBuffer vkBuffer_ = VK_NULL_HANDLE;
@@ -97,6 +122,7 @@ class VulkanBuffer {
   VkMemoryPropertyFlags memFlags_ = 0;
   void* mappedPtr_ = nullptr;
   bool isCoherentMemory_ = false;
+  VkResult initResult_ = VK_SUCCESS;
 };
 
 } // namespace igl::vulkan

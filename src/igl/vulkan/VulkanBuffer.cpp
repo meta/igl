@@ -51,42 +51,34 @@ VulkanBuffer::VulkanBuffer(const VulkanContext& ctx,
           VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
     }
 
-    const VkResult result = vmaCreateBuffer(static_cast<VmaAllocator>(ctx_.getVmaAllocator()),
-                                            &ci,
-                                            &ciAlloc,
-                                            &vkBuffer_,
-                                            &vmaAllocation_,
-                                            nullptr);
+    auto* const vma = static_cast<VmaAllocator>(ctx_.getVmaAllocator());
+    VkResult result = vmaCreateBuffer(vma, &ci, &ciAlloc, &vkBuffer_, &vmaAllocation_, nullptr);
 
     if (result != VK_SUCCESS || vmaAllocation_ == nullptr) {
       // Allocation failed - possibly due to memory pressure from deferred tasks not being
-      // processed. Drain deferred tasks queue to free memory.
+      // processed. Drain deferred tasks queue to free memory, then retry once.
       const_cast<VulkanContext&>(ctx_).waitDeferredTasks();
-      VK_ASSERT(vmaCreateBuffer(static_cast<VmaAllocator>(ctx_.getVmaAllocator()),
-                                &ci,
-                                &ciAlloc,
-                                &vkBuffer_,
-                                &vmaAllocation_,
-                                nullptr));
+      vkBuffer_ = VK_NULL_HANDLE;
+      vmaAllocation_ = VK_NULL_HANDLE;
+      result = vmaCreateBuffer(vma, &ci, &ciAlloc, &vkBuffer_, &vmaAllocation_, nullptr);
+      if (result != VK_SUCCESS || vmaAllocation_ == nullptr) {
+        IGL_LOG_ERROR(
+            "VulkanBuffer: allocation failed after draining deferred tasks (VkResult %d)\n",
+            static_cast<int>(result));
+        failInit(result != VK_SUCCESS ? result : VK_ERROR_UNKNOWN);
+        return;
+      }
     }
 
-    IGL_DEBUG_ASSERT(vmaAllocation_);
+    vmaSetAllocationName(vma, vmaAllocation_, IGL_FORMAT("VMA Allocation: {}", debugName).c_str());
 
-    if (vmaAllocation_) {
-      vmaSetAllocationName(static_cast<VmaAllocator>(ctx_.getVmaAllocator()),
-                           vmaAllocation_,
-                           IGL_FORMAT("VMA Allocation: {}", debugName).c_str());
+    // handle memory-mapped buffers
+    if ((memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+      VkMemoryPropertyFlags allocMemFlags = 0;
+      vmaGetAllocationMemoryProperties(vma, vmaAllocation_, &allocMemFlags);
+      isCoherentMemory_ = (allocMemFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 
-      // handle memory-mapped buffers
-      if ((memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
-        VkMemoryPropertyFlags allocMemFlags = 0;
-        vmaGetAllocationMemoryProperties(
-            static_cast<VmaAllocator>(ctx_.getVmaAllocator()), vmaAllocation_, &allocMemFlags);
-        isCoherentMemory_ = (allocMemFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
-
-        vmaMapMemory(
-            static_cast<VmaAllocator>(ctx_.getVmaAllocator()), vmaAllocation_, &mappedPtr_);
-      }
+      vmaMapMemory(vma, vmaAllocation_, &mappedPtr_);
     }
   } else {
     // create buffer
@@ -145,8 +137,45 @@ VulkanBuffer::VulkanBuffer(const VulkanContext& ctx,
   }
 }
 
+void VulkanBuffer::failInit(VkResult result) {
+  // Only a failed allocation reaches here, so nothing was created and there is nothing to destroy.
+  vkBuffer_ = VK_NULL_HANDLE;
+  vkMemory_ = VK_NULL_HANDLE;
+  vmaAllocation_ = VK_NULL_HANDLE;
+  mappedPtr_ = nullptr;
+  isCoherentMemory_ = false;
+  initResult_ = result != VK_SUCCESS ? result : VK_ERROR_UNKNOWN;
+}
+
+void VulkanBuffer::discardNeverSubmitted() {
+  if (!valid()) {
+    return;
+  }
+
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx_);
+
+  if (IGL_VULKAN_USE_VMA) {
+    auto* const vma = static_cast<VmaAllocator>(ctx_.getVmaAllocator());
+    if (mappedPtr_ != nullptr) {
+      vmaUnmapMemory(vma, vmaAllocation_);
+    }
+    vmaDestroyBuffer(vma, vkBuffer_, vmaAllocation_);
+  } else {
+    if (mappedPtr_ != nullptr) {
+      ctx_.vf_.vkUnmapMemory(device_, vkMemory_);
+    }
+    ctx_.vf_.vkDestroyBuffer(device_, vkBuffer_, nullptr);
+    ctx_.vf_.vkFreeMemory(device_, vkMemory_, nullptr);
+  }
+  failInit(VK_ERROR_UNKNOWN);
+}
+
 VulkanBuffer::~VulkanBuffer() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
+
+  if (!valid()) {
+    return; // owns nothing: the failing constructor already destroyed its partial objects
+  }
 
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx_);
 
@@ -171,6 +200,7 @@ VulkanBuffer::~VulkanBuffer() {
 }
 
 void VulkanBuffer::flushMappedMemory(VkDeviceSize offset, VkDeviceSize size) const {
+  IGL_DEBUG_ASSERT(valid());
   if (!IGL_DEBUG_VERIFY(isMapped())) {
     return;
   }
@@ -190,6 +220,7 @@ void VulkanBuffer::flushMappedMemory(VkDeviceSize offset, VkDeviceSize size) con
 }
 
 void VulkanBuffer::invalidateMappedMemory(VkDeviceSize offset, VkDeviceSize size) const {
+  IGL_DEBUG_ASSERT(valid());
   if (!IGL_DEBUG_VERIFY(isMapped())) {
     return;
   }
@@ -210,6 +241,8 @@ void VulkanBuffer::invalidateMappedMemory(VkDeviceSize offset, VkDeviceSize size
 
 void VulkanBuffer::getBufferSubData(size_t offset, size_t size, void* data) const {
   IGL_PROFILER_FUNCTION();
+
+  IGL_DEBUG_ASSERT(valid());
 
   // Only mapped host-visible buffers can be downloaded this way. All other
   // GPU buffers should use a temporary staging buffer
@@ -232,6 +265,8 @@ void VulkanBuffer::getBufferSubData(size_t offset, size_t size, void* data) cons
 
 void VulkanBuffer::bufferSubData(size_t offset, size_t size, const void* data) {
   IGL_PROFILER_FUNCTION();
+
+  IGL_DEBUG_ASSERT(valid());
 
   // Only mapped host-visible buffers can be uploaded this way. All other GPU buffers should use a
   // temporary staging buffer
