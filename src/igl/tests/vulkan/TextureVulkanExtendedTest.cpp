@@ -12,6 +12,7 @@
 #include <array>
 #include <igl/Device.h>
 #include <igl/Texture.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Texture.h>
 #include <igl/vulkan/VulkanTexture.h>
 
@@ -176,6 +177,32 @@ TEST_F(TextureVulkanExtendedTest, TextureFormatQuery) {
   EXPECT_EQ(texture->getNumLayers(), 1u);
   EXPECT_EQ(texture->getSamples(), 1u);
   EXPECT_EQ(texture->getNumMipLevels(), 1u);
+}
+
+TEST_F(TextureVulkanExtendedTest, TextureUploadPropagatesStagingFailure) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+
+  Result ret;
+  const auto texture = fd.device()->createTexture(
+      TextureDesc::new2D(
+          TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(texture, nullptr);
+
+  fd.drainStaging();
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateBuffer,
+         VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  const std::vector<uint32_t> pixels(64 * 64, 0xFFFFFFFFu);
+  const Result upload = texture->upload(texture->getFullRange(0), pixels.data());
+  EXPECT_FALSE(upload.isOk());
+  EXPECT_EQ(upload.code, Result::Code::RuntimeError);
 }
 
 } // namespace igl::tests

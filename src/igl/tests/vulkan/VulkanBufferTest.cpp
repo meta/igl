@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstring>
+#include <vector>
 #include <igl/Buffer.h>
 #include <igl/CommandBuffer.h>
 #include <igl/CommandQueue.h>
@@ -668,6 +669,84 @@ TEST_F(VulkanBufferFaultTest, InvalidBufferOperationsAreGuarded) {
   // Nothing was named, mapped or destroyed, and the destructor queued no deferred task.
   expectNoDependentCall(*fd, 0u, 0u, 0u, 0u);
   EXPECT_EQ(ctx.deferredTasks.size(), deferredBefore);
+}
+
+TEST_F(VulkanBufferFaultTest, BufferUploadPropagatesStagingFailure) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  // A single-heap software device would turn a Private buffer into a host-visible one: force the
+  // staged path this test is about.
+  fd->context().useStagingForBuffers_ = true;
+  Result result;
+  auto buffer = fd->device()->createBuffer(
+      BufferDesc{
+          .type = BufferDesc::BufferTypeBits::Storage,
+          .length = 128 * 1024,
+          .storage = ResourceStorage::Private,
+      },
+      &result);
+  ASSERT_TRUE(result.isOk()) << result.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+
+  // No staging buffer exists and none can be allocated: the upload has nowhere to stage.
+  fd->drainStaging();
+  fd->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  const std::vector<uint8_t> data(128 * 1024, 0x77);
+  const Result upload = buffer->upload(data.data(), BufferRange(data.size(), 0));
+  EXPECT_FALSE(upload.isOk());
+  EXPECT_EQ(upload.code, Result::Code::RuntimeError);
+}
+
+TEST_F(VulkanBufferFaultTest, RingBufferUploadPropagatesStagingFailure) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  // A single-heap software device would turn a Private buffer into a host-visible one: force the
+  // staged path this test is about.
+  fd->context().useStagingForBuffers_ = true;
+  Result result;
+  auto buffer = fd->device()->createBuffer(
+      BufferDesc{
+          .type = BufferDesc::BufferTypeBits::Storage,
+          .length = 128 * 1024,
+          .storage = ResourceStorage::Private,
+          .hint = BufferDesc::BufferAPIHintBits::Ring,
+      },
+      &result);
+  ASSERT_TRUE(result.isOk()) << result.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+
+  // A ring buffer that is not mapped uploads its local copy through the staging device.
+  fd->drainStaging();
+  fd->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  const std::vector<uint8_t> data(128 * 1024, 0x77);
+  const Result upload = buffer->upload(data.data(), BufferRange(data.size(), 0));
+  EXPECT_FALSE(upload.isOk());
+  EXPECT_EQ(upload.code, Result::Code::RuntimeError);
+}
+
+TEST_F(VulkanBufferFaultTest, BufferMapPropagatesStagingFailure) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  // A single-heap software device would turn a Private buffer into a host-visible one: force the
+  // staged path this test is about.
+  fd->context().useStagingForBuffers_ = true;
+  Result result;
+  auto buffer = fd->device()->createBuffer(
+      BufferDesc{
+          .type = BufferDesc::BufferTypeBits::Storage,
+          .length = 128 * 1024,
+          .storage = ResourceStorage::Private,
+      },
+      &result);
+  ASSERT_TRUE(result.isOk()) << result.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+
+  fd->drainStaging();
+  fd->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  Result mapResult;
+  EXPECT_EQ(buffer->map(BufferRange(128 * 1024, 0), &mapResult), nullptr);
+  EXPECT_FALSE(mapResult.isOk());
+  EXPECT_EQ(mapResult.code, Result::Code::RuntimeError);
 }
 
 } // namespace igl::tests

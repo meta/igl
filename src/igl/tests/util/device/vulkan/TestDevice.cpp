@@ -18,6 +18,7 @@
 #include <igl/vulkan/HWDevice.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanFeatures.h>
+#include <igl/vulkan/VulkanStagingDevice.h>
 #endif
 
 #if IGL_PLATFORM_MACOSX
@@ -494,6 +495,18 @@ bool FaultingDevice::teardownObserved() const {
 
 uint32_t FaultingDevice::countedBeforeTeardown(Counted counted) const {
   return gFault.countedAtTeardown[static_cast<size_t>(counted)].load();
+}
+
+void FaultingDevice::drainStaging() const {
+  auto& staging = *context().stagingDevice_;
+  staging.immediate->waitAll();
+  // A pass returns the finished blocks, the next ones merge neighbours and the last releases a
+  // buffer that is recovered whole: three passes reach the fixed point, a fourth proves it.
+  for (int pass = 0; pass < 4; ++pass) {
+    staging.mergeRegionsAndFreeBuffers();
+  }
+  // The released staging buffers' deferred destroys run now, so a test's counts start clean.
+  static_cast<void>(context().waitDeferredTasks());
 }
 
 void FaultingDevice::resetCounters() {

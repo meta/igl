@@ -93,17 +93,20 @@ void Framebuffer::copyBytesColorAttachment(ICommandQueue& /* Not Used */,
   const uint32_t layer = getVkLayer(itexture->getType(), range.face, range.layer);
 
   const VulkanContext& ctx = device_.getVulkanContext();
-  ctx.stagingDevice_->getImageData2D(vkTex.getVkImage(),
-                                     range.mipLevel,
-                                     layer, // Layer is either cube face or array layer
-                                     imageRegion,
-                                     vkTex.getProperties(),
-                                     VK_FORMAT_R8G8B8A8_UNORM,
-                                     vkTex.getVulkanTexture().image.imageLayout_,
-                                     vkTex.getVulkanTexture().imageView_.getVkImageAspectFlags(),
-                                     pixelBytes,
-                                     static_cast<uint32_t>(bytesPerRow),
-                                     true); // Flip the image vertically
+  if (!ctx.stagingDevice_->getImageData2D(
+          vkTex.getVkImage(),
+          range.mipLevel,
+          layer, // Layer is either cube face or array layer
+          imageRegion,
+          vkTex.getProperties(),
+          VK_FORMAT_R8G8B8A8_UNORM,
+          vkTex.getVulkanTexture().image.imageLayout_,
+          vkTex.getVulkanTexture().imageView_.getVkImageAspectFlags(),
+          pixelBytes,
+          static_cast<uint32_t>(bytesPerRow),
+          true)) { // Flip the image vertically
+    IGL_LOG_ERROR("Framebuffer::copyBytesColorAttachment(): the readback through staging failed\n");
+  }
 }
 
 void Framebuffer::copyBytesDepthAttachment(ICommandQueue& /*cmdQueue*/,

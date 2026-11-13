@@ -19,6 +19,7 @@
 #include <igl/CommandBuffer.h>
 #include <igl/Framebuffer.h>
 #include <igl/Texture.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/Texture.h>
 #include <igl/vulkan/VulkanBuffer.h>
@@ -426,13 +427,13 @@ TEST_F(VulkanStagingDeviceTest, PrivateMultiplanarUploadRoundTripAfter2DUpload) 
     ASSERT_TRUE(result.isOk()) << result.message;
     ASSERT_NE(image.getVkImage(), VK_NULL_HANDLE);
     ASSERT_FALSE(image.isMappedPtrAccessible());
-    ctx.stagingDevice_->imageData(image,
-                                  TextureType::TwoD,
-                                  TextureRangeDesc::new2D(0, 0, kWidth, kHeight),
-                                  properties,
-                                  0,
-                                  VK_IMAGE_ASPECT_COLOR_BIT,
-                                  pixels.data());
+    ASSERT_TRUE(ctx.stagingDevice_->imageData(image,
+                                              TextureType::TwoD,
+                                              TextureRangeDesc::new2D(0, 0, kWidth, kHeight),
+                                              properties,
+                                              0,
+                                              VK_IMAGE_ASPECT_COLOR_BIT,
+                                              pixels.data()));
 
     const auto readback = ctx.createBuffer(kDataSize,
                                            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -723,6 +724,116 @@ TEST_F(VulkanStagingDeviceTest, ABlockReusedAfterItsSubmissionRetiredCountsAsFre
   EXPECT_EQ(staging.getFreeStagingBufferSize(), 2 * kMiB);
   EXPECT_EQ(readBack, data);
   drainStaging();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Staging allocation failures. The device is built by `FaultingDevice`, which fails chosen
+// allocation calls.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr VkDeviceSize kMiB = 1024u * 1024u;
+
+} // namespace
+
+class VulkanStagingFaultTest : public ::testing::Test {
+ protected:
+  using Call = util::device::vulkan::FaultingDevice::Call;
+
+  void SetUp() override {
+    igl::setDebugBreakEnabled(false);
+    if (!IGL_VULKAN_USE_VMA) {
+      GTEST_SKIP() << "The allocation tests run on the VMA path";
+    }
+    fd_ = std::make_unique<util::device::vulkan::FaultingDevice>(
+        util::device::vulkan::getContextConfig());
+    ASSERT_NE(fd_->device(), nullptr) << fd_->creationResult().message.c_str();
+  }
+
+  [[nodiscard]] igl::vulkan::VulkanContext& ctx() const {
+    return fd_->context();
+  }
+  [[nodiscard]] igl::vulkan::VulkanStagingDevice& staging() const {
+    return *ctx().stagingDevice_;
+  }
+
+  // Waits for the staging pool, returns every block and releases every fully recovered staging
+  // buffer (the context's own dummy upload used one), leaving no free bytes and no region.
+  void drainStaging() const {
+    fd_->drainStaging();
+    ASSERT_EQ(staging().getFreeStagingBufferSize(), 0u);
+  }
+
+  // A device-local buffer that staging uploads can target.
+  [[nodiscard]] std::unique_ptr<igl::vulkan::VulkanBuffer> makeTarget(VkDeviceSize size) const {
+    Result result;
+    auto buffer =
+        ctx().createBuffer(size,
+                           VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                           &result,
+                           "Buffer: staging fault target");
+    EXPECT_TRUE(result.isOk()) << result.message.c_str();
+    return buffer;
+  }
+
+  std::unique_ptr<util::device::vulkan::FaultingDevice> fd_;
+};
+
+TEST_F(VulkanStagingFaultTest, StagingAllocationFailurePublishesNothingAndRecordsNoCopy) {
+  drainStaging();
+  const auto target = makeTarget(kMiB);
+  ASSERT_NE(target, nullptr);
+  const std::vector<uint8_t> data(128 * 1024, 0x33);
+
+  fd_->resetCounters();
+  fd_->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  EXPECT_FALSE(staging().bufferSubData(*target, 0, data.size(), data.data()));
+
+  // No region was published (no free bytes).
+  EXPECT_EQ(staging().getFreeStagingBufferSize(), 0u);
+  EXPECT_GE(fd_->failed(Call::CreateBuffer), 2u);
+}
+
+TEST_F(VulkanStagingFaultTest, StagingRecoversWhenALaterAllocationSucceeds) {
+  drainStaging();
+  const auto target = makeTarget(kMiB);
+  ASSERT_NE(target, nullptr);
+  std::vector<uint8_t> data(128 * 1024);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<uint8_t>(i * 7u + 3u);
+  }
+
+  // The first allocation (and its retry) fails, the one after the staging device's wait works.
+  fd_->resetCounters();
+  fd_->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/2);
+  ASSERT_TRUE(staging().bufferSubData(*target, 0, data.size(), data.data()));
+  EXPECT_EQ(fd_->failed(Call::CreateBuffer), 2u);
+
+  std::vector<uint8_t> readBack(data.size(), 0);
+  ASSERT_TRUE(staging().getBufferSubData(*target, 0, readBack.size(), readBack.data()));
+  EXPECT_EQ(readBack, data);
+}
+
+TEST_F(VulkanStagingFaultTest, RepeatedStagingFailureNeverLoopsWithoutProgress) {
+  drainStaging();
+  const auto target = makeTarget(kMiB);
+  ASSERT_NE(target, nullptr);
+  const std::vector<uint8_t> data(512 * 1024, 0x44);
+
+  fd_->resetCounters();
+  fd_->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  constexpr uint32_t kCalls = 3;
+  for (uint32_t i = 0; i < kCalls; ++i) {
+    EXPECT_FALSE(staging().bufferSubData(*target, 0, data.size(), data.data()));
+  }
+  // Each call tries to allocate before and after its one wait, each try being a creation and its
+  // drain retry: bounded work, no zero-progress iteration.
+  EXPECT_LE(fd_->reached(Call::CreateBuffer), 4u * kCalls);
+  EXPECT_GE(fd_->reached(Call::CreateBuffer), kCalls);
+  EXPECT_EQ(staging().getFreeStagingBufferSize(), 0u);
 }
 
 } // namespace igl::tests

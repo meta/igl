@@ -44,14 +44,14 @@ VulkanStagingDevice::VulkanStagingDevice(VulkanContext& ctx) : ctx_(ctx) {
   IGL_DEBUG_ASSERT(immediate.get());
 }
 
-void VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
+bool VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
                                         size_t dstOffset,
                                         size_t size,
                                         const void* data) {
   IGL_PROFILER_FUNCTION();
   if (buffer.isMapped()) {
     buffer.bufferSubData(dstOffset, size, data);
-    return;
+    return true;
   }
 
   // Use vkCmdUpdateBuffer() for small buffers (up to 64KB) when alignment requirements are met.
@@ -67,7 +67,7 @@ void VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
                                static_cast<VkDeviceSize>(size),
                                data);
     immediate->submit(wrapper);
-    return;
+    return true;
   }
 
   VkDeviceSize chunkDstOffset = dstOffset;
@@ -80,6 +80,10 @@ void VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
   while (size) {
     // finds a free memory block to store the data in the staging buffer
     MemoryRegion memoryChunk = nextFreeBlock(size, false);
+    if (memoryChunk.size == 0) {
+      IGL_LOG_ERROR("VulkanStagingDevice: no staging block is available for %zu bytes\n", size);
+      return false;
+    }
     const VkDeviceSize copySize = std::min(static_cast<VkDeviceSize>(size), memoryChunk.size);
 
 #if IGL_VULKAN_DEBUG_STAGING_DEVICE
@@ -108,6 +112,7 @@ void VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
     copyData = static_cast<uint8_t*>(copyData) + copySize;
     chunkDstOffset += copySize;
   }
+  return true;
 }
 
 void VulkanStagingDevice::mergeRegionsAndFreeBuffers() {
@@ -186,10 +191,12 @@ VulkanStagingDevice::MemoryRegion VulkanStagingDevice::nextFreeBlock(VkDeviceSiz
   const VkDeviceSize requestedAlignedSize = getAlignedSize(size);
 
   if (shouldAllocateStagingBuffer(requestedAlignedSize, contiguous)) {
-    allocateStagingBuffer(nextSize(requestedAlignedSize));
+    // A failed allocation publishes nothing; the existing regions may still serve the request.
+    if (!allocateStagingBuffer(nextSize(requestedAlignedSize))) {
+      IGL_LOG_ERROR("VulkanStagingDevice: a staging buffer of %llu bytes could not be allocated\n",
+                    static_cast<unsigned long long>(nextSize(requestedAlignedSize)));
+    }
   }
-
-  IGL_DEBUG_ASSERT(!regions_.empty());
 
 #if IGL_VULKAN_DEBUG_STAGING_DEVICE
   IGL_LOG_INFO("nextFreeBlock() with %u bytes, aligned %u bytes\n", size, requestedAlignedSize);
@@ -256,9 +263,10 @@ VulkanStagingDevice::MemoryRegion VulkanStagingDevice::nextFreeBlock(VkDeviceSiz
   waitAndReset();
 
   // try to allocate a new staging buffer
-  allocateStagingBuffer(nextSize(requestedAlignedSize));
-
-  if (!IGL_DEBUG_VERIFY(!regions_.empty())) {
+  if (!allocateStagingBuffer(nextSize(requestedAlignedSize))) {
+    IGL_LOG_ERROR(
+        "VulkanStagingDevice: no staging block is available (the allocation failed and nothing "
+        "else became usable)\n");
     return {};
   }
 
@@ -270,14 +278,14 @@ VulkanStagingDevice::MemoryRegion VulkanStagingDevice::nextFreeBlock(VkDeviceSiz
   return splitAndReturn(regionItr, std::min(regionItr->size, requestedAlignedSize));
 }
 
-void VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
+bool VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
                                            size_t srcOffset,
                                            size_t size,
                                            void* data) {
   IGL_PROFILER_FUNCTION();
   if (buffer.isMapped()) {
     buffer.getBufferSubData(srcOffset, size, data);
-    return;
+    return true;
   }
 
 #if IGL_VULKAN_DEBUG_STAGING_DEVICE
@@ -289,6 +297,10 @@ void VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
 
   while (size) {
     const MemoryRegion memoryChunk = nextFreeBlock(size, false);
+    if (memoryChunk.size == 0) {
+      IGL_LOG_ERROR("VulkanStagingDevice: no staging block is available for %zu bytes\n", size);
+      return false;
+    }
     const VkDeviceSize copySize = std::min(static_cast<VkDeviceSize>(size), memoryChunk.size);
 
     // do the transfer
@@ -327,9 +339,10 @@ void VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
     regions_.push_back(memoryChunk);
     freeStagingBufferSize_ += memoryChunk.size;
   }
+  return true;
 }
 
-void VulkanStagingDevice::imageData(const VulkanImage& image,
+bool VulkanStagingDevice::imageData(const VulkanImage& image,
                                     TextureType type,
                                     const TextureRangeDesc& range,
                                     const TextureFormatProperties& properties,
@@ -361,6 +374,10 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
   MemoryRegion memoryChunk = nextFreeBlock(
       std::min(static_cast<VkDeviceSize>(storageSize) + alignment - 1, maxStagingBufferSize_),
       true);
+  if (memoryChunk.size == 0) {
+    IGL_LOG_ERROR("VulkanStagingDevice: no staging block is available for %u bytes\n", storageSize);
+    return false;
+  }
   const VkDeviceSize stagingOffset = (memoryChunk.offset + alignment - 1) / alignment * alignment;
 
   IGL_DEBUG_ASSERT(memoryChunk.size >= stagingOffset - memoryChunk.offset + storageSize);
@@ -450,7 +467,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
 
     } else {
       IGL_DEBUG_ABORT("Unimplemented multiplanar image format");
-      return;
+      return false;
     }
 
     const VkImageSubresourceRange subresourceRange = {
@@ -508,7 +525,7 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
     memoryChunk.handle = immediate->submit(wrapper);
     regions_.push_back(memoryChunk);
 
-    return;
+    return true;
 
     // end of VK_FORMAT_G8_B8R8_2PLANE_420_UNORM code path
   }
@@ -665,9 +682,10 @@ void VulkanStagingDevice::imageData(const VulkanImage& image,
   // Store the allocated block with the SubmitHandle at the end of the deque
   memoryChunk.handle = immediate->submit(wrapper);
   regions_.push_back(memoryChunk);
+  return true;
 }
 
-void VulkanStagingDevice::getImageData2D(VkImage srcImage,
+bool VulkanStagingDevice::getImageData2D(VkImage srcImage,
                                          const uint32_t level,
                                          const uint32_t layer,
                                          const VkRect2D& imageRegion,
@@ -702,6 +720,10 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
   const MemoryRegion memoryChunk = nextFreeBlock(
       std::min(static_cast<VkDeviceSize>(storageSize) + alignment - 1, maxStagingBufferSize_),
       true);
+  if (memoryChunk.size == 0) {
+    IGL_LOG_ERROR("VulkanStagingDevice: no staging block is available for %u bytes\n", storageSize);
+    return false;
+  }
   const VkDeviceSize stagingOffset = (memoryChunk.offset + alignment - 1) / alignment * alignment;
 
   IGL_DEBUG_ASSERT(memoryChunk.size >= stagingOffset - memoryChunk.offset + storageSize);
@@ -755,9 +777,36 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
   // Wait for command to finish
   immediate->wait(immediate->submit(wrapper1), ctx_.config_.fenceTimeoutNanoseconds);
 
+  // 4 (below). The transition back to the initial image layout.
+  const auto transitionBack = [&]() {
+    const auto& wrapper2 = immediate->acquire();
+    ivkImageMemoryBarrier(&ctx_.vf_,
+                          wrapper2.cmdBuf,
+                          srcImage,
+                          VK_ACCESS_TRANSFER_READ_BIT, // srcAccessMask
+                          0, // dstAccessMask
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          layout,
+                          VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
+                          VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // dstStageMask
+                          VkImageSubresourceRange{
+                              .aspectMask = aspectFlags,
+                              .baseMipLevel = level,
+                              .levelCount = 1,
+                              .baseArrayLayer = layer,
+                              .layerCount = 1,
+                          });
+    // the data should be available as we get out of this function
+    immediate->wait(immediate->submit(wrapper2), ctx_.config_.fenceTimeoutNanoseconds);
+  };
+
   // 3. Copy data from staging buffer into data
   if (!IGL_DEBUG_VERIFY(stagingBuffer->getMappedPtr())) {
-    return;
+    // The copy finished, so the block is free; the image still goes back to its layout.
+    regions_.push_back(memoryChunk);
+    freeStagingBufferSize_ += memoryChunk.size;
+    transitionBack();
+    return false;
   }
 
   if (!stagingBuffer->isCoherentMemory()) {
@@ -780,31 +829,11 @@ void VulkanStagingDevice::getImageData2D(VkImage srcImage,
     }
   }
 
-  // 4. Transition back to the initial image layout
-  const auto& wrapper2 = immediate->acquire();
-
-  ivkImageMemoryBarrier(&ctx_.vf_,
-                        wrapper2.cmdBuf,
-                        srcImage,
-                        VK_ACCESS_TRANSFER_READ_BIT, // srcAccessMask
-                        0, // dstAccessMask
-                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        layout,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // dstStageMask
-                        VkImageSubresourceRange{
-                            .aspectMask = aspectFlags,
-                            .baseMipLevel = level,
-                            .levelCount = 1,
-                            .baseArrayLayer = layer,
-                            .layerCount = 1,
-                        });
-
-  // the data should be available as we get out of this function
-  immediate->wait(immediate->submit(wrapper2), ctx_.config_.fenceTimeoutNanoseconds);
+  transitionBack();
 
   regions_.push_back(memoryChunk);
   freeStagingBufferSize_ += memoryChunk.size;
+  return true;
 }
 
 VkDeviceSize VulkanStagingDevice::getAlignedSize(VkDeviceSize size) const {
@@ -867,7 +896,7 @@ VkDeviceSize VulkanStagingDevice::nextSize(VkDeviceSize requestedSize) const {
                   maxStagingBufferSize_);
 }
 
-void VulkanStagingDevice::allocateStagingBuffer(VkDeviceSize minimumSize) {
+bool VulkanStagingDevice::allocateStagingBuffer(VkDeviceSize minimumSize) {
   IGL_PROFILER_FUNCTION();
 
   IGL_DEBUG_ASSERT(minimumSize <= maxStagingBufferSize_);
@@ -881,16 +910,23 @@ void VulkanStagingDevice::allocateStagingBuffer(VkDeviceSize minimumSize) {
   // Increment the id used for naming the staging buffer
   ++stagingBufferCounter_;
 
-  // Create a new staging buffer with the new size
-  stagingBuffers_.emplace_back(std::make_unique<VulkanBuffer>(
+  // Create a new staging buffer with the new size; it is published only if it is valid
+  auto stagingBuffer = std::make_unique<VulkanBuffer>(
       ctx_,
       ctx_.getVkDevice(),
       stagingBufferSize,
       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
       IGL_FORMAT("Buffer: staging buffer #{} with {}B", stagingBufferCounter_, stagingBufferSize)
-          .c_str()));
-  IGL_DEBUG_ASSERT(stagingBuffers_.back().get());
+          .c_str());
+  if (!stagingBuffer->valid()) {
+    IGL_LOG_ERROR(
+        "VulkanStagingDevice: allocating a staging buffer of %llu bytes failed (VkResult %d)\n",
+        static_cast<unsigned long long>(stagingBufferSize),
+        static_cast<int>(stagingBuffer->initResult()));
+    return false;
+  }
+  stagingBuffers_.emplace_back(std::move(stagingBuffer));
 
   // Add region that represents the entire buffer
   regions_.push_front({
@@ -902,6 +938,7 @@ void VulkanStagingDevice::allocateStagingBuffer(VkDeviceSize minimumSize) {
   });
 
   freeStagingBufferSize_ += stagingBufferSize;
+  return true;
 }
 
 } // namespace igl::vulkan

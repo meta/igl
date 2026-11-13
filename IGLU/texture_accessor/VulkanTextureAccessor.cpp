@@ -82,7 +82,7 @@ size_t VulkanTextureAccessor::copyBytes(unsigned char* ptr, size_t length) {
     return 0;
   }
 #if IGL_BACKEND_VULKAN
-  ctx_->stagingDevice_->getImageData2D(
+  static_cast<void>(ctx_->stagingDevice_->getImageData2D(
       vkImage_,
       0,
       0,
@@ -94,7 +94,7 @@ size_t VulkanTextureAccessor::copyBytes(unsigned char* ptr, size_t length) {
       VK_IMAGE_ASPECT_COLOR_BIT,
       ptr,
       static_cast<uint32_t>(bytesPerRow_),
-      false);
+      false));
 #endif
   return numBytesRequired_;
 }

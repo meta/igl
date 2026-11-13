@@ -202,8 +202,8 @@ class VulkanImageTest : public ::testing::Test {
                   const TextureRangeDesc& range,
                   uint32_t size,
                   const void* data) const {
-    context_->stagingDevice_->imageData(
-        image, type, range, properties(), size * kBytesPerTexel, VK_IMAGE_ASPECT_COLOR_BIT, data);
+    EXPECT_TRUE(context_->stagingDevice_->imageData(
+        image, type, range, properties(), size * kBytesPerTexel, VK_IMAGE_ASPECT_COLOR_BIT, data));
   }
 
   Result generateMips(vulkan::VulkanImage& image, const TextureRangeDesc& range) const {
@@ -219,17 +219,18 @@ class VulkanImageTest : public ::testing::Test {
                                    uint32_t level,
                                    uint32_t layer) const {
     uint32_t texel = 0;
-    context_->stagingDevice_->getImageData2D(image.getVkImage(),
-                                             level,
-                                             layer,
-                                             VkRect2D{.offset = {0, 0}, .extent = {1, 1}},
-                                             properties(),
-                                             VK_FORMAT_R8G8B8A8_UNORM,
-                                             image.imageLayout_,
-                                             VK_IMAGE_ASPECT_COLOR_BIT,
-                                             &texel,
-                                             kBytesPerTexel,
-                                             false /* flipImageVertical */);
+    EXPECT_TRUE(
+        context_->stagingDevice_->getImageData2D(image.getVkImage(),
+                                                 level,
+                                                 layer,
+                                                 VkRect2D{.offset = {0, 0}, .extent = {1, 1}},
+                                                 properties(),
+                                                 VK_FORMAT_R8G8B8A8_UNORM,
+                                                 image.imageLayout_,
+                                                 VK_IMAGE_ASPECT_COLOR_BIT,
+                                                 &texel,
+                                                 kBytesPerTexel,
+                                                 false /* flipImageVertical */));
     return texel;
   }
 

@@ -9,11 +9,14 @@
 
 #include "../util/TestDevice.h"
 
+#include <algorithm>
 #include <array>
+#include <vector>
 #include <igl/CommandBuffer.h>
 #include <igl/Device.h>
 #include <igl/Framebuffer.h>
 #include <igl/Texture.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
@@ -305,6 +308,49 @@ TEST_F(FramebufferVulkanTest, StorageTextureAttachment) {
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_NE(fb, nullptr);
   EXPECT_NE(fb->getColorAttachment(0), nullptr);
+}
+
+TEST_F(FramebufferVulkanTest, FramebufferReadbackPropagatesStagingFailure) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+  Result ret;
+
+  // 4 MiB of pixels: more than the 1 MiB minimum staging buffer, so the readback needs a new
+  // staging buffer however much free staging space is left over.
+  constexpr uint32_t kSize = 1024;
+  const auto colorTex =
+      fd.device()->createTexture(TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                    kSize,
+                                                    kSize,
+                                                    TextureDesc::TextureUsageBits::Attachment |
+                                                        TextureDesc::TextureUsageBits::Sampled),
+                                 &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  const std::vector<uint32_t> pixels(static_cast<size_t>(kSize) * kSize, 0xFF00FF00u);
+  ret = colorTex->upload(colorTex->getFullRange(0), pixels.data());
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  const auto fb = fd.device()->createFramebuffer(
+      FramebufferDesc{.colorAttachments = {{.texture = colorTex}}}, &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  const auto cmdQueue = fd.device()->createCommandQueue({}, &ret);
+  ASSERT_TRUE(ret.isOk());
+
+  // The readback cannot stage: the caller's memory is left as it was.
+  fd.drainStaging();
+  fd.resetCounters();
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateBuffer,
+         VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  constexpr uint32_t kSentinel = 0xDEADBEEFu;
+  std::vector<uint32_t> result(pixels.size(), kSentinel);
+  fb->copyBytesColorAttachment(*cmdQueue, 0, result.data(), colorTex->getFullRange(0));
+  EXPECT_GE(fd.failed(util::device::vulkan::FaultingDevice::Call::CreateBuffer), 1u);
+  EXPECT_EQ(std::count(result.begin(), result.end(), kSentinel),
+            static_cast<std::ptrdiff_t>(result.size()));
 }
 
 } // namespace igl::tests

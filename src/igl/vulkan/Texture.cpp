@@ -423,13 +423,15 @@ Result Texture::uploadInternal(TextureType /*type*/,
   const VulkanContext& ctx = device_.getVulkanContext();
 
   const VkImageAspectFlags imageAspectFlags = texture_->imageView_.getVkImageAspectFlags();
-  ctx.stagingDevice_->imageData(vulkanImage,
-                                desc_.type,
-                                range,
-                                getProperties(),
-                                static_cast<uint32_t>(bytesPerRow),
-                                imageAspectFlags,
-                                data);
+  if (!ctx.stagingDevice_->imageData(vulkanImage,
+                                     desc_.type,
+                                     range,
+                                     getProperties(),
+                                     static_cast<uint32_t>(bytesPerRow),
+                                     imageAspectFlags,
+                                     data)) {
+    return Result{Result::Code::RuntimeError, "Cannot upload the texture through staging"};
+  }
 
   // Generate mipmaps if requested by the user
   if (desc_.mipmapGeneration == TextureDesc::TextureMipmapGeneration::AutoGenerateOnUpload) {

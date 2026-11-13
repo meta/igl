@@ -1485,14 +1485,16 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
 
     const VkImageAspectFlags imageAspectFlags =
         (*textures_.get(pimpl_->dummyTexture))->imageView_.getVkImageAspectFlags();
-    stagingDevice_->imageData(
-        (*textures_.get(pimpl_->dummyTexture))->image,
-        TextureType::TwoD,
-        TextureRangeDesc::new2D(0, 0, 1, 1),
-        TextureFormatProperties::fromTextureFormat(TextureFormat::RGBA_UNorm8),
-        0,
-        imageAspectFlags,
-        &pixel);
+    if (!stagingDevice_->imageData(
+            (*textures_.get(pimpl_->dummyTexture))->image,
+            TextureType::TwoD,
+            TextureRangeDesc::new2D(0, 0, 1, 1),
+            TextureFormatProperties::fromTextureFormat(TextureFormat::RGBA_UNorm8),
+            0,
+            imageAspectFlags,
+            &pixel)) {
+      return Result(Result::Code::RuntimeError, "Cannot upload the dummy texture");
+    }
   }
 
   if (features_.has_VK_EXT_descriptor_buffer) {

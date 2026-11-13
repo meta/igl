@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <future>
 #include <igl/CommandBuffer.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanRenderPassBuilder.h>
@@ -379,6 +380,23 @@ TEST(VulkanContextDescriptorSetWaitTimeoutTest, EscalatesEvenFromTheInfiniteDefa
   EXPECT_EQ(igl::vulkan::VulkanContext::descriptorSetWaitTimeout(UINT64_MAX,
                                                                  /*previouslyDegraded=*/true),
             0ULL);
+}
+
+TEST_F(VulkanContextExtendedTest, DummyTextureUploadFailureFailsContextInit) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  using Faulting = util::device::vulkan::FaultingDevice;
+  // The two dummy buffers are allowed; the first staging buffer, which the dummy texture's upload
+  // needs, cannot be allocated. The fault is armed before create().
+  const Faulting fd(util::device::vulkan::getContextConfig(), [](Faulting& self) {
+    self.arm(Faulting::Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/2, UINT32_MAX);
+  });
+
+  EXPECT_EQ(fd.device(), nullptr);
+  EXPECT_FALSE(fd.creationResult().isOk());
+  EXPECT_NE(fd.creationResult().message.find("dummy texture"), std::string::npos)
+      << fd.creationResult().message.c_str();
 }
 
 } // namespace igl::tests

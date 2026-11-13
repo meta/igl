@@ -243,14 +243,19 @@ Result Buffer::upload(const void* data, const BufferRange& range) {
       // update local data copy
       checked_memcpy(localData_.get() + range.offset, range.size, data, range.size);
       // use staging to upload data to device-local buffers
-      ctx.stagingDevice_->bufferSubData(*currentVulkanBuffer(),
-                                        currentUpdateRange.offset,
-                                        currentUpdateRange.size,
-                                        localData_.get() + currentUpdateRange.offset);
+      if (!ctx.stagingDevice_->bufferSubData(*currentVulkanBuffer(),
+                                             currentUpdateRange.offset,
+                                             currentUpdateRange.size,
+                                             localData_.get() + currentUpdateRange.offset)) {
+        return Result(Result::Code::RuntimeError, "Cannot upload the buffer through staging");
+      }
     }
   } else {
     // use staging to upload data to device-local buffers
-    ctx.stagingDevice_->bufferSubData(*currentVulkanBuffer(), range.offset, range.size, data);
+    if (!ctx.stagingDevice_->bufferSubData(
+            *currentVulkanBuffer(), range.offset, range.size, data)) {
+      return Result(Result::Code::RuntimeError, "Cannot upload the buffer through staging");
+    }
   }
   return Result();
 }
@@ -309,7 +314,14 @@ void* IGL_NULLABLE Buffer::map(const BufferRange& range, Result* outResult) {
     // handle DEVICE_LOCAL buffers
     tmpBuffer_.resize(range.size);
     const VulkanContext& ctx = device_.getVulkanContext();
-    ctx.stagingDevice_->getBufferSubData(*buffer, range.offset, range.size, tmpBuffer_.data());
+    if (!ctx.stagingDevice_->getBufferSubData(
+            *buffer, range.offset, range.size, tmpBuffer_.data())) {
+      mappedRange_.size = 0;
+      Result::setResult(
+          outResult,
+          Result(Result::Code::RuntimeError, "Cannot download the buffer through staging"));
+      return nullptr;
+    }
     return tmpBuffer_.data();
   }
 

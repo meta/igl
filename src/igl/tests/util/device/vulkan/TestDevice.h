@@ -119,6 +119,10 @@ class FaultingDevice {
   [[nodiscard]] uint32_t countedBeforeTeardown(Counted counted) const;
   void resetCounters();
 
+  /// Waits for the staging pool, returns every finished block and releases every staging buffer
+  /// that is recovered whole (the context's own dummy upload used one).
+  void drainStaging() const;
+
  private:
   std::unique_ptr<igl::vulkan::Device> device_;
   Result creationResult_;

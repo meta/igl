@@ -43,21 +43,24 @@ class VulkanStagingDevice final {
 
   /** @brief Uploads the data at location `data` with the provided size (in bytes) to the
    * VulkanBuffer object on the device at offset `dstOffset`. The upload operation is asynchronous
-   * and the data may or may not be available to the GPU when the function returns
+   * and the data may or may not be available to the GPU when the function returns. Returns false
+   * when no staging block could be obtained: nothing, or only part of the data, was submitted.
    */
-  void bufferSubData(VulkanBuffer& buffer, size_t dstOffset, size_t size, const void* data);
+  bool bufferSubData(VulkanBuffer& buffer, size_t dstOffset, size_t size, const void* data);
 
   /** @brief Downloads the data with the provided size (in bytes) from the VulkanBuffer object on
    * the device, and at the offset provided, to the location referenced by the pointer `data`. The
    * function is synchronous and the data donwloaded from the device is expected to be available in
-   * the location pointed by `data` upon return
+   * the location pointed by `data` upon return. Returns false, leaving the rest of `data` as it
+   * was, when no staging block could be obtained.
    */
-  void getBufferSubData(const VulkanBuffer& buffer, size_t srcOffset, size_t size, void* data);
+  bool getBufferSubData(const VulkanBuffer& buffer, size_t srcOffset, size_t size, void* data);
 
   /// @brief Uploads the texture data pointed by `data` to the VulkanImage object on the device. The
   /// data may span the entire texture or just part of it. The upload operation is asynchronous and
-  /// the data may or may not be available to the GPU when the function returns
-  void imageData(const VulkanImage& image,
+  /// the data may or may not be available to the GPU when the function returns. Returns false when
+  /// no staging block could be obtained; nothing was uploaded.
+  bool imageData(const VulkanImage& image,
                  TextureType type,
                  const TextureRangeDesc& range,
                  const TextureFormatProperties& properties,
@@ -68,9 +71,10 @@ class VulkanStagingDevice final {
   /** @brief Downloads the texture data from the VulkanImage object on the device to the location
    * pointed by `data`. The data requested may span the entire texture or just part of it. The
    * download operation is synchronous and the data is expected to be available at location `data`
-   * upon return
+   * upon return. Returns false, leaving `data` as it was, when no staging block could be obtained
+   * or the staging memory cannot be read.
    */
-  void getImageData2D(VkImage srcImage,
+  bool getImageData2D(VkImage srcImage,
                       uint32_t level,
                       uint32_t layer,
                       const VkRect2D& imageRegion,
@@ -117,7 +121,8 @@ class VulkanStagingDevice final {
    * if true, the function will return a region big enough to accommodate full requested size.
    * if false, the function may return a region smaller than the requested size.
    * @return The offset of the free memory block on the staging buffer and the size of the block
-   * found.
+   * found; a zero-size region when no block can be obtained (a new staging buffer could not be
+   * allocated and the one wait for the staging device found nothing usable).
    */
   [[nodiscard]] MemoryRegion nextFreeBlock(VkDeviceSize size, bool contiguous);
 
@@ -140,8 +145,9 @@ class VulkanStagingDevice final {
   [[nodiscard]] VkDeviceSize nextSize(VkDeviceSize requestedSize) const;
 
   /// @brief Allocates a new staging buffer to a size that is at least as large as the requested
-  /// size
-  void allocateStagingBuffer(VkDeviceSize minimumSize);
+  /// size. An invalid buffer (its allocation failed) is dropped: no region is published and the
+  /// free size does not change. Returns whether a buffer was published.
+  [[nodiscard]] bool allocateStagingBuffer(VkDeviceSize minimumSize);
 
  private:
   VulkanContext& ctx_;
