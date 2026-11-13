@@ -31,6 +31,10 @@ class VulkanSwapchain final {
   VulkanSwapchain& operator=(VulkanSwapchain&&) = delete;
 
   Result acquireNextImage();
+  /// False when an image view of a swapchain image could not be created: the swapchain is unusable.
+  [[nodiscard]] bool valid() const noexcept {
+    return valid_;
+  }
   Result present(VkSemaphore waitSemaphore);
   [[nodiscard]] VkImage getCurrentVkImage() const {
     if (IGL_DEBUG_VERIFY(currentImageIndex_ < numSwapchainImages_)) {
@@ -126,6 +130,7 @@ class VulkanSwapchain final {
   uint32_t currentSemaphoreIndex_ = 0;
   uint64_t frameNumber_ = 0; // increasing continuously without bound
   bool getNextImage_ = true;
+  bool valid_ = true;
   VkSwapchainKHR swapchain_{};
   std::vector<VulkanSemaphore> presentSemaphores_;
   std::unique_ptr<std::shared_ptr<VulkanTexture>[]> swapchainTextures_;

@@ -14,13 +14,20 @@
 #include <glm/common.hpp>
 #include <glm/gtc/color_space.hpp>
 #include <memory>
+#include <igl/CommandBuffer.h>
+#include <igl/CommandQueue.h>
 #include <igl/Common.h>
 #include <igl/Texture.h>
 #include <igl/tests/util/device/TestDevice.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanImmediateCommands.h>
 #include <igl/vulkan/VulkanStagingDevice.h>
+#include <igl/vulkan/VulkanTexture.h>
+#if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
+#include <android/hardware_buffer.h>
+#endif
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_LINUX
 
@@ -982,6 +989,499 @@ TEST_F(VulkanImageTest, GenerateMipmapReportsUnsupportedPartialLayerRange) {
   EXPECT_EQ(result.code, Result::Code::Unsupported);
   EXPECT_FALSE(result.message.empty());
 }
+
+//
+// Checked image setup (items 3, 23 and 30): the allocation, AHB-import and view steps report their
+// failures and clean up what they created. The calls are failed through the FaultingDevice fixture,
+// so the production VulkanImage, VulkanImageView, VulkanContext and VMA code run as compiled.
+//
+
+class VulkanImageFaultTest : public ::testing::Test {
+ protected:
+  using Call = util::device::vulkan::FaultingDevice::Call;
+  using Counted = util::device::vulkan::FaultingDevice::Counted;
+
+  void SetUp() override {
+    igl::setDebugBreakEnabled(false);
+  }
+
+  static std::unique_ptr<util::device::vulkan::FaultingDevice> makeDevice() {
+    return std::make_unique<util::device::vulkan::FaultingDevice>(
+        util::device::vulkan::getContextConfig());
+  }
+
+  static igl::vulkan::VulkanImage createSmallImage(igl::vulkan::VulkanContext& ctx,
+                                                   Result* result) {
+    return ctx.createImage(VK_IMAGE_TYPE_2D,
+                           VkExtent3D{.width = 64, .height = 64, .depth = 1},
+                           kFormat,
+                           1,
+                           1,
+                           VK_IMAGE_TILING_OPTIMAL,
+                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                           0,
+                           VK_SAMPLE_COUNT_1_BIT,
+                           result,
+                           "Image: fault test");
+  }
+
+  static void expectNoDependentCall(const util::device::vulkan::FaultingDevice& fd,
+                                    uint32_t namesBefore,
+                                    uint32_t destroysBefore,
+                                    uint32_t freesBefore) {
+    if (fd.namingObservable()) {
+      EXPECT_EQ(fd.counted(Counted::SetDebugUtilsObjectName), namesBefore);
+    }
+    EXPECT_EQ(fd.counted(Counted::DestroyImage), destroysBefore);
+    EXPECT_EQ(fd.counted(Counted::FreeMemory), freesBefore);
+  }
+};
+
+TEST_F(VulkanImageFaultTest, FaultingDeviceReachesImageCreationThroughVma) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+  // The context's own dummy texture went through VMA and the table's stubs.
+  EXPECT_GT(fd->reached(Call::CreateImage), 0u);
+
+  // One injected failure: the first attempt fails inside VMA, the drain succeeds, the retry works.
+  fd->resetCounters();
+  fd->arm(Call::CreateImage, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  Result result;
+  const auto image = createSmallImage(ctx, &result);
+  EXPECT_EQ(fd->reached(Call::CreateImage), 2u);
+  EXPECT_EQ(fd->failed(Call::CreateImage), 1u);
+  ASSERT_TRUE(image.valid()) << result.message.c_str();
+  EXPECT_TRUE(result.isOk());
+  EXPECT_EQ(image.initResult(), VK_SUCCESS);
+  EXPECT_NE(image.getVkImage(), VK_NULL_HANDLE);
+}
+
+TEST_F(VulkanImageFaultTest, AnOpenMainRecordingDoesNotStopTheRetry) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+
+  // A recording of the context's own queue is open while the allocation fails (the normal
+  // mid-frame state). The allocation is retried after the drain regardless; as on master, the
+  // drain before the retry can run deferred tasks that are not certified retired (fixed by the
+  // retirement redesign, not by this change).
+  Result queueResult;
+  auto cmdQueue = fd->device()->createCommandQueue({}, &queueResult);
+  ASSERT_TRUE(queueResult.isOk()) << queueResult.message.c_str();
+  auto openBuffer = cmdQueue->createCommandBuffer({}, &queueResult);
+  ASSERT_TRUE(queueResult.isOk()) << queueResult.message.c_str();
+  ctx.deferredTask(std::packaged_task<void()>([]() {}));
+
+  fd->resetCounters();
+  fd->arm(Call::CreateImage, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  Result result;
+  const auto image = createSmallImage(ctx, &result);
+
+  EXPECT_TRUE(image.valid()) << result.message.c_str();
+  EXPECT_TRUE(result.isOk());
+  EXPECT_EQ(fd->reached(Call::CreateImage), 2u);
+  EXPECT_EQ(fd->failed(Call::CreateImage), 1u);
+
+  cmdQueue->submit(*openBuffer);
+  openBuffer->waitUntilCompleted();
+}
+
+TEST_F(VulkanImageFaultTest, CreateImageSecondAllocationFailure) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+
+  // Both attempts fail, with different results: the caller sees the retry's.
+  fd->resetCounters();
+  fd->armSequence(Call::CreateImage, {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY});
+  Result result;
+  const auto image = createSmallImage(ctx, &result);
+
+  EXPECT_FALSE(image.valid());
+  EXPECT_FALSE(result.isOk());
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_HOST_MEMORY).message);
+  EXPECT_NE(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+  EXPECT_EQ(fd->reached(Call::CreateImage), 2u);
+  EXPECT_EQ(fd->failed(Call::CreateImage), 2u);
+  expectNoDependentCall(*fd, 0u, 0u, 0u);
+}
+
+TEST_F(VulkanImageFaultTest, HostVisibleImageMapFailureDestroysTheImage) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+  const auto createLinear = [&](Result* result) {
+    // Large enough (over half of VMA's default block) to get a dedicated memory object of its own:
+    // a block shared with an earlier allocation is mapped already and would not reach
+    // vkMapMemory().
+    return ctx.createImage(VK_IMAGE_TYPE_2D,
+                           VkExtent3D{.width = 6144, .height = 6144, .depth = 1},
+                           kFormat,
+                           1,
+                           1,
+                           VK_IMAGE_TILING_LINEAR,
+                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                           0,
+                           VK_SAMPLE_COUNT_1_BIT,
+                           result,
+                           "Image: host-visible fault test");
+  };
+
+  // A failed map: the image that was created is destroyed once, and nothing is published.
+  Result result;
+  fd->resetCounters();
+  fd->arm(Call::MapMemory, VK_ERROR_MEMORY_MAP_FAILED);
+  const auto image = createLinear(&result);
+  if (fd->reached(Call::MapMemory) == 0u) {
+    GTEST_SKIP() << "The device has no host-visible linear image: " << result.message.c_str();
+  }
+  EXPECT_FALSE(image.valid());
+  EXPECT_FALSE(result.isOk());
+  EXPECT_EQ(result.message, igl::vulkan::getResultFromVkResult(VK_ERROR_MEMORY_MAP_FAILED).message);
+  EXPECT_EQ(fd->failed(Call::MapMemory), 1u);
+  EXPECT_EQ(fd->counted(Counted::DestroyImage), 1u);
+  if (fd->namingObservable()) {
+    EXPECT_EQ(fd->counted(Counted::SetDebugUtilsObjectName), 0u);
+  }
+
+  // Unfaulted, the same request creates and maps the image, and destroys nothing. It names the
+  // image, which is the positive control of the naming assertion above.
+  fd->disarmAll();
+  fd->resetCounters();
+  const auto mapped = createLinear(&result);
+  ASSERT_TRUE(mapped.valid()) << result.message.c_str();
+  EXPECT_TRUE(result.isOk());
+  EXPECT_TRUE(mapped.isMappedPtrAccessible());
+  EXPECT_EQ(fd->counted(Counted::DestroyImage), 0u);
+  if (fd->namingObservable()) {
+    EXPECT_GT(fd->counted(Counted::SetDebugUtilsObjectName), 0u);
+  }
+}
+
+TEST_F(VulkanImageFaultTest, DisjointImageStepFailuresCleanUpOnlySuccessfulParts) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+
+  constexpr VkFormat kPlanarFormat = VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
+  VkFormatProperties properties{};
+  ctx.vf_.vkGetPhysicalDeviceFormatProperties(
+      ctx.getVkPhysicalDevice(), kPlanarFormat, &properties);
+  if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DISJOINT_BIT) == 0) {
+    GTEST_SKIP() << "The device has no disjoint 3-plane 4:2:0 images";
+  }
+  const auto createPlanar = [&](Result* result) {
+    return ctx.createImage(VK_IMAGE_TYPE_2D,
+                           VkExtent3D{.width = 64, .height = 64, .depth = 1},
+                           kPlanarFormat,
+                           1,
+                           1,
+                           VK_IMAGE_TILING_OPTIMAL,
+                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                           VK_IMAGE_CREATE_DISJOINT_BIT,
+                           VK_SAMPLE_COUNT_1_BIT,
+                           result,
+                           "Image: disjoint fault test");
+  };
+
+  // The unfaulted creation works and takes the raw path (one memory object per plane).
+  {
+    Result result;
+    fd->resetCounters();
+    const auto image = createPlanar(&result);
+    ASSERT_TRUE(image.valid()) << result.message.c_str();
+    EXPECT_EQ(fd->reached(Call::AllocateMemory), 3u);
+    EXPECT_EQ(fd->counted(Counted::FreeMemory), 0u);
+  }
+
+  // A failed vkCreateImage: nothing was created, nothing is destroyed.
+  {
+    Result result;
+    fd->resetCounters();
+    fd->arm(Call::CreateImage, VK_ERROR_OUT_OF_HOST_MEMORY);
+    const auto image = createPlanar(&result);
+    EXPECT_FALSE(image.valid());
+    EXPECT_EQ(result.message,
+              igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_HOST_MEMORY).message);
+    EXPECT_EQ(fd->counted(Counted::DestroyImage), 0u);
+    EXPECT_EQ(fd->counted(Counted::FreeMemory), 0u);
+    fd->disarmAll();
+  }
+
+  // A failed allocation of plane k: the image and the k planes allocated before it are destroyed,
+  // each exactly once, and no later plane is attempted.
+  for (uint32_t plane = 0; plane < 3; ++plane) {
+    Result result;
+    fd->resetCounters();
+    fd->arm(Call::AllocateMemory, VK_ERROR_OUT_OF_DEVICE_MEMORY, plane);
+    const auto image = createPlanar(&result);
+    EXPECT_FALSE(image.valid()) << "plane " << plane;
+    EXPECT_EQ(result.message,
+              igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+    EXPECT_EQ(fd->reached(Call::AllocateMemory), plane + 1) << "plane " << plane;
+    EXPECT_EQ(fd->counted(Counted::DestroyImage), 1u) << "plane " << plane;
+    EXPECT_EQ(fd->counted(Counted::FreeMemory), plane) << "plane " << plane;
+    fd->disarmAll();
+  }
+
+  // A failed bind: the image and all three planes are destroyed.
+  {
+    Result result;
+    fd->resetCounters();
+    fd->arm(Call::BindImageMemory2, VK_ERROR_UNKNOWN);
+    const auto image = createPlanar(&result);
+    EXPECT_FALSE(image.valid());
+    EXPECT_EQ(result.message, igl::vulkan::getResultFromVkResult(VK_ERROR_UNKNOWN).message);
+    EXPECT_EQ(fd->counted(Counted::DestroyImage), 1u);
+    EXPECT_EQ(fd->counted(Counted::FreeMemory), 3u);
+    fd->disarmAll();
+  }
+}
+
+TEST_F(VulkanImageFaultTest, CreateImageViewOfAnInvalidImageIsRefused) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+
+  // An image whose construction failed (built directly, as `createImage()` returns an empty one).
+  fd->resetCounters();
+  fd->arm(Call::CreateImage, VK_ERROR_OUT_OF_HOST_MEMORY, 0, 2);
+  const igl::vulkan::VulkanImage image(ctx,
+                                       VkExtent3D{.width = 64, .height = 64, .depth = 1},
+                                       VK_IMAGE_TYPE_2D,
+                                       kFormat,
+                                       1,
+                                       1,
+                                       VK_IMAGE_TILING_OPTIMAL,
+                                       VK_IMAGE_USAGE_SAMPLED_BIT,
+                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                       0,
+                                       VK_SAMPLE_COUNT_1_BIT,
+                                       "Image: invalid");
+  ASSERT_FALSE(image.valid());
+  fd->resetCounters();
+
+  // The view creations are failed too, so a call that reached the driver would be counted: none
+  // does, and each returns an invalid view.
+  fd->arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY, 0, 3);
+  const igl::vulkan::VulkanImageView plain = image.createImageView(
+      VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: refused");
+  igl::vulkan::VulkanImageViewCreateInfo info;
+  info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  info.format = kFormat;
+  const igl::vulkan::VulkanImageView fromInfo = image.createImageView(info, "View: refused");
+  EXPECT_FALSE(plain.valid());
+  EXPECT_FALSE(fromInfo.valid());
+  EXPECT_EQ(fd->reached(Call::CreateImageView), 0u);
+}
+
+TEST_F(VulkanImageFaultTest, DummyTextureViewFailureDestroysTheDummyImageAtOnce) {
+  // The first image view of the context (the dummy texture's) fails: the dummy image, which
+  // nothing has used, is destroyed by the failing init itself, before the context is torn down.
+  const util::device::vulkan::FaultingDevice fd(
+      util::device::vulkan::getContextConfig(), [](util::device::vulkan::FaultingDevice& self) {
+        self.arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY, /*skip=*/0, UINT32_MAX);
+      });
+
+  EXPECT_EQ(fd.device(), nullptr);
+  EXPECT_FALSE(fd.creationResult().isOk());
+  EXPECT_GE(fd.failed(Call::CreateImageView), 1u);
+  ASSERT_TRUE(fd.teardownObserved());
+  EXPECT_EQ(fd.countedBeforeTeardown(Counted::DestroyImage), 1u);
+}
+
+TEST_F(VulkanImageFaultTest, CreateTextureRefusesAnInvalidView) {
+  const auto fd = makeDevice();
+  ASSERT_NE(fd->device(), nullptr) << fd->creationResult().message.c_str();
+  auto& ctx = fd->context();
+  const auto fixtureCounts = [&]() { return fd->counted(Counted::DestroyImage); };
+
+  Result result;
+  auto image = createSmallImage(ctx, &result);
+  ASSERT_TRUE(image.valid()) << result.message.c_str();
+
+  // A view whose creation failed is invalid: no texture is made, and the caller's image stays
+  // whole until its own destruction.
+  fd->arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY);
+  igl::vulkan::VulkanImageView failedView = image.createImageView(
+      VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: refused");
+  fd->disarmAll();
+  ASSERT_FALSE(failedView.valid());
+  EXPECT_EQ(failedView.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+  fd->resetCounters();
+  EXPECT_EQ(ctx.createTexture(std::move(image), std::move(failedView), "refused"), nullptr);
+  // The refused image was created for this texture only: it is destroyed at once, not through a
+  // deferred task.
+  EXPECT_EQ(fixtureCounts(), 1u);
+
+  // An invalid image with a valid view is refused as well.
+  auto validImage = createSmallImage(ctx, &result);
+  ASSERT_TRUE(validImage.valid());
+  igl::vulkan::VulkanImageView view = validImage.createImageView(
+      VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: valid");
+  ASSERT_TRUE(view.valid());
+  EXPECT_EQ(ctx.createTexture(igl::vulkan::VulkanImage(), std::move(view), "refused"), nullptr);
+
+  // A valid pair still makes a texture.
+  auto goodImage = createSmallImage(ctx, &result);
+  ASSERT_TRUE(goodImage.valid());
+  igl::vulkan::VulkanImageView goodView = goodImage.createImageView(
+      VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: good");
+  EXPECT_NE(ctx.createTexture(std::move(goodImage), std::move(goodView), "accepted"), nullptr);
+}
+
+#if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
+
+// The AHardwareBuffer import steps (Android lane, run on a device).
+class VulkanImageAhbFaultTest : public VulkanImageFaultTest {
+ protected:
+  void SetUp() override {
+    VulkanImageFaultTest::SetUp();
+    fd_ = makeDevice();
+    ASSERT_NE(fd_->device(), nullptr) << fd_->creationResult().message.c_str();
+    const AHardwareBuffer_Desc description{
+        .width = 64,
+        .height = 64,
+        .layers = 1,
+        .format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+        .usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT,
+    };
+    ASSERT_EQ(AHardwareBuffer_allocate(&description, &buffer_), 0);
+  }
+
+  void TearDown() override {
+    fd_.reset();
+    if (buffer_ != nullptr) {
+      AHardwareBuffer_release(buffer_);
+    }
+  }
+
+  std::unique_ptr<igl::vulkan::VulkanImage> importBuffer(Result* result) {
+    return fd_->context().createImageFromAndroidHardwareBuffer(
+        buffer_,
+        0,
+        VK_IMAGE_TYPE_2D,
+        VkExtent3D{.width = 64, .height = 64, .depth = 1},
+        kFormat,
+        1,
+        1,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT,
+        0,
+        VK_SAMPLE_COUNT_1_BIT,
+        result,
+        "Image: AHB fault test");
+  }
+
+  std::unique_ptr<util::device::vulkan::FaultingDevice> fd_;
+  AHardwareBuffer* buffer_ = nullptr;
+};
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportFailsAtImageCreate) {
+  fd_->resetCounters();
+  fd_->arm(Call::CreateImage, VK_ERROR_OUT_OF_HOST_MEMORY);
+  Result result;
+  EXPECT_EQ(importBuffer(&result), nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_HOST_MEMORY).message);
+  EXPECT_EQ(fd_->reached(Call::GetAndroidHardwareBufferProperties), 0u);
+  EXPECT_EQ(fd_->reached(Call::AllocateMemory), 0u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 0u);
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 0u);
+}
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportFailsAtPropertyQuery) {
+  fd_->resetCounters();
+  fd_->arm(Call::GetAndroidHardwareBufferProperties, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+  Result result;
+  EXPECT_EQ(importBuffer(&result), nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_INVALID_EXTERNAL_HANDLE).message);
+  EXPECT_EQ(fd_->reached(Call::AllocateMemory), 0u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 1u); // the image created before it
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 0u);
+}
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportFailsAtAllocate) {
+  fd_->resetCounters();
+  fd_->arm(Call::AllocateMemory, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  Result result;
+  EXPECT_EQ(importBuffer(&result), nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+  EXPECT_EQ(fd_->reached(Call::BindImageMemory), 0u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 1u);
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 0u);
+}
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportFailsAtBind) {
+  fd_->resetCounters();
+  fd_->arm(Call::BindImageMemory, VK_ERROR_UNKNOWN);
+  Result result;
+  EXPECT_EQ(importBuffer(&result), nullptr);
+  EXPECT_EQ(result.message, igl::vulkan::getResultFromVkResult(VK_ERROR_UNKNOWN).message);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 1u);
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 1u); // the imported memory
+}
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportFailsAtViewCreate) {
+  Result result;
+  const auto image = importBuffer(&result);
+  ASSERT_NE(image, nullptr) << result.message.c_str();
+  ASSERT_TRUE(image->valid());
+
+  fd_->resetCounters();
+  fd_->arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY);
+  igl::vulkan::VulkanImageViewCreateInfo info;
+  info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  info.format = kFormat;
+  const igl::vulkan::VulkanImageView view = image->createImageView(info, "View: AHB fault test");
+  EXPECT_FALSE(view.valid());
+  EXPECT_EQ(view.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+  // The view was not named, and the image is untouched.
+  if (fd_->namingObservable()) {
+    EXPECT_EQ(fd_->counted(Counted::SetDebugUtilsObjectName), 0u);
+  }
+  EXPECT_TRUE(image->valid());
+}
+
+TEST_F(VulkanImageAhbFaultTest, AhbImportRetriesCleanlyAfterAPartialFailure) {
+  fd_->arm(Call::BindImageMemory, VK_ERROR_UNKNOWN);
+  Result result;
+  EXPECT_EQ(importBuffer(&result), nullptr);
+  fd_->disarmAll();
+
+  fd_->resetCounters();
+  const auto image = importBuffer(&result);
+  ASSERT_NE(image, nullptr) << result.message.c_str();
+  EXPECT_TRUE(result.isOk());
+  EXPECT_TRUE(image->valid());
+  EXPECT_EQ(image->initResult(), VK_SUCCESS);
+  EXPECT_NE(image->getVkImage(), VK_NULL_HANDLE);
+  // The retry created exactly what a first success creates, and destroyed nothing.
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 0u);
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 0u);
+}
+
+#endif // defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
 
 } // namespace igl::tests
 

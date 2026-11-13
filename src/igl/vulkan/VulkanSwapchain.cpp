@@ -226,6 +226,19 @@ VulkanSwapchain::VulkanSwapchain(VulkanContext& ctx, uint32_t width, uint32_t he
                                            0,
                                            1,
                                            IGL_FORMAT("Image View: swapchain #{}", i).c_str());
+    if (!imageView.valid()) {
+      IGL_LOG_ERROR(
+          "VulkanSwapchain: the image view of swapchain image #%u cannot be created (VkResult "
+          "%d)\n",
+          i,
+          static_cast<int>(imageView.initResult()));
+      // The views created before it were never used: destroy them now.
+      for (uint32_t j = 0; j < i; ++j) {
+        swapchainTextures_[j]->imageView_.destroyNeverSubmitted();
+      }
+      valid_ = false;
+      return;
+    }
     swapchainTextures_[i] = std::make_shared<VulkanTexture>(std::move(image), std::move(imageView));
   }
 
@@ -261,12 +274,18 @@ VkImage VulkanSwapchain::getDepthVkImage() const {
   if (!depthTexture_) {
     lazyAllocateDepthBuffer();
   }
+  if (!depthTexture_) {
+    return VK_NULL_HANDLE;
+  }
   return depthTexture_->image.getVkImage();
 }
 
 VkImageView VulkanSwapchain::getDepthVkImageView() const {
   if (!depthTexture_) {
     lazyAllocateDepthBuffer();
+  }
+  if (!depthTexture_) {
+    return VK_NULL_HANDLE;
   }
   return depthTexture_->imageView_.getVkImageView();
 }
@@ -303,6 +322,16 @@ void VulkanSwapchain::lazyAllocateDepthBuffer() const {
                                 "Image: swapchain depth");
   auto depthImageView = depthImage.createImageView(
       VK_IMAGE_VIEW_TYPE_2D, depthFormat, aspectMask, 0, 1, 0, 1, "Image View: swapchain depth");
+  if (!depthImage.valid() || !depthImageView.valid()) {
+    IGL_LOG_ERROR(
+        "VulkanSwapchain: the depth buffer cannot be created (image VkResult %d, view VkResult "
+        "%d)\n",
+        static_cast<int>(depthImage.initResult()),
+        static_cast<int>(depthImageView.initResult()));
+    depthImageView.destroyNeverSubmitted();
+    depthImage.discardNeverSubmitted();
+    return;
+  }
 
   depthTexture_ = std::make_shared<VulkanTexture>(std::move(depthImage), std::move(depthImageView));
 }

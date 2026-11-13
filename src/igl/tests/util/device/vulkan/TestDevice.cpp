@@ -136,6 +136,7 @@ enum Entry : size_t {
   kBindImageMemory,
   kBindImageMemory2,
   kBindImageMemory2KHR,
+  kGetAndroidHardwareBufferProperties,
   kDestroyImage,
   kDestroyBuffer,
   kFreeMemory,
@@ -261,6 +262,20 @@ IGL_FAULT_STUB(BindImageMemory2KHR,
                (d, n, i))
 #undef IGL_FAULT_STUB
 
+// vkGetAndroidHardwareBufferPropertiesANDROID, with the Android types spelled as opaque pointers
+// (the signature is ABI-identical) so the fixture builds on every platform.
+VKAPI_ATTR VkResult VKAPI_CALL stubGetAndroidHardwareBufferProperties(VkDevice d,
+                                                                      const void* buffer,
+                                                                      void* properties) {
+  VkResult injected = VK_SUCCESS;
+  if (shouldFail(FaultingDevice::Call::GetAndroidHardwareBufferProperties, &injected)) {
+    return injected;
+  }
+  using Function = VkResult (*)(VkDevice, const void*, void*);
+  return reinterpret_cast<Function>(gFault.real[kGetAndroidHardwareBufferProperties])(
+      d, buffer, properties);
+}
+
 VKAPI_ATTR void VKAPI_CALL stubDestroyImage(VkDevice d, VkImage i, const VkAllocationCallbacks* a) {
   gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyImage)].fetch_add(1);
   reinterpret_cast<PFN_vkDestroyImage>(gFault.real[kDestroyImage])(d, i, a);
@@ -318,6 +333,9 @@ const std::array<Hook, kEntryCount> kHooks = {{
     IGL_HOOK("vkBindImageMemory", kBindImageMemory, stubBindImageMemory),
     IGL_HOOK("vkBindImageMemory2", kBindImageMemory2, stubBindImageMemory2),
     IGL_HOOK("vkBindImageMemory2KHR", kBindImageMemory2KHR, stubBindImageMemory2KHR),
+    IGL_HOOK("vkGetAndroidHardwareBufferPropertiesANDROID",
+             kGetAndroidHardwareBufferProperties,
+             stubGetAndroidHardwareBufferProperties),
     IGL_HOOK("vkDestroyImage", kDestroyImage, stubDestroyImage),
     IGL_HOOK("vkDestroyBuffer", kDestroyBuffer, stubDestroyBuffer),
     IGL_HOOK("vkFreeMemory", kFreeMemory, stubFreeMemory),

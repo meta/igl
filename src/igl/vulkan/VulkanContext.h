@@ -163,6 +163,9 @@ class VulkanContext final {
                                              VkMemoryPropertyFlags memFlags,
                                              Result* IGL_NULLABLE outResult,
                                              const char* IGL_NULLABLE debugName = nullptr) const;
+  /// Returns null (and logs) when the image or the view is invalid. A refusal destroys the passed
+  /// image and view at once (not through a deferred task) when they are valid and owned: the
+  /// caller must not have used them for any GPU work before the call.
   std::shared_ptr<VulkanTexture> createTexture(VulkanImage&& image,
                                                VulkanImageView&& imageView,
                                                const char* IGL_NULLABLE debugName) const;

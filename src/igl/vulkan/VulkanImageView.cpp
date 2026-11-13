@@ -52,7 +52,17 @@ VulkanImageView::VulkanImageView(const VulkanContext& ctx,
   }
 
   const VkDevice device = this->ctx->getVkDevice();
-  VK_ASSERT(this->ctx->vf_.vkCreateImageView(device, &ciCopy, nullptr, &vkImageView));
+  const VkResult result = this->ctx->vf_.vkCreateImageView(device, &ciCopy, nullptr, &vkImageView);
+  if (result != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImageView: vkCreateImageView() failed (VkResult %d)\n",
+                  static_cast<int>(result));
+    // The view owns nothing and is not named.
+    vkImageView = VK_NULL_HANDLE;
+    this->ctx = nullptr;
+    aspectMask = 0;
+    initResult_ = result;
+    return;
+  }
 
   VK_ASSERT(ivkSetDebugObjectName(
       &this->ctx->vf_, device, VK_OBJECT_TYPE_IMAGE_VIEW, (uint64_t)vkImageView, debugName));
@@ -63,14 +73,28 @@ VulkanImageView& VulkanImageView::operator=(VulkanImageView&& other) noexcept {
   ctx = other.ctx;
   vkImageView = other.vkImageView;
   aspectMask = other.aspectMask;
+  initResult_ = other.initResult_;
   other.ctx = nullptr;
   other.vkImageView = VK_NULL_HANDLE;
   other.aspectMask = 0;
+  other.initResult_ = VK_SUCCESS;
   return *this;
 }
 
 [[nodiscard]] bool VulkanImageView::valid() const {
   return ctx != nullptr;
+}
+
+void VulkanImageView::destroyNeverSubmitted() {
+  if (!valid()) {
+    return;
+  }
+
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(ctx);
+
+  ctx->vf_.vkDestroyImageView(ctx->getVkDevice(), vkImageView, nullptr);
+  vkImageView = VK_NULL_HANDLE;
+  ctx = nullptr;
 }
 
 void VulkanImageView::destroy() {

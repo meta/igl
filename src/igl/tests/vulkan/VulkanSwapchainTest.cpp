@@ -386,6 +386,94 @@ TEST_P(VulkanSwapchainRecoveryTest, OutOfDateAcquirePreservesImageAndRecovers) {
   EXPECT_FALSE(ctx.immediate_->hasPendingInjectedSemaphores());
 }
 
+namespace {
+VKAPI_ATTR VkResult VKAPI_CALL failingCreateImageView(VkDevice /*unused*/,
+                                                      const VkImageViewCreateInfo* /*unused*/,
+                                                      const VkAllocationCallbacks* /*unused*/,
+                                                      VkImageView* /*unused*/) {
+  return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+} // namespace
+
+TEST_P(VulkanSwapchainRecoveryTest, AnImageViewFailureRefusesTheSwapchain) {
+  auto& ctx = device_->getVulkanContext();
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+
+  table.vkCreateImageView = failingCreateImageView;
+  const Result refused = ctx.initSwapchain(kSize, kSize);
+  table.vkCreateImageView = original_.vkCreateImageView;
+
+  EXPECT_FALSE(refused.isOk());
+  EXPECT_FALSE(ctx.hasSwapchain());
+
+  // The same request succeeds once views can be created again.
+  EXPECT_TRUE(ctx.initSwapchain(kSize, kSize).isOk());
+  EXPECT_TRUE(ctx.hasSwapchain());
+}
+
+namespace {
+PFN_vkCreateImageView realCreateImageView = nullptr;
+PFN_vkDestroyImageView realDestroyImageView = nullptr;
+uint32_t viewCreations = 0;
+uint32_t viewDestructions = 0;
+uint32_t firstFailingCreation = 0;
+
+VKAPI_ATTR VkResult VKAPI_CALL laterCreateImageViewFails(VkDevice device,
+                                                         const VkImageViewCreateInfo* info,
+                                                         const VkAllocationCallbacks* allocator,
+                                                         VkImageView* view) {
+  if (viewCreations++ >= firstFailingCreation) {
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+  }
+  return realCreateImageView(device, info, allocator, view);
+}
+
+VKAPI_ATTR void VKAPI_CALL countingDestroyImageView(VkDevice device,
+                                                    VkImageView view,
+                                                    const VkAllocationCallbacks* allocator) {
+  ++viewDestructions;
+  realDestroyImageView(device, view, allocator);
+}
+} // namespace
+
+TEST_P(VulkanSwapchainRecoveryTest, ViewsCreatedBeforeAFailureAreDestroyedAtOnce) {
+  auto& ctx = device_->getVulkanContext();
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  realCreateImageView = original_.vkCreateImageView;
+  realDestroyImageView = original_.vkDestroyImageView;
+  viewCreations = 0;
+  viewDestructions = 0;
+  firstFailingCreation = 1; // the first image's view works, the second one's fails
+
+  table.vkCreateImageView = laterCreateImageViewFails;
+  table.vkDestroyImageView = countingDestroyImageView;
+  auto refused = std::make_unique<vulkan::VulkanSwapchain>(ctx, kSize, kSize);
+  const uint32_t destroyedBeforeAnyDrain = viewDestructions;
+  table.vkCreateImageView = original_.vkCreateImageView;
+  table.vkDestroyImageView = original_.vkDestroyImageView;
+
+  EXPECT_FALSE(refused->valid());
+  // The view that was created is destroyed by the failing constructor itself, not left to a
+  // deferred task that a later drain would have to run.
+  EXPECT_EQ(destroyedBeforeAnyDrain, 1u);
+  refused.reset();
+}
+
+TEST_P(VulkanSwapchainRecoveryTest, ADepthBufferFailureLeavesNoDepthTextureAndCanBeRetried) {
+  auto& ctx = device_->getVulkanContext();
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+
+  table.vkCreateImageView = failingCreateImageView;
+  EXPECT_EQ(ctx.swapchain_->getCurrentDepthTexture(), nullptr);
+  EXPECT_EQ(ctx.swapchain_->getDepthVkImage(), VK_NULL_HANDLE);
+  EXPECT_EQ(ctx.swapchain_->getDepthVkImageView(), VK_NULL_HANDLE);
+  table.vkCreateImageView = original_.vkCreateImageView;
+
+  // Once views can be created again the same swapchain provides its depth buffer.
+  EXPECT_NE(ctx.swapchain_->getCurrentDepthTexture(), nullptr);
+  EXPECT_NE(ctx.swapchain_->getDepthVkImageView(), VK_NULL_HANDLE);
+}
+
 INSTANTIATE_TEST_SUITE_P(LegacyAndTimeline,
                          VulkanSwapchainRecoveryTest,
                          ::testing::Values(false, true));

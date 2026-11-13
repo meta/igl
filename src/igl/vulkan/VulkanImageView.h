@@ -70,9 +70,21 @@ class VulkanImageView final {
     return vkImageView;
   }
   /**
-   * @brief Returns true if the object is valid
+   * @brief Returns true if the object is valid: its VkImageView was created.
    */
   [[nodiscard]] bool valid() const;
+  /**
+   * @brief The result of the failed `vkCreateImageView()` (`VK_SUCCESS` for a valid view). A view
+   * whose creation failed owns no Vulkan object and was not named.
+   */
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
+  /**
+   * @brief Destroys the view at once instead of through a deferred task. Only for a view that no
+   * GPU work can reference because it was refused right after it was created. No-op if invalid.
+   */
+  void destroyNeverSubmitted();
   /**
    * @brief Returns the VkImageAspectFlags used to create the imageView
    */
@@ -86,6 +98,7 @@ class VulkanImageView final {
   VkImageAspectFlags aspectMask = 0;
 
  private:
+  VkResult initResult_ = VK_SUCCESS;
   void destroy();
 };
 

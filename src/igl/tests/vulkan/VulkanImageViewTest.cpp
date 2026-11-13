@@ -11,6 +11,7 @@
 
 #include <igl/Common.h>
 #include <igl/tests/util/device/TestDevice.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanImage.h>
@@ -334,6 +335,69 @@ TEST_F(VulkanImageViewTest, CreateImageViewWithMultipleMipLevels) {
   EXPECT_TRUE(imageView.valid());
   EXPECT_NE(imageView.getVkImageView(), VK_NULL_HANDLE);
   EXPECT_EQ(imageView.getVkImageAspectFlags(), VK_IMAGE_ASPECT_COLOR_BIT);
+}
+
+TEST(VulkanImageViewFaultTest, CheckedImageViewCreationFailureNamesNothing) {
+  igl::setDebugBreakEnabled(false);
+  using FaultingDevice = util::device::vulkan::FaultingDevice;
+  FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+  auto& ctx = fd.context();
+
+  Result result;
+  const auto image = ctx.createImage(VK_IMAGE_TYPE_2D,
+                                     VkExtent3D{.width = kWidth, .height = kHeight, .depth = 1},
+                                     kFormat,
+                                     1,
+                                     1,
+                                     VK_IMAGE_TILING_OPTIMAL,
+                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                     0,
+                                     VK_SAMPLE_COUNT_1_BIT,
+                                     &result,
+                                     "Image: view fault test");
+  ASSERT_TRUE(image.valid()) << result.message.c_str();
+
+  vulkan::VulkanImageViewCreateInfo info;
+  info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  info.format = kFormat;
+
+  fd.resetCounters();
+  fd.arm(FaultingDevice::Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY);
+  const vulkan::VulkanImageView view = image.createImageView(info, "View: fault test");
+
+  // Reported with the failing VkResult, an invalid view, and nothing named or destroyed.
+  EXPECT_FALSE(view.valid());
+  EXPECT_EQ(view.getVkImageView(), VK_NULL_HANDLE);
+  EXPECT_EQ(view.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+  EXPECT_EQ(fd.reached(FaultingDevice::Call::CreateImageView), 1u);
+  EXPECT_EQ(fd.failed(FaultingDevice::Call::CreateImageView), 1u);
+  // Where VK_EXT_debug_utils is not loaded there is no naming call to count.
+  const bool namingObservable = fd.namingObservable();
+  if (namingObservable) {
+    EXPECT_EQ(fd.counted(FaultingDevice::Counted::SetDebugUtilsObjectName), 0u);
+  }
+
+  // The direct constructor records the failure instead of asserting through it.
+  fd.arm(FaultingDevice::Call::CreateImageView, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  info.image = image.getVkImage();
+  const vulkan::VulkanImageView direct(ctx, info, "View: direct");
+  EXPECT_FALSE(direct.valid());
+  EXPECT_EQ(direct.initResult(), VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  if (namingObservable) {
+    EXPECT_EQ(fd.counted(FaultingDevice::Counted::SetDebugUtilsObjectName), 0u);
+  }
+
+  // Without a fault the creation names the view and succeeds (the positive control of the
+  // assertions above).
+  fd.disarmAll();
+  const vulkan::VulkanImageView good = image.createImageView(info, "View: good");
+  EXPECT_TRUE(good.valid());
+  EXPECT_EQ(good.initResult(), VK_SUCCESS);
+  if (namingObservable) {
+    EXPECT_EQ(fd.counted(FaultingDevice::Counted::SetDebugUtilsObjectName), 1u);
+  }
 }
 
 } // namespace igl::tests

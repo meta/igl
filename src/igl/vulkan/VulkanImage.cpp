@@ -90,23 +90,19 @@ static_assert(std::is_trivially_copyable_v<VulkanImageCreateInfo>);
 namespace {
 
 /// @brief Attempts VMA image allocation, retrying once after draining deferred tasks on failure.
-/// Returns true if the allocation succeeded.
-bool tryAllocateImageVma(const VulkanContext& ctx,
-                         const VkImageCreateInfo& ci,
-                         const VmaAllocationCreateInfo& ciAlloc,
-                         VkImage* outImage,
-                         VmaAllocation* outAllocation,
-                         VkFormat imageFormat,
-                         VkMemoryPropertyFlags memFlags) {
-  const VkResult result = vmaCreateImage(static_cast<VmaAllocator>(ctx.getVmaAllocator()),
-                                         &ci,
-                                         &ciAlloc,
-                                         outImage,
-                                         outAllocation,
-                                         nullptr);
+/// Returns VK_SUCCESS if an image and its allocation exist; a failing retry returns its own result.
+VkResult tryAllocateImageVma(const VulkanContext& ctx,
+                             const VkImageCreateInfo& ci,
+                             const VmaAllocationCreateInfo& ciAlloc,
+                             VkImage* IGL_NONNULL outImage,
+                             VmaAllocation* IGL_NONNULL outAllocation,
+                             VkFormat imageFormat,
+                             VkMemoryPropertyFlags memFlags) {
+  auto* const vma = static_cast<VmaAllocator>(ctx.getVmaAllocator());
+  const VkResult result = vmaCreateImage(vma, &ci, &ciAlloc, outImage, outAllocation, nullptr);
 
   if (result == VK_SUCCESS && *outAllocation != nullptr) {
-    return true;
+    return VK_SUCCESS;
   }
 
   IGL_LOG_INFO(
@@ -119,21 +115,18 @@ bool tryAllocateImageVma(const VulkanContext& ctx,
   // processed. Drain deferred tasks queue to free memory and retry.
   const_cast<VulkanContext&>(ctx).waitDeferredTasks();
 
-  const VkResult retryResult = vmaCreateImage(static_cast<VmaAllocator>(ctx.getVmaAllocator()),
-                                              &ci,
-                                              &ciAlloc,
-                                              outImage,
-                                              outAllocation,
-                                              nullptr);
+  *outImage = VK_NULL_HANDLE;
+  *outAllocation = VK_NULL_HANDLE;
+  const VkResult retryResult = vmaCreateImage(vma, &ci, &ciAlloc, outImage, outAllocation, nullptr);
 
   if (retryResult != VK_SUCCESS || *outAllocation == nullptr) {
-    IGL_LOG_INFO(
-        "vmaCreateImage retry failed: error result: %d, memflags: %d, imageformat: %d. "
-        "Continuing with null allocation.\n",
-        retryResult,
-        memFlags,
-        imageFormat);
-    return false;
+    IGL_LOG_ERROR("vmaCreateImage retry failed: error result: %d, memflags: %d, imageformat: %d\n",
+                  retryResult,
+                  memFlags,
+                  imageFormat);
+    *outImage = VK_NULL_HANDLE;
+    *outAllocation = VK_NULL_HANDLE;
+    return retryResult != VK_SUCCESS ? retryResult : VK_ERROR_UNKNOWN;
   }
 
   IGL_LOG_INFO(
@@ -141,7 +134,7 @@ bool tryAllocateImageVma(const VulkanContext& ctx,
       "deferred tasks.\n",
       memFlags,
       imageFormat);
-  return true;
+  return VK_SUCCESS;
 }
 
 VmaAllocationCreateInfo makeImageAllocationInfo(VkMemoryPropertyFlags memFlags) {
@@ -299,54 +292,73 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   };
 
   if (IGL_VULKAN_USE_VMA && !isDisjoint) {
+    auto* const vma = static_cast<VmaAllocator>(ctx.getVmaAllocator());
     bool isAllocated = false;
     VkMemoryPropertyFlags allocFlags = memFlags;
     if ((allocFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0) {
       // A single attempt, because draining deferred tasks does not help when no lazily allocated
       // memory type can back this image.
       const VmaAllocationCreateInfo ciAlloc = makeImageAllocationInfo(allocFlags);
-      isAllocated = vmaCreateImage(static_cast<VmaAllocator>(ctx_->getVmaAllocator()),
-                                   &ci,
-                                   &ciAlloc,
-                                   &vkImage_,
-                                   &vmaAllocation_,
-                                   nullptr) == VK_SUCCESS &&
-                    vmaAllocation_ != nullptr;
+      isAllocated =
+          vmaCreateImage(vma, &ci, &ciAlloc, &vkImage_, &vmaAllocation_, nullptr) == VK_SUCCESS &&
+          vmaAllocation_ != nullptr;
       if (!isAllocated) {
+        vkImage_ = VK_NULL_HANDLE;
+        vmaAllocation_ = VK_NULL_HANDLE;
         logLazilyAllocatedFallback(imageFormat_, samples);
         allocFlags &= ~VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
       }
     }
     if (!isAllocated) {
       const VmaAllocationCreateInfo ciAlloc = makeImageAllocationInfo(allocFlags);
-      tryAllocateImageVma(*ctx_, ci, ciAlloc, &vkImage_, &vmaAllocation_, imageFormat_, allocFlags);
-    }
-
-    if (vmaAllocation_) {
-      VkMemoryRequirements memRequirements{};
-      ctx_->vf_.vkGetImageMemoryRequirements(device_, vkImage_, &memRequirements);
-
-      // handle memory-mapped buffers
-      if ((memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
-        vmaMapMemory(
-            static_cast<VmaAllocator>(ctx_->getVmaAllocator()), vmaAllocation_, &mappedPtr_);
-        if ((memRequirements.memoryTypeBits & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
-          isCoherentMemory_ = true;
-        }
+      const VkResult allocResult = tryAllocateImageVma(
+          ctx, ci, ciAlloc, &vkImage_, &vmaAllocation_, imageFormat_, allocFlags);
+      if (allocResult != VK_SUCCESS) {
+        IGL_LOG_ERROR("VulkanImage: allocating the image failed (VkResult %d)\n",
+                      static_cast<int>(allocResult));
+        failInit(allocResult);
+        return;
       }
-
-      vmaSetAllocationName(static_cast<VmaAllocator>(ctx_->getVmaAllocator()),
-                           vmaAllocation_,
-                           IGL_FORMAT("VMA Allocation: {}", debugName).c_str());
-
-      VmaAllocationInfo allocationInfo;
-      vmaGetAllocationInfo(
-          static_cast<VmaAllocator>(ctx_->getVmaAllocator()), vmaAllocation_, &allocationInfo);
-      allocatedSize = allocationInfo.size;
     }
+
+    const VmaAllocation allocation = vmaAllocation_;
+    if (allocation == nullptr) {
+      failInit(VK_ERROR_UNKNOWN);
+      return;
+    }
+    VkMemoryRequirements memRequirements{};
+    ctx.vf_.vkGetImageMemoryRequirements(device_, vkImage_, &memRequirements);
+
+    // handle memory-mapped buffers
+    if ((memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+      const VkResult mapResult = vmaMapMemory(vma, allocation, &mappedPtr_);
+      if (mapResult != VK_SUCCESS) {
+        IGL_LOG_ERROR("VulkanImage: mapping the image memory failed (VkResult %d)\n",
+                      static_cast<int>(mapResult));
+        mappedPtr_ = nullptr;
+        failInit(mapResult);
+        return;
+      }
+      if ((memRequirements.memoryTypeBits & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
+        isCoherentMemory_ = true;
+      }
+    }
+
+    vmaSetAllocationName(vma, allocation, IGL_FORMAT("VMA Allocation: {}", debugName).c_str());
+
+    VmaAllocationInfo allocationInfo;
+    vmaGetAllocationInfo(vma, allocation, &allocationInfo);
+    allocatedSize = allocationInfo.size;
   } else {
     // create a disjoint image - TODO: merge it with the VMA code path above
-    VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
+    VkResult rawResult = ctx.vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
+    if (rawResult != VK_SUCCESS) {
+      IGL_LOG_ERROR("VulkanImage: vkCreateImage() failed (VkResult %d)\n",
+                    static_cast<int>(rawResult));
+      vkImage_ = VK_NULL_HANDLE;
+      failInit(rawResult);
+      return;
+    }
 
     VkMemoryRequirements2 memRequirements[3] = {
         {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2},
@@ -380,24 +392,32 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
            .image = vkImage_},
       };
       for (uint32_t p = 0; p != numPlanes; p++) {
-        ctx_->vf_.vkGetImageMemoryRequirements2(device_, &imgRequirements[p], &memRequirements[p]);
+        ctx.vf_.vkGetImageMemoryRequirements2(device_, &imgRequirements[p], &memRequirements[p]);
         VkMemoryPropertyFlags planeMemFlags = memFlags;
         if ((planeMemFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0 &&
-            !hasMemoryType(ctx_->memoryProperties,
+            !hasMemoryType(ctx.memoryProperties,
                            memRequirements[p].memoryRequirements.memoryTypeBits,
                            planeMemFlags)) {
           logLazilyAllocatedFallback(imageFormat_, samples);
           planeMemFlags &= ~VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
         }
-        VK_ASSERT(ivkAllocateMemory2(&ctx_->vf_,
-                                     physicalDevice_,
-                                     device_,
-                                     &memRequirements[p],
-                                     planeMemFlags,
-                                     false,
-                                     &vkMemory_[p]));
+        rawResult = ivkAllocateMemory2(&ctx.vf_,
+                                       physicalDevice_,
+                                       device_,
+                                       &memRequirements[p],
+                                       planeMemFlags,
+                                       false,
+                                       &vkMemory_[p]);
+        if (rawResult != VK_SUCCESS) {
+          IGL_LOG_ERROR("VulkanImage: allocating the memory of plane %u failed (VkResult %d)\n",
+                        p,
+                        static_cast<int>(rawResult));
+          vkMemory_[p] = VK_NULL_HANDLE; // the planes allocated before it are freed by failInit()
+          failInit(rawResult);
+          return;
+        }
 
-        VK_ASSERT(ivkSetDebugObjectName(&ctx_->vf_,
+        VK_ASSERT(ivkSetDebugObjectName(&ctx.vf_,
                                         device_,
                                         VK_OBJECT_TYPE_DEVICE_MEMORY,
                                         (uint64_t)vkMemory_[p],
@@ -427,7 +447,13 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
            .image = vkImage_,
            .memory = vkMemory_[2]},
       };
-      VK_ASSERT(ctx_->vf_.vkBindImageMemory2(device_, numPlanes, bindInfo));
+      rawResult = ctx.vf_.vkBindImageMemory2(device_, numPlanes, bindInfo);
+      if (rawResult != VK_SUCCESS) {
+        IGL_LOG_ERROR("VulkanImage: binding the image memory failed (VkResult %d)\n",
+                      static_cast<int>(rawResult));
+        failInit(rawResult);
+        return;
+      }
 
       allocatedSize = memRequirements[0].memoryRequirements.size +
                       memRequirements[1].memoryRequirements.size +
@@ -437,7 +463,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
     // handle memory-mapped images
     if ((memFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
       // map only the first image plane
-      VK_ASSERT(ctx_->vf_.vkMapMemory(device_, vkMemory_[0], 0, VK_WHOLE_SIZE, 0, &mappedPtr_));
+      rawResult = ctx.vf_.vkMapMemory(device_, vkMemory_[0], 0, VK_WHOLE_SIZE, 0, &mappedPtr_);
+      if (rawResult != VK_SUCCESS) {
+        IGL_LOG_ERROR("VulkanImage: mapping the image memory failed (VkResult %d)\n",
+                      static_cast<int>(rawResult));
+        mappedPtr_ = nullptr;
+        failInit(rawResult);
+        return;
+      }
       const uint32_t memoryTypeBits = memRequirements[0].memoryRequirements.memoryTypeBits;
       if ((memoryTypeBits & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
         isCoherentMemory_ = true;
@@ -446,10 +479,47 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   }
 
   VK_ASSERT(ivkSetDebugObjectName(
-      &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
+      &ctx.vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
   // Get physical device's properties for the image's format
-  ctx_->vf_.vkGetPhysicalDeviceFormatProperties(physicalDevice_, imageFormat_, &formatProperties_);
+  ctx.vf_.vkGetPhysicalDeviceFormatProperties(physicalDevice_, imageFormat_, &formatProperties_);
+}
+
+void VulkanImage::failInit(VkResult result) {
+  initResult_ = result != VK_SUCCESS ? result : VK_ERROR_UNKNOWN;
+  const VulkanContext* const context = ctx_;
+  if (context == nullptr) {
+    return;
+  }
+  // Whatever this constructor created has never been seen by the GPU (nothing was recorded or
+  // submitted with it), so it is destroyed here, directly, instead of through a deferred task.
+  if (vmaAllocation_ != VK_NULL_HANDLE) {
+    auto* const vma = static_cast<VmaAllocator>(context->getVmaAllocator());
+    if (vma != nullptr) {
+      if (mappedPtr_ != nullptr) {
+        vmaUnmapMemory(vma, vmaAllocation_);
+      }
+      vmaDestroyImage(vma, vkImage_, vmaAllocation_);
+    }
+  } else {
+    if (mappedPtr_ != nullptr && vkMemory_[0] != VK_NULL_HANDLE) {
+      context->vf_.vkUnmapMemory(device_, vkMemory_[0]);
+    }
+    if (vkImage_ != VK_NULL_HANDLE) {
+      context->vf_.vkDestroyImage(device_, vkImage_, nullptr);
+    }
+    for (VkDeviceMemory& memory : vkMemory_) {
+      if (memory != VK_NULL_HANDLE) {
+        context->vf_.vkFreeMemory(device_, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+      }
+    }
+  }
+  vkImage_ = VK_NULL_HANDLE;
+  vmaAllocation_ = VK_NULL_HANDLE;
+  mappedPtr_ = nullptr;
+  isCoherentMemory_ = false;
+  allocatedSize = 0;
 }
 
 #if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
@@ -511,7 +581,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
       .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
 
-  VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
+  VkResult stepResult = ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (AHB): vkCreateImage() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkImage_ = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
@@ -533,8 +610,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   VkAndroidHardwareBufferPropertiesANDROID hwBufferProperties{
       .sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID,
   };
-  VK_ASSERT(ctx_->vf_.vkGetAndroidHardwareBufferPropertiesANDROID(
-      device_, hwBuffer, &hwBufferProperties));
+  stepResult =
+      ctx_->vf_.vkGetAndroidHardwareBufferPropertiesANDROID(device_, hwBuffer, &hwBufferProperties);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (AHB): the hardware buffer properties query failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    failInit(stepResult);
+    return;
+  }
 
   const VkMemoryAllocateInfo memoryAllocateInfo = {
       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -548,8 +631,21 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
                hwBufferProperties.memoryTypeBits,
                memoryAllocateInfo.memoryTypeIndex);
 
-  VK_ASSERT(ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]));
-  VK_ASSERT(ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0));
+  stepResult = ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (AHB): vkAllocateMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkMemory_[0] = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
+  stepResult = ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (AHB): vkBindImageMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    failInit(stepResult);
+    return;
+  }
 
   ctx_->vf_.vkGetPhysicalDeviceFormatProperties(physicalDevice_, imageFormat_, &formatProperties_);
 }
@@ -1108,13 +1204,26 @@ VulkanImageView VulkanImage::createImageView(VkImageViewType type,
                                                   .layerCount = numLayers},
   };
 
-  return VulkanImageView{*ctx_, ci, debugName};
+  return createImageView(ci, debugName);
 }
 
 VulkanImageView VulkanImage::createImageView(VulkanImageViewCreateInfo createInfo,
                                              const char* debugName) const {
+  const VulkanContext* const context = ctx_;
+  if (context == nullptr || initResult_ != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage::createImageView(): the image is invalid (VkResult %d)\n",
+                  static_cast<int>(initResult_));
+    return VulkanImageView{};
+  }
   createInfo.image = vkImage_;
-  return VulkanImageView{*ctx_, createInfo, debugName};
+  return VulkanImageView{*context, createInfo, debugName};
+}
+
+void VulkanImage::discardNeverSubmitted() {
+  if (!valid() || isExternallyManaged_) {
+    return;
+  }
+  failInit(VK_ERROR_UNKNOWN);
 }
 
 void VulkanImage::transitionLayout(VkCommandBuffer cmdBuf,
@@ -1756,7 +1865,7 @@ void VulkanImage::setName(std::string name) noexcept { // NOLINT(bugprone-except
 }
 
 bool VulkanImage::valid() const {
-  return ctx_ != nullptr;
+  return ctx_ != nullptr && initResult_ == VK_SUCCESS;
 }
 
 VulkanImage& VulkanImage::operator=(VulkanImage&& other) noexcept {
@@ -1793,6 +1902,7 @@ VulkanImage& VulkanImage::operator=(VulkanImage&& other) noexcept {
   tiling_ = other.tiling_;
   isCoherentMemory_ = other.isCoherentMemory_;
   extendedFormat_ = other.extendedFormat_;
+  initResult_ = other.initResult_;
   samplerYcbcrConversionCreateInfo_ = other.samplerYcbcrConversionCreateInfo_;
   ycbcrConversion_ = other.ycbcrConversion_;
   for (size_t i = 0; i != IGL_ARRAY_NUM_ELEMENTS(vkMemory_); i++) {
@@ -1802,6 +1912,7 @@ VulkanImage& VulkanImage::operator=(VulkanImage&& other) noexcept {
   other.ctx_ = nullptr;
   other.vkImage_ = VK_NULL_HANDLE;
   other.ycbcrConversion_ = VK_NULL_HANDLE;
+  other.initResult_ = VK_SUCCESS;
 
   return *this;
 }

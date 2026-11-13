@@ -1460,10 +1460,10 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                              VK_SAMPLE_COUNT_1_BIT,
                              &result,
                              "Image: dummy 1x1");
-    if (!IGL_DEBUG_VERIFY(result.isOk())) {
+    if (!result.isOk()) {
       return result; // NOLINT(clang-diagnostic-nrvo)
     }
-    if (!IGL_DEBUG_VERIFY(image.valid())) {
+    if (!image.valid()) {
       return Result(Result::Code::InvalidOperation, "Cannot create VulkanImage");
     }
     auto imageView = image.createImageView(VK_IMAGE_VIEW_TYPE_2D,
@@ -1474,7 +1474,8 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                                            0,
                                            1,
                                            "Image View: dummy 1x1");
-    if (!IGL_DEBUG_VERIFY(imageView.valid())) {
+    if (!imageView.valid()) {
+      image.discardNeverSubmitted(); // nothing has used the dummy image
       return Result(Result::Code::InvalidOperation, "Cannot create VulkanImageView");
     }
     pimpl_->dummyTexture =
@@ -1745,6 +1746,10 @@ Result VulkanContext::initSwapchain(uint32_t width, uint32_t height) {
   }
 
   swapchain_ = std::make_unique<VulkanSwapchain>(*this, width, height);
+  if (!swapchain_->valid()) {
+    swapchain_.reset();
+    return Result(Result::Code::RuntimeError, "Cannot create the swapchain image views");
+  }
 
   if (features_.has_VK_KHR_timeline_semaphore && features_.has_VK_KHR_synchronization2) {
     timelineSemaphore_ = std::make_unique<VulkanSemaphore>(
@@ -1829,18 +1834,24 @@ VulkanImage VulkanContext::createImage(VkImageType imageType,
     return VulkanImage();
   }
 
-  return {*this,
-          extent,
-          imageType,
-          format,
-          mipLevels,
-          arrayLayers,
-          tiling,
-          usageFlags,
-          memFlags,
-          flags,
-          samples,
-          debugName};
+  VulkanImage image{*this,
+                    extent,
+                    imageType,
+                    format,
+                    mipLevels,
+                    arrayLayers,
+                    tiling,
+                    usageFlags,
+                    memFlags,
+                    flags,
+                    samples,
+                    debugName};
+  if (!image.valid()) {
+    Result::setResult(outResult, getResultFromVkResult(image.initResult()));
+    return VulkanImage();
+  }
+  Result::setOk(outResult);
+  return image;
 }
 
 #if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
@@ -1862,19 +1873,25 @@ std::unique_ptr<VulkanImage> VulkanContext::createImageFromAndroidHardwareBuffer
           imageType, samples, extent, getVkPhysicalDeviceProperties().limits, outResult)) {
     return nullptr;
   }
-  return std::make_unique<VulkanImage>(*this,
-                                       androidHardwareBuffer,
-                                       memoryAllocationSize,
-                                       extent,
-                                       imageType,
-                                       format,
-                                       mipLevels,
-                                       arrayLayers,
-                                       tiling,
-                                       usageFlags,
-                                       flags,
-                                       samples,
-                                       debugName);
+  auto image = std::make_unique<VulkanImage>(*this,
+                                             androidHardwareBuffer,
+                                             memoryAllocationSize,
+                                             extent,
+                                             imageType,
+                                             format,
+                                             mipLevels,
+                                             arrayLayers,
+                                             tiling,
+                                             usageFlags,
+                                             flags,
+                                             samples,
+                                             debugName);
+  if (!image->valid()) {
+    Result::setResult(outResult, getResultFromVkResult(image->initResult()));
+    return nullptr;
+  }
+  Result::setOk(outResult);
+  return image;
 }
 #endif // defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
 
@@ -2087,6 +2104,16 @@ std::shared_ptr<VulkanTexture> VulkanContext::createTexture(
     VulkanImageView&& imageView,
     [[maybe_unused]] const char* IGL_NULLABLE debugName) const {
   IGL_PROFILER_FUNCTION();
+
+  if (!image.valid() || !imageView.valid()) {
+    IGL_LOG_ERROR("VulkanContext::createTexture(): refused, the %s is invalid (VkResult %d)\n",
+                  !image.valid() ? "image" : "image view",
+                  static_cast<int>(!image.valid() ? image.initResult() : imageView.initResult()));
+    // The valid part was created for this texture only: nothing can have used it.
+    imageView.destroyNeverSubmitted();
+    image.discardNeverSubmitted();
+    return nullptr;
+  }
 
   const TextureHandle handle =
       textures_.create(std::make_shared<VulkanTexture>(std::move(image), std::move(imageView)));

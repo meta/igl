@@ -224,9 +224,17 @@ class VulkanImage final {
   }
 
   /**
-   * @brief Returns true if the object is valid
+   * @brief Returns true if the object is valid: constructed, and its construction succeeded.
    */
   [[nodiscard]] bool valid() const;
+
+  /**
+   * @brief The result of the first construction step that failed (`VK_SUCCESS` for a valid image).
+   * An image whose construction failed owns no Vulkan object.
+   */
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
 
   [[nodiscard]] VkImageUsageFlags getVkImageUsageFlags() const {
     return usageFlags_;
@@ -256,6 +264,12 @@ class VulkanImage final {
                                   const char* debugName = nullptr) const;
   VulkanImageView createImageView(VulkanImageViewCreateInfo createInfo,
                                   const char* debugName = nullptr) const;
+  /**
+   * @brief Destroys the image and its memory at once instead of through deferred tasks and leaves
+   * the object invalid. Only for an image that no GPU work can reference because it was refused
+   * right after it was created. No-op for an invalid image or one whose VkImage is not owned.
+   */
+  void discardNeverSubmitted();
   [[nodiscard]] Result generateMipmap(VkCommandBuffer commandBuffer,
                                       const TextureRangeDesc& range) const;
 
@@ -339,8 +353,12 @@ class VulkanImage final {
 #endif
 
  private:
+  /// Destroys what a failing constructor created, clears the handles and records `result`.
+  void failInit(VkResult result);
+
   VkImageTiling tiling_ = VK_IMAGE_TILING_OPTIMAL;
   bool isCoherentMemory_ = false;
+  VkResult initResult_ = VK_SUCCESS;
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
   /**

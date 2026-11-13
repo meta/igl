@@ -64,6 +64,8 @@ class FaultingDevice {
     BindBufferMemory2,
     BindImageMemory,
     BindImageMemory2,
+    /// vkGetAndroidHardwareBufferPropertiesANDROID (only looked up on devices that expose it).
+    GetAndroidHardwareBufferProperties,
     Count,
   };
   /// The calls the fixture only counts.
