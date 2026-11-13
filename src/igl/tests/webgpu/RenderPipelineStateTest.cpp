@@ -158,12 +158,20 @@ TEST(WebGPUBindLayoutsTest, ConventionViolations) {
   EXPECT_EQ(storageEntries[0].visibility, WGPUShaderStage_Fragment);
   EXPECT_EQ(storageEntries[0].storageTexture.format, WGPUTextureFormat_RGBA8Unorm);
   EXPECT_EQ(storageEntries[0].storageTexture.access, WGPUStorageTextureAccess_WriteOnly);
+  // Storage texture bindings end at 15.
   ASSERT_TRUE(
       webgpu::parseWgslReflection(
-          "@group(2) @binding(8) var t : texture_storage_2d<rgba8unorm, write>;", reflection)
+          "@group(2) @binding(15) var t : texture_storage_2d<rgba8unorm, write>;", reflection)
           .isOk());
-  EXPECT_EQ(webgpu::PipelineBindings().add(reflection, WGPUShaderStage_Compute).code,
-            Result::Code::ArgumentInvalid);
+  EXPECT_TRUE(webgpu::PipelineBindings().add(reflection, WGPUShaderStage_Compute).isOk());
+  ASSERT_TRUE(
+      webgpu::parseWgslReflection(
+          "@group(2) @binding(16) var t : texture_storage_2d<rgba8unorm, write>;", reflection)
+          .isOk());
+  const Result pastTheEnd = webgpu::PipelineBindings().add(reflection, WGPUShaderStage_Compute);
+  EXPECT_EQ(pastTheEnd.code, Result::Code::ArgumentInvalid);
+  EXPECT_NE(pastTheEnd.message.find("storage textures are bindings 0-15"), std::string::npos)
+      << pastTheEnd.message;
 
   // Group 3 holds only the push-constant uniform buffer at binding 0, of at most 128 bytes.
   ASSERT_TRUE(

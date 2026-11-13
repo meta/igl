@@ -50,7 +50,7 @@ WGPUTextureSampleType toWGPUSampleType(SampleClass sampleClass) {
 }
 
 Result checkConvention(const WgslBinding& binding) {
-  const auto violation = [&binding](const char* what) {
+  const auto violation = [&binding](const std::string& what) {
     return Result(Result::Code::ArgumentInvalid,
                   "@group(" + std::to_string(binding.group) + ") @binding(" +
                       std::to_string(binding.binding) + ") " + binding.name + ": " + what);
@@ -71,7 +71,8 @@ Result checkConvention(const WgslBinding& binding) {
     return isBuffer(binding.kind) ? Result() : violation("group 1 holds buffers");
   case kStorageTextureGroup:
     if (binding.binding >= kMaxStorageTextures) {
-      return violation("storage textures are bindings 0-7");
+      return violation("storage textures are bindings 0-" +
+                       std::to_string(kMaxStorageTextures - 1));
     }
     return binding.kind == WgslBindingKind::StorageTexture
                ? Result()

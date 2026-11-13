@@ -51,6 +51,21 @@ fn main(@builtin(global_invocation_id) id : vec3u) {
 }
 )";
 
+// Copies texture unit 0 into storage texture 8, and with the channels reversed into storage
+// texture 15, the highest storage texture binding.
+constexpr const char* kHighStorageBindingsShader = R"(
+@group(0) @binding(0) var src : texture_2d<f32>;
+@group(2) @binding(8) var dst8 : texture_storage_2d<rgba8unorm, write>;
+@group(2) @binding(15) var dst15 : texture_storage_2d<rgba8unorm, write>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) id : vec3u) {
+  let texel = textureLoad(src, vec2i(id.xy), 0);
+  textureStore(dst8, vec2i(id.xy), texel);
+  textureStore(dst15, vec2i(id.xy), texel.abgr);
+}
+)";
+
 // Push constants live in the group 3 uniform buffer.
 constexpr const char* kPushConstantShader = R"(
 struct PushConstants {
@@ -308,6 +323,54 @@ TEST_F(WebGPUComputeTest, SampledAndStorageTextures) {
   EXPECT_EQ(pipeline->getIndexByName(IGL_NAMEHANDLE("src")), 0);
   EXPECT_EQ(pipeline->getIndexByName(IGL_NAMEHANDLE("dst")), 0);
   EXPECT_EQ(pipeline->computePipelineReflection()->allTextures().size(), 2u);
+}
+
+TEST_F(WebGPUComputeTest, StorageTexturesAtBindings8And15) {
+  auto pipeline = createPipeline(kHighStorageBindingsShader);
+  ASSERT_NE(pipeline, nullptr);
+  Result ret;
+  auto src = device_->createTexture(TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                       kTextureSize,
+                                                       kTextureSize,
+                                                       TextureDesc::TextureUsageBits::Sampled),
+                                    &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message;
+  const TextureDesc storageDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                     kTextureSize,
+                                                     kTextureSize,
+                                                     TextureDesc::TextureUsageBits::Storage);
+  auto dst8 = device_->createTexture(storageDesc, &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message;
+  auto dst15 = device_->createTexture(storageDesc, &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message;
+  const std::array<uint32_t, 4> pixels = {0x04030201, 0x08070605, 0x0c0b0a09, 0x100f0e0d};
+  ASSERT_TRUE(
+      src->upload(TextureRangeDesc::new2D(0, 0, kTextureSize, kTextureSize), pixels.data()).isOk());
+
+  run([&](IComputeCommandEncoder& encoder) {
+    encoder.bindComputePipelineState(pipeline);
+    encoder.bindTexture(0, src.get());
+    encoder.bindImageTexture(8, dst8.get(), TextureFormat::RGBA_UNorm8);
+    encoder.bindImageTexture(15, dst15.get(), TextureFormat::RGBA_UNorm8);
+    encoder.dispatchThreadGroups({kTextureSize, kTextureSize, 1}, {1, 1, 1});
+  });
+
+  const auto readTexels = [](const ITexture& texture) {
+    std::array<uint32_t, 4> texels = {};
+    EXPECT_TRUE(static_cast<const webgpu::Texture&>(texture)
+                    .getBytes(TextureRangeDesc::new2D(0, 0, kTextureSize, kTextureSize),
+                              WGPUTextureAspect_All,
+                              texels.data(),
+                              kTextureSize * 4,
+                              /*flipVertically=*/false)
+                    .isOk());
+    return texels;
+  };
+  EXPECT_EQ(readTexels(*dst8), pixels);
+  EXPECT_EQ(readTexels(*dst15),
+            (std::array<uint32_t, 4>{0x01020304, 0x05060708, 0x090a0b0c, 0x0d0e0f10}));
+  EXPECT_EQ(pipeline->getIndexByName(IGL_NAMEHANDLE("dst8")), 8);
+  EXPECT_EQ(pipeline->getIndexByName(IGL_NAMEHANDLE("dst15")), 15);
 }
 
 TEST_F(WebGPUComputeTest, UnboundWritableStorageTexturesDoNotAlias) {

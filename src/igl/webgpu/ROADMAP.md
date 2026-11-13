@@ -10,7 +10,7 @@ Linux, the Null adapter in tests) and in the browser through Emscripten's `emdaw
 |---|---|---|
 | Device, buffers, textures (2D/array/cube/3D, sRGB views), samplers, framebuffers | Done | Formats follow the WebGPU spec plus optional features (float32-filterable/-blendable, depth32float-stencil8, BGRA storage, RG11B10 renderable, BC/ETC2/ASTC, unorm16) |
 | Render pipelines, bind convention v1, `bindBytes()`, `bindPushConstants()` (group 3), bind groups | Done | Texture unit N at group 0 binding 2N, its sampler at 2N+1; buffer index N at group 1 binding N |
-| Compute, storage buffers and textures, `dispatchThreadGroupsIndirect()` | Done | |
+| Compute, storage buffers and textures, `dispatchThreadGroupsIndirect()` | Done | Storage texture N at group 2 binding N, for N up to 15; a stage uses at most `maxStorageTexturesPerShaderStage` of them (4 with the default limits) |
 | `multiDrawIndirect()`, `multiDrawIndexedIndirect()` | Done | One `draw{Indexed}Indirect` per record (no core multi-draw); `DrawIndexedIndirect` is reported |
 | Timers, timestamp queries | Done | When the adapter has `timestamp-query` |
 | Mipmap generation, MSAA resolve, depth upload | Done | Renderable formats only |

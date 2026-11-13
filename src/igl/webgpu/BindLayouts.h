@@ -23,8 +23,10 @@ class WebGPUContext;
 
 /// Maximum number of texture units: bindings 2i and 2i+1 of group 0 for i < kMaxTextureUnits.
 inline constexpr uint32_t kMaxTextureUnits = 16;
-/// Maximum number of storage textures: bindings 0..kMaxStorageTextures-1 of group 2.
-inline constexpr uint32_t kMaxStorageTextures = 8;
+/// Storage texture i is binding i of group 2 for i < kMaxStorageTextures. This bounds the binding
+/// numbers only: how many storage textures one stage may use is the device's
+/// maxStorageTexturesPerShaderStage limit (4 by default), which WebGPU checks at pipeline creation.
+inline constexpr uint32_t kMaxStorageTextures = 16;
 
 /// @brief How a texture binding is sampled, which fixes its bind group layout entry and the kind
 /// of sampler it pairs with. The same WGSL declaration can need different classes depending on
