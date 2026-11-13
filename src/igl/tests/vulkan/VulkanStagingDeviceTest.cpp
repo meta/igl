@@ -680,6 +680,51 @@ TEST_F(VulkanStagingDeviceTest, BufferSubDataZeroOffset) {
   buffer->unmap();
 }
 
+TEST_F(VulkanStagingDeviceTest, ABlockReusedAfterItsSubmissionRetiredCountsAsFreeOnce) {
+  auto& ctx = getVulkanContext();
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  auto& staging = *ctx.stagingDevice_;
+  constexpr VkDeviceSize kMiB = 1024 * 1024;
+  constexpr VkDeviceSize kHalf = kMiB / 2;
+  // Device-local memory that is not mapped, so that copies go through the staging device.
+  Result ret;
+  const auto target =
+      ctx.createBuffer(kMiB,
+                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                       &ret,
+                       "Buffer: reused staging block target");
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(target, nullptr);
+  ASSERT_FALSE(target->isMapped());
+  // Waits for every staging copy and releases the staging buffers they no longer use.
+  const auto drainStaging = [&staging] {
+    staging.immediate->waitAll();
+    staging.mergeRegionsAndFreeBuffers();
+    staging.mergeRegionsAndFreeBuffers();
+    EXPECT_EQ(staging.getFreeStagingBufferSize(), 0u);
+  };
+  drainStaging();
+
+  // An upload takes a whole new staging buffer and returns its block with its submission. A 512 KiB
+  // readback finds nothing free: it allocates a second staging buffer, which goes to the front of
+  // the list, and takes half of it. A 1 MiB readback then copies two 512 KiB chunks: the first
+  // takes the rest of the second buffer, the second splits the upload's block, whose submission has
+  // finished, and that block counts as free once. When both readbacks are done, both staging
+  // buffers are free, and the merges release them.
+  const std::vector<uint8_t> data(kMiB, 0x5a);
+  std::vector<uint8_t> readBack(kMiB);
+  staging.bufferSubData(*target, 0, kMiB, data.data());
+  EXPECT_EQ(staging.getFreeStagingBufferSize(), 0u);
+  staging.getBufferSubData(*target, 0, kHalf, readBack.data());
+  EXPECT_EQ(staging.getFreeStagingBufferSize(), kMiB);
+  staging.getBufferSubData(*target, 0, kMiB, readBack.data());
+  EXPECT_EQ(staging.getFreeStagingBufferSize(), 2 * kMiB);
+  EXPECT_EQ(readBack, data);
+  drainStaging();
+}
+
 } // namespace igl::tests
 
 #endif // IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX

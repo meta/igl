@@ -201,6 +201,12 @@ VulkanStagingDevice::MemoryRegion VulkanStagingDevice::nextFreeBlock(VkDeviceSiz
   // out, so a returned block is never also left in `regions_` as a free region.
   const auto splitAndReturn = [this](const std::deque<MemoryRegion>::iterator& regionItr,
                                      VkDeviceSize allocatedSize) -> MemoryRegion {
+    if (!regionItr->handle.empty()) {
+      // A block returned with its submission, which has retired since (the scan takes only ready
+      // blocks): it counts as free first, as `mergeRegionsAndFreeBuffers()` counts it. The split
+      // below rewrites or removes the region, handle included.
+      freeStagingBufferSize_ += regionItr->size;
+    }
     const VkDeviceSize newSize = regionItr->size - allocatedSize;
     const VkDeviceSize newOffset = regionItr->offset + allocatedSize;
     const uint32_t stagingBufferIndex = regionItr->stagingBufferIndex;
