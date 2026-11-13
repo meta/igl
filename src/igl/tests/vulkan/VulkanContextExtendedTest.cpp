@@ -11,11 +11,18 @@
 
 #include <cstdint>
 #include <future>
+#include <set>
+#include <string>
+#include <type_traits>
 #include <igl/CommandBuffer.h>
 #include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
+#include <igl/vulkan/VulkanFence.h>
+#include <igl/vulkan/VulkanImmediateCommands.h>
 #include <igl/vulkan/VulkanRenderPassBuilder.h>
+#include <igl/vulkan/VulkanSemaphore.h>
+#include <igl/vulkan/VulkanStagingDevice.h>
 #include <igl/vulkan/VulkanVma.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
@@ -380,6 +387,359 @@ TEST(VulkanContextDescriptorSetWaitTimeoutTest, EscalatesEvenFromTheInfiniteDefa
   EXPECT_EQ(igl::vulkan::VulkanContext::descriptorSetWaitTimeout(UINT64_MAX,
                                                                  /*previouslyDegraded=*/true),
             0ULL);
+}
+
+namespace {
+
+/// Wraps the creation and destruction calls of a `VulkanImmediateCommands` through a copy of the
+/// function table: it counts the attempts, fails the chosen one, and tracks every live object so
+/// that a test can assert that nothing is left behind or destroyed twice.
+struct PoolFaults {
+  VulkanFunctionTable real = {};
+  int failPoolAt = -1;
+  int failFenceAt = -1;
+  int failSemaphoreAt = -1;
+  int failAllocateAt = -1;
+  VkResult injected = VK_ERROR_OUT_OF_HOST_MEMORY;
+  int pools = 0;
+  int fences = 0;
+  int semaphores = 0;
+  int allocations = 0;
+  std::set<uint64_t> livePools;
+  std::set<uint64_t> liveFences;
+  std::set<uint64_t> liveSemaphores;
+  int badDestroys = 0;
+};
+thread_local PoolFaults gPool;
+
+template<typename T>
+uint64_t keyOf(T handle) {
+  return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+}
+
+template<typename T>
+T garbage() {
+  if constexpr (std::is_pointer_v<T>) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<T>(static_cast<uintptr_t>(0xdeadbee0));
+  } else {
+    return static_cast<T>(0xdeadbeefdeadbee0ULL);
+  }
+}
+
+/// Whether `handle` is a live object of the test; a null handle is a no-op, and any other handle is
+/// a bad destroy (it is not forwarded to the driver).
+template<typename T>
+bool trackDestroy(std::set<uint64_t>& live, T handle) {
+  if (handle == VK_NULL_HANDLE) {
+    return false;
+  }
+  if (live.erase(keyOf(handle)) != 1) {
+    ++gPool.badDestroys;
+    return false;
+  }
+  return true;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL poolCreateCommandPool(VkDevice d,
+                                                     const VkCommandPoolCreateInfo* i,
+                                                     const VkAllocationCallbacks* a,
+                                                     VkCommandPool* o) {
+  if (gPool.pools++ == gPool.failPoolAt) {
+    *o = garbage<VkCommandPool>();
+    return gPool.injected;
+  }
+  const VkResult result = gPool.real.vkCreateCommandPool(d, i, a, o);
+  gPool.livePools.insert(keyOf(*o));
+  return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL poolDestroyCommandPool(VkDevice d,
+                                                  VkCommandPool p,
+                                                  const VkAllocationCallbacks* a) {
+  if (trackDestroy(gPool.livePools, p)) {
+    gPool.real.vkDestroyCommandPool(d, p, a);
+  }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL poolCreateFence(VkDevice d,
+                                               const VkFenceCreateInfo* i,
+                                               const VkAllocationCallbacks* a,
+                                               VkFence* o) {
+  if (gPool.fences++ == gPool.failFenceAt) {
+    *o = garbage<VkFence>();
+    return gPool.injected;
+  }
+  const VkResult result = gPool.real.vkCreateFence(d, i, a, o);
+  gPool.liveFences.insert(keyOf(*o));
+  return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL poolDestroyFence(VkDevice d, VkFence f, const VkAllocationCallbacks* a) {
+  if (trackDestroy(gPool.liveFences, f)) {
+    gPool.real.vkDestroyFence(d, f, a);
+  }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL poolCreateSemaphore(VkDevice d,
+                                                   const VkSemaphoreCreateInfo* i,
+                                                   const VkAllocationCallbacks* a,
+                                                   VkSemaphore* o) {
+  if (gPool.semaphores++ == gPool.failSemaphoreAt) {
+    *o = garbage<VkSemaphore>();
+    return gPool.injected;
+  }
+  const VkResult result = gPool.real.vkCreateSemaphore(d, i, a, o);
+  gPool.liveSemaphores.insert(keyOf(*o));
+  return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL poolDestroySemaphore(VkDevice d,
+                                                VkSemaphore s,
+                                                const VkAllocationCallbacks* a) {
+  if (trackDestroy(gPool.liveSemaphores, s)) {
+    gPool.real.vkDestroySemaphore(d, s, a);
+  }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL poolAllocateCommandBuffers(VkDevice d,
+                                                          const VkCommandBufferAllocateInfo* i,
+                                                          VkCommandBuffer* o) {
+  if (gPool.allocations++ == gPool.failAllocateAt) {
+    return gPool.injected;
+  }
+  return gPool.real.vkAllocateCommandBuffers(d, i, o);
+}
+
+} // namespace
+
+TEST_F(VulkanContextExtendedTest, ImmediateCommandsConstructionReportsEachFailureAndLeaksNothing) {
+  auto& ctx = getVulkanContext();
+  enum class Step { Pool, Fence, Semaphore, Allocate };
+  struct Case {
+    Step step;
+    int index;
+  };
+  const std::vector<Case> cases = {{.step = Step::Pool, .index = 0},
+                                   {.step = Step::Fence, .index = 0},
+                                   {.step = Step::Fence, .index = 1},
+                                   {.step = Step::Fence, .index = 31},
+                                   {.step = Step::Semaphore, .index = 0},
+                                   {.step = Step::Semaphore, .index = 17},
+                                   {.step = Step::Semaphore, .index = 31},
+                                   {.step = Step::Allocate, .index = 0},
+                                   {.step = Step::Allocate, .index = 5},
+                                   {.step = Step::Allocate, .index = 31}};
+  constexpr int kRows = static_cast<int>(vulkan::VulkanImmediateCommands::kMaxCommandBuffers);
+  for (const auto& c : cases) {
+    gPool = {};
+    gPool.real = ctx.vf_;
+    VulkanFunctionTable vf = ctx.vf_;
+    vf.vkCreateCommandPool = poolCreateCommandPool;
+    vf.vkDestroyCommandPool = poolDestroyCommandPool;
+    vf.vkCreateFence = poolCreateFence;
+    vf.vkDestroyFence = poolDestroyFence;
+    vf.vkCreateSemaphore = poolCreateSemaphore;
+    vf.vkDestroySemaphore = poolDestroySemaphore;
+    vf.vkAllocateCommandBuffers = poolAllocateCommandBuffers;
+    switch (c.step) {
+    case Step::Pool:
+      gPool.failPoolAt = c.index;
+      break;
+    case Step::Fence:
+      gPool.failFenceAt = c.index;
+      break;
+    case Step::Semaphore:
+      gPool.failSemaphoreAt = c.index;
+      break;
+    case Step::Allocate:
+      gPool.failAllocateAt = c.index;
+      break;
+    }
+    const std::string label =
+        "step " + std::to_string(static_cast<int>(c.step)) + " index " + std::to_string(c.index);
+    {
+      vulkan::VulkanImmediateCommands commands(vf,
+                                               ctx.getVkDevice(),
+                                               ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                               false,
+                                               false,
+                                               false,
+                                               "Failing pool test");
+      EXPECT_FALSE(commands.valid()) << label;
+      EXPECT_EQ(commands.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY) << label;
+    }
+    // The construction stopped at the failure: nothing was attempted after it.
+    const int row = c.index;
+    switch (c.step) {
+    case Step::Pool:
+      EXPECT_EQ(gPool.fences, 0) << label;
+      break;
+    case Step::Fence:
+      // A row's fence and semaphore are created together, so the row's semaphore exists too.
+      EXPECT_EQ(gPool.fences, row + 1) << label;
+      EXPECT_EQ(gPool.semaphores, row + 1) << label;
+      EXPECT_EQ(gPool.allocations, row) << label;
+      break;
+    case Step::Semaphore:
+      EXPECT_EQ(gPool.fences, row + 1) << label;
+      EXPECT_EQ(gPool.semaphores, row + 1) << label;
+      EXPECT_EQ(gPool.allocations, row) << label;
+      break;
+    case Step::Allocate:
+      EXPECT_EQ(gPool.fences, row + 1) << label;
+      EXPECT_EQ(gPool.semaphores, row + 1) << label;
+      EXPECT_EQ(gPool.allocations, row + 1) << label;
+      break;
+    }
+    // Everything that was created is destroyed, once.
+    EXPECT_TRUE(gPool.livePools.empty()) << label;
+    EXPECT_TRUE(gPool.liveFences.empty()) << label;
+    EXPECT_TRUE(gPool.liveSemaphores.empty()) << label;
+    EXPECT_EQ(gPool.badDestroys, 0) << label;
+  }
+
+  // A pool without a fault is valid, creates every row and destroys all of it.
+  gPool = {};
+  gPool.real = ctx.vf_;
+  VulkanFunctionTable vf = ctx.vf_;
+  vf.vkCreateCommandPool = poolCreateCommandPool;
+  vf.vkDestroyCommandPool = poolDestroyCommandPool;
+  vf.vkCreateFence = poolCreateFence;
+  vf.vkDestroyFence = poolDestroyFence;
+  vf.vkCreateSemaphore = poolCreateSemaphore;
+  vf.vkDestroySemaphore = poolDestroySemaphore;
+  vf.vkAllocateCommandBuffers = poolAllocateCommandBuffers;
+  {
+    vulkan::VulkanImmediateCommands commands(vf,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             false,
+                                             false,
+                                             "Pool without a fault");
+    EXPECT_TRUE(commands.valid());
+    EXPECT_EQ(commands.initResult(), VK_SUCCESS);
+    EXPECT_EQ(gPool.livePools.size(), size_t{1});
+    EXPECT_EQ(gPool.liveFences.size(), static_cast<size_t>(kRows));
+    EXPECT_EQ(gPool.liveSemaphores.size(), static_cast<size_t>(kRows));
+  }
+  EXPECT_TRUE(gPool.livePools.empty());
+  EXPECT_TRUE(gPool.liveFences.empty());
+  EXPECT_TRUE(gPool.liveSemaphores.empty());
+  EXPECT_EQ(gPool.badDestroys, 0);
+}
+
+TEST_F(VulkanContextExtendedTest, FenceAndSemaphoreRecordWhyTheyWereNotCreated) {
+  auto& ctx = getVulkanContext();
+  gPool = {};
+  gPool.real = ctx.vf_;
+  gPool.failFenceAt = 0;
+  gPool.failSemaphoreAt = 0;
+  VulkanFunctionTable vf = ctx.vf_;
+  vf.vkCreateFence = poolCreateFence;
+  vf.vkDestroyFence = poolDestroyFence;
+  vf.vkCreateSemaphore = poolCreateSemaphore;
+  vf.vkDestroySemaphore = poolDestroySemaphore;
+  {
+    const vulkan::VulkanFence failedFence(vf, ctx.getVkDevice(), VkFenceCreateFlags{});
+    EXPECT_EQ(failedFence.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+    EXPECT_EQ(failedFence.vkFence_, VK_NULL_HANDLE);
+    vulkan::VulkanFence fence(vf, ctx.getVkDevice(), VkFenceCreateFlags{});
+    EXPECT_EQ(fence.initResult(), VK_SUCCESS);
+    EXPECT_NE(fence.vkFence_, VK_NULL_HANDLE);
+
+    const vulkan::VulkanSemaphore failedBinary(vf, ctx.getVkDevice());
+    EXPECT_EQ(failedBinary.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+    EXPECT_EQ(failedBinary.getVkSemaphore(), VK_NULL_HANDLE);
+    const vulkan::VulkanSemaphore binary(vf, ctx.getVkDevice());
+    EXPECT_EQ(binary.initResult(), VK_SUCCESS);
+    EXPECT_NE(binary.getVkSemaphore(), VK_NULL_HANDLE);
+
+    // Moving carries the result with the handle.
+    vulkan::VulkanFence moved(std::move(fence));
+    EXPECT_EQ(moved.initResult(), VK_SUCCESS);
+    EXPECT_NE(moved.vkFence_, VK_NULL_HANDLE);
+  }
+  gPool.semaphores = 0;
+  gPool.failSemaphoreAt = 1;
+  if (ctx.features().has_VK_KHR_timeline_semaphore) {
+    // The timeline constructor, the second one of the semaphore class: the second creation fails.
+    const vulkan::VulkanSemaphore ok(vf, ctx.getVkDevice());
+    const vulkan::VulkanSemaphore failedTimeline(vf, ctx.getVkDevice(), uint64_t{0});
+    EXPECT_EQ(failedTimeline.initResult(), VK_ERROR_OUT_OF_HOST_MEMORY);
+    EXPECT_EQ(failedTimeline.getVkSemaphore(), VK_NULL_HANDLE);
+  }
+  EXPECT_TRUE(gPool.liveFences.empty());
+  EXPECT_TRUE(gPool.liveSemaphores.empty());
+  EXPECT_EQ(gPool.badDestroys, 0);
+}
+
+TEST_F(VulkanContextExtendedTest, ContextInitFailsWhenACommandBufferPoolCannotBeCreated) {
+  using Faulting = util::device::vulkan::FaultingDevice;
+  using Counted = Faulting::Counted;
+  struct Case {
+    Faulting::Call call;
+    uint32_t skip;
+    const char* message;
+  };
+  // The first creation of each kind belongs to the context's own pool; `AllocateCommandBuffers`
+  // at the last row ends its construction too. The second command pool is the staging device's.
+  const std::vector<Case> cases = {
+      {.call = Faulting::Call::CreateCommandPool, .skip = 0, .message = "command buffer pool"},
+      {.call = Faulting::Call::CreateFence, .skip = 0, .message = "command buffer pool"},
+      {.call = Faulting::Call::CreateSemaphore, .skip = 0, .message = "command buffer pool"},
+      {.call = Faulting::Call::AllocateCommandBuffers, .skip = 0, .message = "command buffer pool"},
+      {.call = Faulting::Call::AllocateCommandBuffers,
+       .skip = 31,
+       .message = "command buffer pool"},
+      {.call = Faulting::Call::CreateCommandPool,
+       .skip = 1,
+       .message = "staging command buffer pool"},
+  };
+  for (const auto& c : cases) {
+    const Faulting fd(util::device::vulkan::getContextConfig(), [&c](Faulting& self) {
+      self.arm(c.call, VK_ERROR_OUT_OF_HOST_MEMORY, c.skip, /*count=*/1);
+    });
+    const std::string label =
+        "call " + std::to_string(static_cast<int>(c.call)) + " skip " + std::to_string(c.skip);
+    EXPECT_EQ(fd.device(), nullptr) << label;
+    EXPECT_EQ(fd.failed(c.call), 1u) << label;
+    EXPECT_EQ(fd.creationResult().code, Result::Code::RuntimeError) << label;
+    EXPECT_NE(fd.creationResult().message.find(c.message), std::string::npos)
+        << label << ": " << fd.creationResult().message.c_str();
+    // The message names the failing result (VK_ERROR_OUT_OF_HOST_MEMORY is -1).
+    EXPECT_NE(fd.creationResult().message.find("VkResult -1"), std::string::npos)
+        << label << ": " << fd.creationResult().message.c_str();
+    // A handle a failed creation left behind is never destroyed (the fixture counts such a destroy
+    // and does not forward it to the driver).
+    EXPECT_EQ(fd.counted(Counted::BadDestroy), 0u) << label;
+    // Nothing the failed context created is left: every created object was destroyed.
+    EXPECT_EQ(fd.reached(Faulting::Call::CreateFence) - fd.failed(Faulting::Call::CreateFence),
+              fd.counted(Counted::DestroyFence))
+        << label;
+    EXPECT_EQ(
+        fd.reached(Faulting::Call::CreateSemaphore) - fd.failed(Faulting::Call::CreateSemaphore),
+        fd.counted(Counted::DestroySemaphore))
+        << label;
+    EXPECT_EQ(fd.reached(Faulting::Call::CreateCommandPool) -
+                  fd.failed(Faulting::Call::CreateCommandPool),
+              fd.counted(Counted::DestroyCommandPool))
+        << label;
+  }
+}
+
+TEST_F(VulkanContextExtendedTest, ContextWithoutFaultsHasValidCommandBufferPools) {
+  using Faulting = util::device::vulkan::FaultingDevice;
+  const Faulting fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+  EXPECT_TRUE(fd.creationResult().isOk());
+  auto& ctx = fd.context();
+  ASSERT_NE(ctx.immediate_, nullptr);
+  EXPECT_TRUE(ctx.immediate_->valid());
+  EXPECT_EQ(ctx.immediate_->initResult(), VK_SUCCESS);
+  ASSERT_NE(ctx.stagingDevice_, nullptr);
+  EXPECT_TRUE(ctx.stagingDevice_->immediate->valid());
 }
 
 TEST_F(VulkanContextExtendedTest, DummyTextureUploadFailureFailsContextInit) {

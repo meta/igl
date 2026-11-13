@@ -46,6 +46,14 @@ class VulkanFence final {
 
   [[nodiscard]] bool exportable() const noexcept;
 
+  /// The result of `vkCreateFence()`. A fence that failed to be created has no `VkFence`.
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
+
+ private:
+  VkResult initResult_ = VK_SUCCESS;
+
  public:
   // NOLINTBEGIN(readability-identifier-naming)
   const VulkanFunctionTable* vf_{};

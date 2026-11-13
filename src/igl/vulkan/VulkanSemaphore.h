@@ -39,6 +39,11 @@ class VulkanSemaphore final {
 
   [[nodiscard]] VkSemaphore getVkSemaphore() const noexcept;
 
+  /// The result of `vkCreateSemaphore()`. A semaphore that failed to be created has no handle.
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
+
   // Exportable semaphores are not used right now, so exclude from coverage
   // FIXME_DEPRECATED_COVERAGE_EXCLUDE_START
   [[nodiscard]] int getFileDescriptor() const noexcept;
@@ -51,6 +56,9 @@ class VulkanSemaphore final {
   VkSemaphore vkSemaphore_ = VK_NULL_HANDLE;
   bool exportable_ = false;
   // NOLINTEND(readability-identifier-naming)
+
+ private:
+  VkResult initResult_ = VK_SUCCESS;
 };
 
 } // namespace igl::vulkan

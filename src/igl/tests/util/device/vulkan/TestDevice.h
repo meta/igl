@@ -64,6 +64,10 @@ class FaultingDevice {
     BindBufferMemory2,
     BindImageMemory,
     BindImageMemory2,
+    CreateFence,
+    CreateSemaphore,
+    AllocateCommandBuffers,
+    CreateCommandPool,
     /// vkGetAndroidHardwareBufferPropertiesANDROID (only looked up on devices that expose it).
     GetAndroidHardwareBufferProperties,
     Count,
@@ -74,6 +78,13 @@ class FaultingDevice {
     DestroyBuffer,
     FreeMemory,
     SetDebugUtilsObjectName,
+    /// The destroy calls of fences, semaphores and command pools count only a non-null handle.
+    DestroyFence,
+    DestroySemaphore,
+    DestroyCommandPool,
+    /// A destroy call of a fence, semaphore or command pool with a handle this fixture did not see
+    /// created (not forwarded to the driver).
+    BadDestroy,
     Count,
   };
 

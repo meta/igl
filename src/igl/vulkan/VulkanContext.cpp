@@ -1379,6 +1379,13 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                                                          features_.has_VK_KHR_synchronization2,
                                                          "VulkanContext::immediate_",
                                                          config_.chainSubmitsWithSemaphores);
+  if (!immediate_->valid()) {
+    const VkResult poolResult = immediate_->initResult();
+    immediate_.reset();
+    return Result(Result::Code::RuntimeError,
+                  IGL_FORMAT("Cannot create the command buffer pool (VkResult {})",
+                             static_cast<int>(poolResult)));
+  }
   IGL_DEBUG_ASSERT(config_.maxResourceCount > 0,
                    "Max resource count needs to be greater than zero");
   syncSubmitHandles.resize(config_.maxResourceCount);
@@ -1418,6 +1425,13 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
   // The staging device will use VMA to allocate a buffer, so this needs
   // to happen after VMA has been initialized.
   stagingDevice_ = std::make_unique<VulkanStagingDevice>(*this);
+  if (!stagingDevice_->immediate->valid()) {
+    const VkResult poolResult = stagingDevice_->immediate->initResult();
+    stagingDevice_.reset();
+    return Result(Result::Code::RuntimeError,
+                  IGL_FORMAT("Cannot create the staging command buffer pool (VkResult {})",
+                             static_cast<int>(poolResult)));
+  }
 
   // Unextended Vulkan 1.1 does not allow sparse (VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT)
   // bindings. Our descriptor set layout emulates OpenGL binding slots but we cannot put

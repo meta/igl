@@ -41,12 +41,21 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
 
   vf_.vkGetDeviceQueue(device_, queueFamilyIndex, 0, &queue_);
 
-  VK_ASSERT(ivkCreateCommandPool(&vf_,
-                                 device_,
-                                 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
-                                     VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                                 queueFamilyIndex,
-                                 &commandPool_));
+  initResult_ = ivkCreateCommandPool(&vf_,
+                                     device_,
+                                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                                         VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                                     queueFamilyIndex,
+                                     &commandPool_);
+  if (initResult_ != VK_SUCCESS) {
+    // The handle a failed `vkCreateCommandPool()` writes is undefined: the destructor must not use
+    // it.
+    commandPool_ = VK_NULL_HANDLE;
+    IGL_LOG_ERROR("VulkanImmediateCommands (%s): cannot create the command pool (VkResult %d)\n",
+                  debugName,
+                  static_cast<int>(initResult_));
+    return;
+  }
 
   ivkSetDebugObjectName(&vf_,
                         device,
@@ -65,7 +74,24 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
                     IGL_FORMAT("Fence: commandBuffer #{}", i).c_str()),
         VulkanSemaphore(
             vf_, device_, false, IGL_FORMAT("Semaphore: {} ({})", debugName, i).c_str()));
-    VK_ASSERT(ivkAllocateCommandBuffer(&vf_, device_, commandPool_, &buffers_[i].cmdBufAllocated));
+    // A row that cannot be created ends the construction: the rows made so far, and the pool, are
+    // destroyed by the destructor, and `valid()` is false.
+    initResult_ = buffers_[i].fence.initResult();
+    if (initResult_ == VK_SUCCESS) {
+      initResult_ = buffers_[i].semaphore.initResult();
+    }
+    if (initResult_ == VK_SUCCESS) {
+      initResult_ =
+          ivkAllocateCommandBuffer(&vf_, device_, commandPool_, &buffers_[i].cmdBufAllocated);
+    }
+    if (initResult_ != VK_SUCCESS) {
+      IGL_LOG_ERROR(
+          "VulkanImmediateCommands (%s): cannot create command buffer row %u (VkResult %d)\n",
+          debugName,
+          i,
+          static_cast<int>(initResult_));
+      return;
+    }
     ivkSetDebugObjectName(&vf_,
                           device_,
                           VK_OBJECT_TYPE_COMMAND_BUFFER,

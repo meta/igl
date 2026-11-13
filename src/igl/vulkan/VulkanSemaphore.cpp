@@ -27,7 +27,14 @@ VulkanSemaphore::VulkanSemaphore(const VulkanFunctionTable& vf,
       .pNext = exportable ? &exportInfo : nullptr,
       .flags = 0,
   };
-  VK_ASSERT(vf_->vkCreateSemaphore(device_, &ci, nullptr, &vkSemaphore_));
+  initResult_ = vf_->vkCreateSemaphore(device_, &ci, nullptr, &vkSemaphore_);
+  VK_ASSERT(initResult_);
+  if (initResult_ != VK_SUCCESS) {
+    // The handle a failed `vkCreateSemaphore()` writes is undefined: the destructor must not use
+    // it.
+    vkSemaphore_ = VK_NULL_HANDLE;
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       vf_, device_, VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64_t>(vkSemaphore_), debugName));
 }
@@ -55,7 +62,14 @@ VulkanSemaphore::VulkanSemaphore(const VulkanFunctionTable& vf,
       .pNext = &semaphoreTypeCreateInfo,
       .flags = 0,
   };
-  VK_ASSERT(vf_->vkCreateSemaphore(device_, &ci, nullptr, &vkSemaphore_));
+  initResult_ = vf_->vkCreateSemaphore(device_, &ci, nullptr, &vkSemaphore_);
+  VK_ASSERT(initResult_);
+  if (initResult_ != VK_SUCCESS) {
+    // The handle a failed `vkCreateSemaphore()` writes is undefined: the destructor must not use
+    // it.
+    vkSemaphore_ = VK_NULL_HANDLE;
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       vf_, device_, VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64_t>(vkSemaphore_), debugName));
 }
@@ -75,6 +89,7 @@ VulkanSemaphore::VulkanSemaphore(VulkanSemaphore&& other) noexcept {
   std::swap(device_, other.device_);
   std::swap(vkSemaphore_, other.vkSemaphore_);
   std::swap(exportable_, other.exportable_);
+  std::swap(initResult_, other.initResult_);
 }
 
 VulkanSemaphore& VulkanSemaphore::operator=(VulkanSemaphore&& other) noexcept {
@@ -83,6 +98,7 @@ VulkanSemaphore& VulkanSemaphore::operator=(VulkanSemaphore&& other) noexcept {
   std::swap(device_, tmp.device_);
   std::swap(vkSemaphore_, tmp.vkSemaphore_);
   std::swap(exportable_, tmp.exportable_);
+  std::swap(initResult_, tmp.initResult_);
   return *this;
 }
 

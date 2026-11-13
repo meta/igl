@@ -30,7 +30,13 @@ VulkanFence::VulkanFence(const VulkanFunctionTable& vf,
       .pNext = exportable ? &exportInfo : nullptr,
       .flags = flags,
   };
-  VK_ASSERT(vf_->vkCreateFence(device_, &ci, nullptr, &vkFence_));
+  initResult_ = vf_->vkCreateFence(device_, &ci, nullptr, &vkFence_);
+  VK_ASSERT(initResult_);
+  if (initResult_ != VK_SUCCESS) {
+    // The handle a failed `vkCreateFence()` writes is undefined: the destructor must not use it.
+    vkFence_ = VK_NULL_HANDLE;
+    return;
+  }
 
   VK_ASSERT(
       ivkSetDebugObjectName(vf_, device_, VK_OBJECT_TYPE_FENCE, (uint64_t)vkFence_, debugName));
@@ -51,6 +57,7 @@ VulkanFence::VulkanFence(VulkanFence&& other) noexcept {
   std::swap(device_, other.device_);
   std::swap(vkFence_, other.vkFence_);
   std::swap(exportable_, other.exportable_);
+  std::swap(initResult_, other.initResult_);
 }
 
 VulkanFence& VulkanFence::operator=(VulkanFence&& other) noexcept {
@@ -59,6 +66,7 @@ VulkanFence& VulkanFence::operator=(VulkanFence&& other) noexcept {
   std::swap(device_, tmp.device_);
   std::swap(vkFence_, tmp.vkFence_);
   std::swap(exportable_, tmp.exportable_);
+  std::swap(initResult_, tmp.initResult_);
   return *this;
 }
 

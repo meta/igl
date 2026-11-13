@@ -51,6 +51,17 @@ class VulkanImmediateCommands final {
                           const char* debugName,
                           bool chainSubmitsWithSemaphores = true);
   ~VulkanImmediateCommands();
+
+  /// @brief Whether the command pool and all `kMaxCommandBuffers` rows (command buffer, fence and
+  /// semaphore) were created. A pool that is not valid has no usable rows: only its destructor may
+  /// run (it destroys what was created).
+  [[nodiscard]] bool valid() const noexcept {
+    return initResult_ == VK_SUCCESS;
+  }
+  /// @brief The `VkResult` of the first creation that failed, `VK_SUCCESS` for a valid pool.
+  [[nodiscard]] VkResult initResult() const noexcept {
+    return initResult_;
+  }
   VulkanImmediateCommands(const VulkanImmediateCommands&) = delete;
   VulkanImmediateCommands& operator=(const VulkanImmediateCommands&) = delete;
   VulkanImmediateCommands(VulkanImmediateCommands&&) = delete;
@@ -245,6 +256,9 @@ class VulkanImmediateCommands final {
   VkCommandPool commandPool_ = VK_NULL_HANDLE;
   std::string debugName_;
   std::vector<CommandBufferWrapper> buffers_;
+
+  /// @brief The result of the first failed creation in the constructor (see `valid()`)
+  VkResult initResult_ = VK_SUCCESS;
 
   /// @brief The last submitted handle. Updated on `submit()`
   SubmitHandle lastSubmitHandle_ = SubmitHandle();

@@ -11,6 +11,9 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <mutex>
+#include <set>
+#include <type_traits>
 #include <igl/Common.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_IOS || \
@@ -137,7 +140,14 @@ enum Entry : size_t {
   kBindImageMemory,
   kBindImageMemory2,
   kBindImageMemory2KHR,
+  kCreateFence,
+  kCreateSemaphore,
+  kAllocateCommandBuffers,
+  kCreateCommandPool,
   kGetAndroidHardwareBufferProperties,
+  kDestroyFence,
+  kDestroySemaphore,
+  kDestroyCommandPool,
   kDestroyImage,
   kDestroyBuffer,
   kFreeMemory,
@@ -167,6 +177,19 @@ struct FaultState {
 };
 
 FaultState gFault;
+
+// The fences (0), semaphores (1) and command pools (2) created through the stubs and not yet
+// destroyed: a destroy of any other handle is counted and not forwarded to the driver. Kept behind
+// a function so that no global needs a destructor (the object is deliberately never destroyed).
+struct LiveObjects {
+  std::mutex mutex;
+  std::array<std::set<uint64_t>, 3> sets;
+};
+
+LiveObjects& liveObjects() {
+  static auto* const kObjects = new LiveObjects(); // NOLINT(cppcoreguidelines-owning-memory)
+  return *kObjects;
+}
 
 // True when this call is to be failed; `outResult` then holds the VkResult it returns.
 bool shouldFail(FaultingDevice::Call call, VkResult* outResult) {
@@ -261,7 +284,92 @@ IGL_FAULT_STUB(BindImageMemory2KHR,
                BindImageMemory2,
                (VkDevice d, uint32_t n, const VkBindImageMemoryInfo* i),
                (d, n, i))
+// A failed `vkCreate*()` leaves its output handle undefined: the fault stubs of the creations whose
+// handle a destructor would destroy write a non-null garbage handle, so a missing reset shows.
+template<typename T>
+T garbageHandle() {
+  if constexpr (std::is_pointer_v<T>) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<T>(static_cast<uintptr_t>(0xdeadbee0));
+  } else {
+    return static_cast<T>(0xdeadbeefdeadbee0ULL);
+  }
+}
+
+template<typename T>
+uint64_t liveKey(T handle) {
+  if constexpr (std::is_pointer_v<T>) {
+    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+  } else {
+    return static_cast<uint64_t>(handle);
+  }
+}
+
+void trackCreated(size_t kind, uint64_t key) {
+  LiveObjects& objects = liveObjects();
+  const std::lock_guard<std::mutex> lock(objects.mutex);
+  objects.sets[kind].insert(key);
+}
+
+/// True when the handle is a live object (it is then forgotten); false counts a bad destroy, unless
+/// the handle is null, which is a no-op.
+bool takeLive(size_t kind, uint64_t key) {
+  if (key == 0) {
+    return false;
+  }
+  LiveObjects& objects = liveObjects();
+  const std::lock_guard<std::mutex> lock(objects.mutex);
+  if (objects.sets[kind].erase(key) == 1) {
+    return true;
+  }
+  gFault.counted[static_cast<size_t>(FaultingDevice::Counted::BadDestroy)].fetch_add(1);
+  return false;
+}
+
+#define IGL_FAULT_STUB_GARBAGE(NAME, ENTRY, CALL, KIND, PARAMS, ARGS)                 \
+  VKAPI_ATTR VkResult VKAPI_CALL stub##NAME PARAMS {                                  \
+    VkResult injected = VK_SUCCESS;                                                   \
+    if (shouldFail(FaultingDevice::Call::CALL, &injected)) {                          \
+      *o = garbageHandle<std::remove_pointer_t<decltype(o)>>();                       \
+      return injected;                                                                \
+    }                                                                                 \
+    const VkResult created = reinterpret_cast<PFN_vk##NAME>(gFault.real[ENTRY]) ARGS; \
+    if (created == VK_SUCCESS) {                                                      \
+      trackCreated(KIND, liveKey(*o));                                                \
+    }                                                                                 \
+    return created;                                                                   \
+  }
+
+IGL_FAULT_STUB_GARBAGE(
+    CreateFence,
+    kCreateFence,
+    CreateFence,
+    0,
+    (VkDevice d, const VkFenceCreateInfo* i, const VkAllocationCallbacks* a, VkFence* o),
+    (d, i, a, o))
+IGL_FAULT_STUB_GARBAGE(
+    CreateSemaphore,
+    kCreateSemaphore,
+    CreateSemaphore,
+    1,
+    (VkDevice d, const VkSemaphoreCreateInfo* i, const VkAllocationCallbacks* a, VkSemaphore* o),
+    (d, i, a, o))
+IGL_FAULT_STUB(AllocateCommandBuffers,
+               kAllocateCommandBuffers,
+               AllocateCommandBuffers,
+               (VkDevice d, const VkCommandBufferAllocateInfo* i, VkCommandBuffer* o),
+               (d, i, o))
+IGL_FAULT_STUB_GARBAGE(CreateCommandPool,
+                       kCreateCommandPool,
+                       CreateCommandPool,
+                       2,
+                       (VkDevice d,
+                        const VkCommandPoolCreateInfo* i,
+                        const VkAllocationCallbacks* a,
+                        VkCommandPool* o),
+                       (d, i, a, o))
 #undef IGL_FAULT_STUB
+#undef IGL_FAULT_STUB_GARBAGE
 
 // vkGetAndroidHardwareBufferPropertiesANDROID, with the Android types spelled as opaque pointers
 // (the signature is ABI-identical) so the fixture builds on every platform.
@@ -287,6 +395,31 @@ VKAPI_ATTR void VKAPI_CALL stubDestroyBuffer(VkDevice d,
                                              const VkAllocationCallbacks* a) {
   gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyBuffer)].fetch_add(1);
   reinterpret_cast<PFN_vkDestroyBuffer>(gFault.real[kDestroyBuffer])(d, b, a);
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroyFence(VkDevice d, VkFence f, const VkAllocationCallbacks* a) {
+  if (takeLive(0, liveKey(f))) {
+    gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyFence)].fetch_add(1);
+    reinterpret_cast<PFN_vkDestroyFence>(gFault.real[kDestroyFence])(d, f, a);
+  }
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroySemaphore(VkDevice d,
+                                                VkSemaphore s,
+                                                const VkAllocationCallbacks* a) {
+  if (takeLive(1, liveKey(s))) {
+    gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroySemaphore)].fetch_add(1);
+    reinterpret_cast<PFN_vkDestroySemaphore>(gFault.real[kDestroySemaphore])(d, s, a);
+  }
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroyCommandPool(VkDevice d,
+                                                  VkCommandPool p,
+                                                  const VkAllocationCallbacks* a) {
+  if (takeLive(2, liveKey(p))) {
+    gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyCommandPool)].fetch_add(1);
+    reinterpret_cast<PFN_vkDestroyCommandPool>(gFault.real[kDestroyCommandPool])(d, p, a);
+  }
 }
 
 VKAPI_ATTR void VKAPI_CALL stubFreeMemory(VkDevice d,
@@ -334,6 +467,13 @@ const std::array<Hook, kEntryCount> kHooks = {{
     IGL_HOOK("vkBindImageMemory", kBindImageMemory, stubBindImageMemory),
     IGL_HOOK("vkBindImageMemory2", kBindImageMemory2, stubBindImageMemory2),
     IGL_HOOK("vkBindImageMemory2KHR", kBindImageMemory2KHR, stubBindImageMemory2KHR),
+    IGL_HOOK("vkCreateFence", kCreateFence, stubCreateFence),
+    IGL_HOOK("vkCreateSemaphore", kCreateSemaphore, stubCreateSemaphore),
+    IGL_HOOK("vkAllocateCommandBuffers", kAllocateCommandBuffers, stubAllocateCommandBuffers),
+    IGL_HOOK("vkCreateCommandPool", kCreateCommandPool, stubCreateCommandPool),
+    IGL_HOOK("vkDestroyFence", kDestroyFence, stubDestroyFence),
+    IGL_HOOK("vkDestroySemaphore", kDestroySemaphore, stubDestroySemaphore),
+    IGL_HOOK("vkDestroyCommandPool", kDestroyCommandPool, stubDestroyCommandPool),
     IGL_HOOK("vkGetAndroidHardwareBufferPropertiesANDROID",
              kGetAndroidHardwareBufferProperties,
              stubGetAndroidHardwareBufferProperties),
@@ -369,6 +509,13 @@ FaultingDevice::FaultingDevice(const igl::vulkan::VulkanContextConfig& config,
   gFault.live = true;
   disarmAll();
   resetCounters();
+  {
+    LiveObjects& objects = liveObjects();
+    const std::lock_guard<std::mutex> lock(objects.mutex);
+    for (auto& live : objects.sets) {
+      live.clear();
+    }
+  }
   gFault.real.fill(nullptr);
 
 #if IGL_PLATFORM_MACOSX && !defined(IGL_USE_STATIC_KOSMICKRISP)
