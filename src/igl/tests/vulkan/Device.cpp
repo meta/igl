@@ -18,6 +18,7 @@
 #include <vector>
 #include <igl/CommandBuffer.h>
 #include <igl/Shader.h>
+#include <igl/ShaderCreator.h>
 #include <igl/glslang/GlslCompiler.h>
 #include <igl/glslang/GlslangHelpers.h>
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
@@ -280,6 +281,81 @@ TEST_F(DeviceVulkanTest, UpdateGlslangResource) {
   ASSERT_EQ(res.max_cull_distances, static_cast<int>(props.limits.maxCullDistances));
   ASSERT_EQ(res.max_combined_clip_and_cull_distances,
             static_cast<int>(props.limits.maxCombinedClipAndCullDistances));
+}
+
+namespace {
+constexpr const char* kCountedFragmentShader = R"(#version 460
+layout(location = 0) out vec4 outColor;
+void main() {
+  outColor = vec4(1.0, 0.5, 0.25, 1.0);
+}
+)";
+
+std::vector<uint32_t> compileCountedFragmentShader() {
+  glslang_resource_t resource = {};
+  glslangGetDefaultResource(&resource);
+  std::vector<uint32_t> spirv;
+  const Result result =
+      glslang::compileShader(ShaderStage::Fragment, kCountedFragmentShader, spirv, &resource);
+  EXPECT_TRUE(result.isOk()) << result.message.c_str();
+  return spirv;
+}
+} // namespace
+
+// getShaderCompilationCount() counts shaders compiled from source. A shader module or library
+// created from a SPIR-V binary is not compiled, so it leaves the count unchanged.
+TEST_F(DeviceVulkanTest, ShaderCompilationCountIgnoresBinaryModule) {
+  const std::vector<uint32_t> spirv = compileCountedFragmentShader();
+  ASSERT_FALSE(spirv.empty());
+  const size_t countBefore = iglDev_->getShaderCompilationCount();
+
+  Result ret;
+  auto module =
+      ShaderModuleCreator::fromBinaryInput(*iglDev_,
+                                           spirv.data(),
+                                           spirv.size() * sizeof(uint32_t),
+                                           {.stage = ShaderStage::Fragment, .entryPoint = "main"},
+                                           "ShaderCompilationCountIgnoresBinaryModule",
+                                           &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(module, nullptr);
+
+  EXPECT_EQ(iglDev_->getShaderCompilationCount(), countBefore);
+}
+
+TEST_F(DeviceVulkanTest, ShaderCompilationCountIgnoresBinaryLibrary) {
+  const std::vector<uint32_t> spirv = compileCountedFragmentShader();
+  ASSERT_FALSE(spirv.empty());
+  const size_t countBefore = iglDev_->getShaderCompilationCount();
+
+  Result ret;
+  auto library = ShaderLibraryCreator::fromBinaryInput(
+      *iglDev_,
+      spirv.data(),
+      spirv.size() * sizeof(uint32_t),
+      {{.stage = ShaderStage::Fragment, .entryPoint = "main"}},
+      "ShaderCompilationCountIgnoresBinaryLibrary",
+      &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(library, nullptr);
+
+  EXPECT_EQ(iglDev_->getShaderCompilationCount(), countBefore);
+}
+
+TEST_F(DeviceVulkanTest, ShaderCompilationCountCountsSourceLibrary) {
+  const size_t countBefore = iglDev_->getShaderCompilationCount();
+
+  Result ret;
+  auto library = ShaderLibraryCreator::fromStringInput(
+      *iglDev_,
+      kCountedFragmentShader,
+      {{.stage = ShaderStage::Fragment, .entryPoint = "main"}},
+      "ShaderCompilationCountCountsSourceLibrary",
+      &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(library, nullptr);
+
+  EXPECT_EQ(iglDev_->getShaderCompilationCount(), countBefore + 1);
 }
 
 // Diff-2 plumbing (unit): getSpvOptions() maps each ShaderOptimization onto the exact glslang

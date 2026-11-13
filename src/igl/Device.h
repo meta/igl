@@ -373,7 +373,8 @@ class IDevice : public ICapabilities, public base::IDeviceBase {
   [[nodiscard]] virtual size_t getCurrentDrawCount() const = 0;
 
   /**
-   * @brief Returns the number of shaders compiled using this device.
+   * @brief Returns the number of shaders compiled from source using this device. Creating shaders
+   * from precompiled binaries does not count.
    * @return The number of shaders compiled so far.
    */
   [[nodiscard]] virtual size_t getShaderCompilationCount() const = 0;

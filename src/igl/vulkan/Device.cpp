@@ -395,7 +395,9 @@ std::shared_ptr<IShaderModule> Device::createShaderModuleInternal(const ShaderMo
     return nullptr;
   }
 
-  ctx_->shaderCompilationCount_++;
+  if (desc.input.type != ShaderInputType::Binary) {
+    ctx_->shaderCompilationCount_++;
+  }
 
   Result::setResult(outResult, std::move(result));
   auto shaderModule = std::make_shared<ShaderModule>(desc.info, std::move(vulkanShaderModule));
@@ -696,8 +698,6 @@ std::unique_ptr<IShaderLibrary> Device::createShaderLibraryInternal(const Shader
 
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(ctx_);
 
-  ctx_->shaderCompilationCount_++;
-
   if (IGL_DEBUG_VERIFY_NOT(desc.moduleInfo.empty())) {
     Result::setResult(outResult, Result::Code::ArgumentInvalid);
     return nullptr;
@@ -742,6 +742,10 @@ std::unique_ptr<IShaderLibrary> Device::createShaderLibraryInternal(const Shader
   if (!result.isOk()) {
     Result::setResult(outResult, std::move(result));
     return nullptr;
+  }
+
+  if (desc.input.type != ShaderInputType::Binary) {
+    ctx_->shaderCompilationCount_++;
   }
 
   std::vector<std::shared_ptr<IShaderModule>> modules;
