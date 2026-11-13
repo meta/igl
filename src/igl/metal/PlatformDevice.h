@@ -119,6 +119,11 @@ class PlatformDevice final : public IPlatformDevice {
 
   void flushNativeTextureCache() const;
 
+  /// Destroys the cache; createTextureFromNativePixelBuffer() recreates it lazily.
+  /// The caller must serialize cache access, complete GPU work, and release all
+  /// textures created through the cache before calling resetNativeTextureCache().
+  void resetNativeTextureCache();
+
   CVMetalTextureCacheRef getTextureCache();
 
   /**

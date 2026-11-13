@@ -381,6 +381,29 @@ TEST_F(TextureMTLTest, createTextureFromNativePixelBufferWithInvalidFormat) {
   ASSERT_EQ(result.isOk(), false) << result.message.c_str();
 }
 
+TEST_F(TextureMTLTest, resetNativeTextureCacheAllowsBufferReuse) {
+  auto* platformDevice = device_->getPlatformDevice<igl::metal::PlatformDevice>();
+  platformDevice->resetNativeTextureCache();
+  Result result;
+  @autoreleasepool {
+    auto texture =
+        createCVPixelBufferTextureWithSize(TextureFormat::BGRA_UNorm8, 64, 64, device_, result);
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_NE(texture, nullptr);
+  }
+  platformDevice->resetNativeTextureCache();
+  platformDevice->resetNativeTextureCache();
+  @autoreleasepool {
+    auto texture =
+        createCVPixelBufferTextureWithSize(TextureFormat::BGRA_UNorm8, 128, 64, device_, result);
+    ASSERT_TRUE(result.isOk()) << result.message;
+    ASSERT_NE(texture, nullptr);
+    EXPECT_EQ(texture->getDimensions().width, 128u);
+    EXPECT_EQ(texture->getDimensions().height, 64u);
+  }
+  platformDevice->resetNativeTextureCache();
+}
+
 TEST_F(TextureMTLTest, createTextureFromNativePixelBufferWithInvalidPlaneSetsError) {
   CVPixelBufferRef pixelBuffer = nullptr;
   NSDictionary* bufferAttributes = @{

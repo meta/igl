@@ -329,7 +329,9 @@ CVMetalTextureCacheRef PlatformDevice::getTextureCache() {
 
     if (result != kCVReturnSuccess) {
       NSLog(@"Failed to created texture cache");
-      CFRelease(textureCache_);
+      if (textureCache_) {
+        CFRelease(textureCache_);
+      }
       textureCache_ = nullptr;
     }
   }
@@ -342,6 +344,18 @@ void PlatformDevice::flushNativeTextureCache() const {
 #if (!TARGET_OS_SIMULATOR || __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000)
   if (textureCache_) {
     CVMetalTextureCacheFlush(textureCache_, 0);
+  }
+#endif
+}
+
+void PlatformDevice::resetNativeTextureCache() {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
+#if (!TARGET_OS_SIMULATOR || __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000)
+  const CVMetalTextureCacheRef cache = textureCache_;
+  textureCache_ = nullptr;
+  if (cache) {
+    CVMetalTextureCacheFlush(cache, 0);
+    CFRelease(cache);
   }
 #endif
 }
