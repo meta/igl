@@ -11,8 +11,12 @@
 
 #include "../util/TestDevice.h"
 
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <type_traits>
 #include <vector>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
@@ -20,6 +24,243 @@
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
 namespace igl::tests {
+
+namespace {
+
+/// Records the Vulkan calls a `VulkanImmediateCommands` makes through a copy of the function table.
+/// Handles are named by the order in which the pool created or allocated them, so two runs of the
+/// same scenario produce the same text. Queue submissions and fence waits do not reach the device:
+/// the submit succeeds and every fence wait answers success.
+struct CallTrace {
+  VulkanFunctionTable real = {};
+  /// What every traced `vkWaitForFences()` answers.
+  VkResult waitResult = VK_SUCCESS;
+  std::vector<std::string> lines;
+  std::map<uint64_t, size_t> commandBuffers;
+  std::map<uint64_t, size_t> fences;
+  std::map<uint64_t, size_t> semaphores;
+};
+thread_local CallTrace gTrace;
+
+template<typename T>
+uint64_t handleKey(T handle) {
+  if constexpr (std::is_pointer_v<T>) {
+    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+  } else {
+    return static_cast<uint64_t>(handle);
+  }
+}
+
+template<typename T>
+std::string handleName(const std::map<uint64_t, size_t>& names, const char* prefix, T handle) {
+  const auto it = names.find(handleKey(handle));
+  return std::string(prefix) + (it == names.end() ? "?" : std::to_string(it->second));
+}
+
+void record(std::string line) {
+  gTrace.lines.push_back(std::move(line));
+}
+
+VKAPI_ATTR void VKAPI_CALL traceGetDeviceQueue(VkDevice device,
+                                               uint32_t family,
+                                               uint32_t index,
+                                               VkQueue* queue) {
+  record("vkGetDeviceQueue index=" + std::to_string(index));
+  gTrace.real.vkGetDeviceQueue(device, family, index, queue);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceCreateCommandPool(VkDevice device,
+                                                      const VkCommandPoolCreateInfo* info,
+                                                      const VkAllocationCallbacks* allocator,
+                                                      VkCommandPool* pool) {
+  record("vkCreateCommandPool flags=" + std::to_string(info->flags));
+  return gTrace.real.vkCreateCommandPool(device, info, allocator, pool);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceAllocateCommandBuffers(VkDevice device,
+                                                           const VkCommandBufferAllocateInfo* info,
+                                                           VkCommandBuffer* buffers) {
+  const VkResult result = gTrace.real.vkAllocateCommandBuffers(device, info, buffers);
+  for (uint32_t i = 0; i < info->commandBufferCount; ++i) {
+    const size_t index = gTrace.commandBuffers.size();
+    gTrace.commandBuffers[handleKey(buffers[i])] = index;
+    record("vkAllocateCommandBuffers cb" + std::to_string(index));
+  }
+  return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceCreateFence(VkDevice device,
+                                                const VkFenceCreateInfo* info,
+                                                const VkAllocationCallbacks* allocator,
+                                                VkFence* fence) {
+  const VkResult result = gTrace.real.vkCreateFence(device, info, allocator, fence);
+  const size_t index = gTrace.fences.size();
+  gTrace.fences[handleKey(*fence)] = index;
+  record("vkCreateFence fence" + std::to_string(index) + " flags=" + std::to_string(info->flags));
+  return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceCreateSemaphore(VkDevice device,
+                                                    const VkSemaphoreCreateInfo* info,
+                                                    const VkAllocationCallbacks* allocator,
+                                                    VkSemaphore* semaphore) {
+  const VkResult result = gTrace.real.vkCreateSemaphore(device, info, allocator, semaphore);
+  const size_t index = gTrace.semaphores.size();
+  gTrace.semaphores[handleKey(*semaphore)] = index;
+  record("vkCreateSemaphore sem" + std::to_string(index));
+  return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceBeginCommandBuffer(VkCommandBuffer cb,
+                                                       const VkCommandBufferBeginInfo* info) {
+  record("vkBeginCommandBuffer " + handleName(gTrace.commandBuffers, "cb", cb) +
+         " flags=" + std::to_string(info->flags));
+  return gTrace.real.vkBeginCommandBuffer(cb, info);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceEndCommandBuffer(VkCommandBuffer cb) {
+  record("vkEndCommandBuffer " + handleName(gTrace.commandBuffers, "cb", cb));
+  return gTrace.real.vkEndCommandBuffer(cb);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceResetCommandBuffer(VkCommandBuffer cb,
+                                                       VkCommandBufferResetFlags flags) {
+  record("vkResetCommandBuffer " + handleName(gTrace.commandBuffers, "cb", cb) +
+         " flags=" + std::to_string(flags));
+  return gTrace.real.vkResetCommandBuffer(cb, flags);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceResetFences(VkDevice device,
+                                                uint32_t count,
+                                                const VkFence* fences) {
+  std::string line = "vkResetFences";
+  for (uint32_t i = 0; i < count; ++i) {
+    line += " " + handleName(gTrace.fences, "fence", fences[i]);
+  }
+  record(std::move(line));
+  return gTrace.real.vkResetFences(device, count, fences);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceWaitForFences(VkDevice /*device*/,
+                                                  uint32_t count,
+                                                  const VkFence* fences,
+                                                  VkBool32 waitAll,
+                                                  uint64_t timeout) {
+  std::string line = "vkWaitForFences all=" + std::to_string(waitAll) +
+                     " timeout=" + (timeout == UINT64_MAX ? "max" : std::to_string(timeout));
+  for (uint32_t i = 0; i < count; ++i) {
+    line += " " + handleName(gTrace.fences, "fence", fences[i]);
+  }
+  record(std::move(line));
+  return gTrace.waitResult;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceQueueSubmit(VkQueue /*queue*/,
+                                                uint32_t count,
+                                                const VkSubmitInfo* submits,
+                                                VkFence fence) {
+  for (uint32_t i = 0; i < count; ++i) {
+    std::string line = "vkQueueSubmit " +
+                       handleName(gTrace.commandBuffers, "cb", submits[i].pCommandBuffers[0]) +
+                       " " + handleName(gTrace.fences, "fence", fence) +
+                       " waits=" + std::to_string(submits[i].waitSemaphoreCount) +
+                       " signals=" + std::to_string(submits[i].signalSemaphoreCount);
+    for (uint32_t w = 0; w < submits[i].waitSemaphoreCount; ++w) {
+      line += " wait:" + handleName(gTrace.semaphores, "sem", submits[i].pWaitSemaphores[w]);
+    }
+    for (uint32_t w = 0; w < submits[i].signalSemaphoreCount; ++w) {
+      line += " signal:" + handleName(gTrace.semaphores, "sem", submits[i].pSignalSemaphores[w]);
+    }
+    record(std::move(line));
+  }
+  return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL traceQueueSubmit2(VkQueue /*queue*/,
+                                                 uint32_t count,
+                                                 const VkSubmitInfo2* submits,
+                                                 VkFence fence) {
+  for (uint32_t i = 0; i < count; ++i) {
+    std::string line =
+        "vkQueueSubmit2KHR " +
+        handleName(gTrace.commandBuffers, "cb", submits[i].pCommandBufferInfos[0].commandBuffer) +
+        " " + handleName(gTrace.fences, "fence", fence) +
+        " waits=" + std::to_string(submits[i].waitSemaphoreInfoCount) +
+        " signals=" + std::to_string(submits[i].signalSemaphoreInfoCount);
+    record(std::move(line));
+  }
+  return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL traceDestroyFence(VkDevice device,
+                                             VkFence fence,
+                                             const VkAllocationCallbacks* allocator) {
+  record("vkDestroyFence " + handleName(gTrace.fences, "fence", fence));
+  gTrace.real.vkDestroyFence(device, fence, allocator);
+}
+
+VKAPI_ATTR void VKAPI_CALL traceDestroySemaphore(VkDevice device,
+                                                 VkSemaphore semaphore,
+                                                 const VkAllocationCallbacks* allocator) {
+  record("vkDestroySemaphore " + handleName(gTrace.semaphores, "sem", semaphore));
+  gTrace.real.vkDestroySemaphore(device, semaphore, allocator);
+}
+
+VKAPI_ATTR void VKAPI_CALL traceDestroyCommandPool(VkDevice device,
+                                                   VkCommandPool pool,
+                                                   const VkAllocationCallbacks* allocator) {
+  record("vkDestroyCommandPool");
+  gTrace.real.vkDestroyCommandPool(device, pool, allocator);
+}
+
+/// A copy of `real` whose calls a `VulkanImmediateCommands` makes are traced in `gTrace`.
+[[nodiscard]] VulkanFunctionTable tracedTable(const VulkanFunctionTable& real) {
+  gTrace = {};
+  gTrace.real = real;
+  VulkanFunctionTable vf = real;
+  vf.vkGetDeviceQueue = traceGetDeviceQueue;
+  vf.vkCreateCommandPool = traceCreateCommandPool;
+  vf.vkAllocateCommandBuffers = traceAllocateCommandBuffers;
+  vf.vkCreateFence = traceCreateFence;
+  vf.vkCreateSemaphore = traceCreateSemaphore;
+  vf.vkBeginCommandBuffer = traceBeginCommandBuffer;
+  vf.vkEndCommandBuffer = traceEndCommandBuffer;
+  vf.vkResetCommandBuffer = traceResetCommandBuffer;
+  vf.vkResetFences = traceResetFences;
+  vf.vkWaitForFences = traceWaitForFences;
+  vf.vkQueueSubmit = traceQueueSubmit;
+  vf.vkQueueSubmit2KHR = traceQueueSubmit2;
+  vf.vkDestroyFence = traceDestroyFence;
+  vf.vkDestroySemaphore = traceDestroySemaphore;
+  vf.vkDestroyCommandPool = traceDestroyCommandPool;
+  return vf;
+}
+
+// The calls the pool makes for the call-trace tests were recorded on the code before ordinals and
+// row states existed: the new bookkeeping adds no Vulkan call and reorders none.
+constexpr size_t kPoolCreationCalls = 2 + 3 * vulkan::VulkanImmediateCommands::kMaxCommandBuffers;
+
+[[nodiscard]] std::string joinLines(const std::vector<std::string>& lines) {
+  std::string text;
+  for (const std::string& line : lines) {
+    text += line + "\n";
+  }
+  return text;
+}
+
+/// Makes every traced fence wait succeed again when it goes out of scope. Declared after the pool
+/// of a test, it runs before the pool's destructor waits for its rows, so a failing expectation
+/// cannot leave that wait on a fence that never signals.
+struct TracedWaitsSucceedAtScopeEnd {
+  TracedWaitsSucceedAtScopeEnd() = default;
+  TracedWaitsSucceedAtScopeEnd(const TracedWaitsSucceedAtScopeEnd&) = delete;
+  TracedWaitsSucceedAtScopeEnd& operator=(const TracedWaitsSucceedAtScopeEnd&) = delete;
+  ~TracedWaitsSucceedAtScopeEnd() {
+    gTrace.waitResult = VK_SUCCESS;
+  }
+};
+
+} // namespace
 
 class VulkanImmediateCommandsTest : public ::testing::Test {
  public:
@@ -153,6 +394,39 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
 
   static VkSemaphore lastSubmitSemaphore(const igl::vulkan::VulkanImmediateCommands& commands) {
     return commands.lastSubmitSemaphore_.semaphore;
+  }
+
+  using Commands = igl::vulkan::VulkanImmediateCommands;
+
+  static const char* rowState(const Commands& commands, uint32_t row) {
+    switch (commands.buffers_[row].state) {
+    case Commands::RowState::Free:
+      return "Free";
+    case Commands::RowState::Encoding:
+      return "Encoding";
+    case Commands::RowState::Submitted:
+      return "Submitted";
+    }
+    return "?";
+  }
+
+  static const Commands::CommandBufferWrapper& wrapperOf(const Commands& commands, uint32_t row) {
+    return commands.buffers_[row];
+  }
+
+  /// What `submit()` does to the state of the row of a wrapper.
+  static void moveRowToSubmitted(Commands& commands, uint32_t row) {
+    commands.setRowState(commands.buffers_[row], Commands::RowState::Submitted);
+  }
+
+  /// Frees a row without any Vulkan call, so that a test that moved a row by hand cannot leave the
+  /// pool's destructor waiting for a fence that no submission will ever signal.
+  static void freeRow(Commands& commands, uint32_t row) {
+    commands.setRowState(commands.buffers_[row], Commands::RowState::Free);
+  }
+
+  static bool rowAgrees(const Commands& commands, uint32_t row) {
+    return Commands::rowAgreesWithWrapper(commands.buffers_[row]);
   }
 
   igl::vulkan::VulkanImmediateCommands::SubmitHandle submitForPresentation(
@@ -735,6 +1009,382 @@ TEST_F(VulkanImmediateCommandsTest, DeviceLostOnFenceWaitIsReported) {
   EXPECT_FALSE(commands.isDeviceLost());
   EXPECT_EQ(commands.wait(handle), VK_ERROR_DEVICE_LOST);
   EXPECT_TRUE(commands.isDeviceLost());
+}
+
+TEST_F(VulkanImmediateCommandsTest, ARecycledHandleIsReadyAndHasNoFence) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Recycled handle test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  const auto firstHandle = commands.submit(commands.acquire());
+  EXPECT_NE(commands.getVkFenceFromSubmitHandle(firstHandle), VK_NULL_HANDLE);
+  EXPECT_EQ(commands.wait(firstHandle), VK_SUCCESS);
+  // The loop below acquires every row: a row that is not free here would make `acquire()` wait for
+  // a row that never becomes free, so stop first.
+  commands.waitAll();
+  ASSERT_STREQ(rowState(commands, firstHandle.bufferIndex), "Free");
+
+  // Acquire every row once more: the first row is reused with a later ordinal.
+  vulkan::VulkanImmediateCommands::SubmitHandle reused;
+  for (uint32_t i = 0; i != vulkan::VulkanImmediateCommands::kMaxCommandBuffers; ++i) {
+    const auto handle = commands.submit(commands.acquire());
+    if (handle.bufferIndex == firstHandle.bufferIndex) {
+      reused = handle;
+    }
+  }
+  ASSERT_FALSE(reused.empty());
+  EXPECT_NE(reused.submitId, firstHandle.submitId);
+  EXPECT_EQ(reused.bufferIndex, firstHandle.bufferIndex);
+  EXPECT_TRUE(commands.isReady(firstHandle));
+  EXPECT_EQ(commands.getVkFenceFromSubmitHandle(firstHandle), VK_NULL_HANDLE);
+  EXPECT_NE(commands.getVkFenceFromSubmitHandle(reused), VK_NULL_HANDLE);
+  commands.waitAll();
+}
+
+TEST_F(VulkanImmediateCommandsTest, RowStatesFollowTheLifecycle) {
+  auto& ctx = getVulkanContext();
+  // Fence waits are stubbed (nothing is queued): `VK_TIMEOUT` is an unsignaled fence.
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Row state test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  gTrace.waitResult = VK_TIMEOUT;
+  for (uint32_t row = 0; row != Commands::kMaxCommandBuffers; ++row) {
+    EXPECT_STREQ(rowState(commands, row), "Free");
+  }
+
+  const auto& first = commands.acquire();
+  const uint32_t firstRow = first.handle.bufferIndex;
+  EXPECT_STREQ(rowState(commands, firstRow), "Encoding");
+  // The handle of a row that is still being recorded is not ready: its fence is not signaled.
+  EXPECT_FALSE(commands.isReady(commands.getNextSubmitHandle()));
+  const auto handle = commands.submit(first);
+  EXPECT_STREQ(rowState(commands, firstRow), "Submitted");
+
+  const auto& second = commands.acquire();
+  const uint32_t secondRow = second.handle.bufferIndex;
+  EXPECT_NE(secondRow, firstRow);
+  EXPECT_STREQ(rowState(commands, secondRow), "Encoding");
+  EXPECT_STREQ(rowState(commands, firstRow), "Submitted");
+  commands.discard(second);
+  EXPECT_STREQ(rowState(commands, secondRow), "Free");
+
+  // `wait()` returns early when the fence already signaled and does not free the row then, so the
+  // row is only guaranteed to be free after `waitAll()`.
+  gTrace.waitResult = VK_SUCCESS;
+  EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+  commands.waitAll();
+  EXPECT_STREQ(rowState(commands, firstRow), "Free");
+}
+
+TEST_F(VulkanImmediateCommandsTest, RowStatesAgreeWithTheCommandBufferWrappers) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Row agreement test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  const auto expectAgreement = [&] {
+    for (uint32_t row = 0; row != Commands::kMaxCommandBuffers; ++row) {
+      const auto& wrapper = wrapperOf(commands, row);
+      const std::string state = rowState(commands, row);
+      EXPECT_TRUE(rowAgrees(commands, row)) << "row " << row;
+      EXPECT_EQ(state == "Encoding", wrapper.isEncoding) << "row " << row;
+      EXPECT_EQ(state == "Free", wrapper.cmdBuf == VK_NULL_HANDLE) << "row " << row;
+    }
+  };
+  expectAgreement();
+  for (uint32_t i = 0; i != 5; ++i) {
+    static_cast<void>(commands.submit(commands.acquire()));
+    expectAgreement();
+  }
+  const auto& open = commands.acquire();
+  expectAgreement();
+  commands.discard(open);
+  expectAgreement();
+  commands.waitAll();
+  expectAgreement();
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReleasedRowIsFreeAndCanBeAcquiredAgain) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Released row test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  // A recording that is no longer the current one is released: the current one stays current.
+  const auto& released = commands.acquire();
+  const uint32_t releasedRow = released.handle.bufferIndex;
+  const auto& current = commands.acquire();
+  const uint32_t currentRow = current.handle.bufferIndex;
+  const auto currentHandle = commands.getNextSubmitHandle();
+  commands.release(released);
+  EXPECT_STREQ(rowState(commands, releasedRow), "Free");
+  EXPECT_TRUE(rowAgrees(commands, releasedRow));
+  EXPECT_EQ(commands.getNextSubmitHandle(), currentHandle);
+  // The current recording is released too.
+  commands.release(current);
+  EXPECT_STREQ(rowState(commands, currentRow), "Free");
+  EXPECT_TRUE(rowAgrees(commands, currentRow));
+  EXPECT_TRUE(commands.getNextSubmitHandle().empty());
+
+  // Every row is acquired again, the released ones included.
+  std::set<uint32_t> rows;
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    const auto& wrapper = commands.acquire();
+    rows.insert(wrapper.handle.bufferIndex);
+    static_cast<void>(commands.submit(wrapper));
+  }
+  EXPECT_EQ(rows.size(), Commands::kMaxCommandBuffers);
+  EXPECT_EQ(rows.count(releasedRow), 1u);
+  EXPECT_EQ(rows.count(currentRow), 1u);
+  commands.waitAll();
+}
+
+TEST_F(VulkanImmediateCommandsTest, SubmittingAStaleWrapperLeavesAFreeRowFree) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Stale wrapper test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  const auto& wrapper = commands.acquire();
+  const uint32_t row = wrapper.handle.bufferIndex;
+  commands.discard(wrapper);
+  ASSERT_STREQ(rowState(commands, row), "Free");
+
+  // What `submit()` does to the row of a wrapper that is no longer encoding: nothing.
+  moveRowToSubmitted(commands, row);
+  EXPECT_STREQ(rowState(commands, row), "Free");
+  EXPECT_EQ(wrapper.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_FALSE(wrapper.isEncoding);
+  EXPECT_TRUE(rowAgrees(commands, row));
+  // Whatever the row state is now, nothing was submitted on this row: free it before anything else
+  // can wait for it (a failing expectation above must not hang the teardown).
+  freeRow(commands, row);
+
+  // A row that is encoding does move, when its recording is submitted.
+  const auto& again = commands.acquire();
+  ASSERT_EQ(again.handle.bufferIndex, row);
+  const auto handle = commands.submit(again);
+  EXPECT_STREQ(rowState(commands, row), "Submitted");
+  EXPECT_FALSE(again.isEncoding);
+  EXPECT_NE(again.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_TRUE(rowAgrees(commands, row));
+  EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+}
+
+TEST_F(VulkanImmediateCommandsTest, DiscardedHandleAnswersAsItAlwaysDid) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Discarded handle test");
+  const TracedWaitsSucceedAtScopeEnd waitsSucceed;
+  gTrace.waitResult = VK_TIMEOUT; // the fence of the open recording is not signaled
+  const auto& first = commands.acquire();
+  const auto stale = commands.getNextSubmitHandle();
+  commands.discard(first);
+  const auto& second = commands.acquire();
+  ASSERT_EQ(second.handle.bufferIndex, first.handle.bufferIndex);
+
+  // The discarded recording and the one that took its row have the same handle, so the stale
+  // handle names the open recording: not ready, not waitable, and its fence is the row's.
+  EXPECT_EQ(second.handle, stale);
+  EXPECT_FALSE(commands.isReady(stale));
+  EXPECT_EQ(commands.wait(stale, 0), VK_ERROR_UNKNOWN);
+  EXPECT_EQ(commands.getVkFenceFromSubmitHandle(stale), second.fence.vkFence_);
+
+  const auto handle = commands.submit(second);
+  EXPECT_EQ(handle, stale);
+  gTrace.waitResult = VK_SUCCESS;
+  EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+  EXPECT_TRUE(commands.isReady(stale));
+}
+
+TEST_F(VulkanImmediateCommandsTest, WaitAllLeavesARecordingThatIsStillOpenAlone) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Nested recording test");
+  gTrace.lines.clear();
+
+  // A second recording starts while the first is open (a nested acquisition), and is submitted.
+  const auto& outer = commands.acquire();
+  const auto& inner = commands.acquire();
+  static_cast<void>(commands.submit(inner));
+  commands.waitAll();
+  EXPECT_TRUE(outer.isEncoding);
+  EXPECT_NE(outer.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_STREQ(rowState(commands, outer.handle.bufferIndex), "Encoding");
+  EXPECT_STREQ(rowState(commands, inner.handle.bufferIndex), "Free");
+  // Only the submitted row is waited on and reset; the open recording is not touched.
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkEndCommandBuffer cb1",
+      "vkQueueSubmit cb1 fence1 waits=0 signals=1 signal:sem1",
+      "vkWaitForFences all=1 timeout=max fence1",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkResetFences fence1",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+
+  gTrace.lines.clear();
+  static_cast<void>(commands.submit(outer));
+  commands.waitAll();
+  const std::vector<std::string> expectedAfterwards = {
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=1 signals=1 wait:sem1 signal:sem0",
+      "vkWaitForFences all=1 timeout=max fence0",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkResetCommandBuffer cb0 flags=0",
+      "vkResetFences fence0",
+  };
+  EXPECT_EQ(gTrace.lines, expectedAfterwards) << joinLines(gTrace.lines);
+}
+
+TEST_F(VulkanImmediateCommandsTest, TimedOutWaitKeepsTheRowSubmittedAndResetsNothing) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Timeout test");
+  const auto handle = commands.submit(commands.acquire());
+  gTrace.lines.clear();
+
+  gTrace.waitResult = VK_TIMEOUT;
+  EXPECT_EQ(commands.wait(handle, 0), VK_TIMEOUT);
+  EXPECT_FALSE(commands.isReady(handle));
+  // Only polls: no reset of the command buffer or of the fence.
+  const std::vector<std::string> expected = {
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkWaitForFences all=1 timeout=0 fence0",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+
+  // The row still holds the submission: its fence is still the handle's.
+  EXPECT_NE(commands.getVkFenceFromSubmitHandle(handle), VK_NULL_HANDLE);
+  EXPECT_STREQ(rowState(commands, handle.bufferIndex), "Submitted");
+  gTrace.waitResult = VK_SUCCESS;
+  commands.waitAll();
+  EXPECT_STREQ(rowState(commands, handle.bufferIndex), "Free");
+  EXPECT_TRUE(commands.isReady(handle));
+}
+
+TEST_F(VulkanImmediateCommandsTest, AcquireSubmitDiscardWaitCallTraceIsUnchanged) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Trace test");
+  ASSERT_EQ(gTrace.lines.size(), kPoolCreationCalls);
+  gTrace.lines.clear();
+
+  const auto& first = commands.acquire();
+  const auto firstHandle = commands.submit(first);
+  const auto& second = commands.acquire();
+  commands.discard(second);
+  const auto& third = commands.acquire();
+  const auto thirdHandle = commands.submit(third);
+  EXPECT_TRUE(commands.isReady(firstHandle));
+  EXPECT_EQ(commands.wait(thirdHandle), VK_SUCCESS);
+  commands.waitAll();
+
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkEndCommandBuffer cb1",
+      "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkWaitForFences all=1 timeout=max fence0 fence1",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkResetCommandBuffer cb0 flags=0",
+      "vkResetFences fence0",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkResetFences fence1",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+}
+
+TEST_F(VulkanImmediateCommandsTest, InjectedSemaphoreSubmitCallTraceIsUnchanged) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Trace test");
+  gTrace.lines.clear();
+
+  // Opaque non-null handles: the traced submit never reaches the device.
+  // NOLINTBEGIN(performance-no-int-to-ptr)
+  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  const auto signalSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x20));
+  // NOLINTEND(performance-no-int-to-ptr)
+  ASSERT_TRUE(commands.waitSemaphore(waitSemaphore, 0));
+  ASSERT_TRUE(commands.signalSemaphore(signalSemaphore, 0));
+  const auto handle = commands.submit(commands.acquire());
+  EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
+
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=1 signals=2 wait:sem? signal:sem? signal:sem0",
+      "vkWaitForFences all=1 timeout=0 fence0",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
 }
 
 } // namespace igl::tests

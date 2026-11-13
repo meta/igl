@@ -114,6 +114,12 @@ class VulkanImmediateCommands final {
   static_assert(sizeof(SubmitHandle) == sizeof(uint64_t));
   static_assert(std::is_trivially_copyable_v<SubmitHandle>);
 
+ private:
+  /// @brief Where a command buffer row is in its life. `acquire()` takes a `Free` row and makes it
+  /// `Encoding`; `submit()` makes it `Submitted`; `discard()` and a completed `purge()` free it.
+  enum class RowState : uint8_t { Free, Encoding, Submitted };
+
+ public:
   /// @brief The CommandBufferWrapper structure encapsulates all the information needed to manage
   /// the synchronization of a command buffer along with a command buffer
   struct CommandBufferWrapper {
@@ -136,6 +142,9 @@ class VulkanImmediateCommands final {
     /// execution.
     VulkanSemaphore semaphore;
     bool isEncoding = false;
+    /// @brief Where this row is in its life. `setRowState()` is the only writer of this, `cmdBuf`
+    /// and `isEncoding`, so the three cannot drift.
+    RowState state = RowState::Free;
     /// @brief The file descriptor for the underlying VkFence. It's only populated if an FD is set
     /// explicitly using VulkanImmediateCommands::storeFDInSubmitHandle(). It's reset in `acquire()`
     int fd = -1;
@@ -241,8 +250,16 @@ class VulkanImmediateCommands final {
   /// encoded, and have completed execution by the GPU (their fences have been signaled). Resets the
   /// number of available command buffers.
   void purge();
+  /// @brief Moves `wrapper` to `state` and updates its `cmdBuf` and `isEncoding` fields that mirror
+  /// it, so they cannot drift. The only writer of the three.
+  void setRowState(CommandBufferWrapper& wrapper, RowState state) noexcept;
+
+  /// @brief Whether the `cmdBuf` and `isEncoding` fields of `wrapper` agree with its `state`. For
+  /// debug assertions.
+  [[nodiscard]] static bool rowAgreesWithWrapper(const CommandBufferWrapper& wrapper) noexcept;
+
   /// @brief Checks whether the SubmitHandle is recycled. A recycled SubmitHandle is a handle that
-  /// has a submit id greater than the submit id associated with the same command buffer stored
+  /// has a submit id different from the submit id associated with the same command buffer stored
   /// internally in `VulkanImmediateCommands`. A SubmitHandle handle is also recycled if it's empty
   [[nodiscard]] bool isRecycled(SubmitHandle handle) const;
 

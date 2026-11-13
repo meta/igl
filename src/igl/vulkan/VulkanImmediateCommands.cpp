@@ -99,6 +99,7 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
                           IGL_FORMAT("Command Buffer: {} ({})", debugName, i).c_str());
     buffers_[i].handle.bufferIndex = i;
   }
+  IGL_DEBUG_ASSERT(buffers_.size() == kMaxCommandBuffers);
 }
 
 VulkanImmediateCommands::~VulkanImmediateCommands() {
@@ -111,7 +112,8 @@ void VulkanImmediateCommands::purge() {
   IGL_PROFILER_FUNCTION();
 
   for (auto& buf : buffers_) {
-    if (buf.cmdBuf == VK_NULL_HANDLE || buf.isEncoding) {
+    IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
+    if (buf.state != RowState::Submitted) {
       continue;
     }
 
@@ -120,7 +122,7 @@ void VulkanImmediateCommands::purge() {
     if (result == VK_SUCCESS) {
       VK_ASSERT(vf_.vkResetCommandBuffer(buf.cmdBuf, VkCommandBufferResetFlags{0}));
       VK_ASSERT(vf_.vkResetFences(device_, 1, &buf.fence.vkFence_));
-      buf.cmdBuf = VK_NULL_HANDLE;
+      setRowState(buf, RowState::Free);
       numAvailableCommandBuffers_++;
     } else if (result != VK_TIMEOUT && !checkDeviceLost(result)) {
       VK_ASSERT(result);
@@ -145,7 +147,8 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
 
   // we are ok with any available buffer
   for (auto& buf : buffers_) {
-    if (buf.cmdBuf == VK_NULL_HANDLE) {
+    IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
+    if (buf.state == RowState::Free) {
       current = &buf;
       break;
     }
@@ -161,8 +164,7 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
   current->handle.submitId = submitCounter_;
   numAvailableCommandBuffers_--;
 
-  current->cmdBuf = current->cmdBufAllocated;
-  current->isEncoding = true;
+  setRowState(*current, RowState::Encoding);
   current->fd = -1;
 
   const VkCommandBufferBeginInfo bi = {
@@ -200,7 +202,7 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
     return VK_SUCCESS;
   }
 
-  if (!IGL_DEBUG_VERIFY(!buffers_[handle.bufferIndex].isEncoding)) {
+  if (!IGL_DEBUG_VERIFY(buffers_[handle.bufferIndex].state != RowState::Encoding)) {
     // we are waiting for a buffer which has not been submitted - this is probably a logic error
     // somewhere in the calling code
     return VK_ERROR_UNKNOWN;
@@ -236,7 +238,8 @@ void VulkanImmediateCommands::waitAll() {
   uint32_t numFences = 0;
 
   for (const auto& buf : buffers_) {
-    if (buf.cmdBuf != VK_NULL_HANDLE && !buf.isEncoding) {
+    IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
+    if (buf.state == RowState::Submitted) {
       fences[numFences++] = buf.fence.vkFence_;
     }
   }
@@ -272,8 +275,9 @@ bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
   }
 
   const CommandBufferWrapper& buf = buffers_[handle.bufferIndex];
+  IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
 
-  if (buf.cmdBuf == VK_NULL_HANDLE) {
+  if (buf.state == RowState::Free) {
     // already recycled and not yet reused
     return true;
   }
@@ -286,6 +290,35 @@ bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
   const VkResult result = vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0);
   checkDeviceLost(result);
   return result == VK_SUCCESS;
+}
+
+void VulkanImmediateCommands::setRowState(CommandBufferWrapper& wrapper, RowState state) noexcept {
+  if (state == RowState::Submitted && wrapper.state == RowState::Free) {
+    // A stale wrapper (its row was freed): submitting it leaves the row free, and its fields, which
+    // already say so, are not touched.
+    return;
+  }
+  wrapper.state = state;
+  switch (state) {
+  case RowState::Free:
+    wrapper.cmdBuf = VK_NULL_HANDLE;
+    wrapper.isEncoding = false;
+    break;
+  case RowState::Encoding:
+    // A pool whose construction failed is never used, so every row owns a command buffer.
+    IGL_DEBUG_ASSERT(wrapper.cmdBufAllocated != VK_NULL_HANDLE);
+    wrapper.cmdBuf = wrapper.cmdBufAllocated;
+    wrapper.isEncoding = true;
+    break;
+  case RowState::Submitted:
+    wrapper.isEncoding = false;
+    break;
+  }
+}
+
+bool VulkanImmediateCommands::rowAgreesWithWrapper(const CommandBufferWrapper& wrapper) noexcept {
+  return (wrapper.state == RowState::Encoding) == wrapper.isEncoding &&
+         (wrapper.state == RowState::Free) == (wrapper.cmdBuf == VK_NULL_HANDLE);
 }
 
 bool VulkanImmediateCommands::checkDeviceLost(VkResult result) const noexcept {
@@ -444,7 +477,7 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
   numSignalSemaphores_ = 0;
 
   // reset
-  const_cast<CommandBufferWrapper&>(wrapper).isEncoding = false;
+  setRowState(const_cast<CommandBufferWrapper&>(wrapper), RowState::Submitted);
   submitCounter_++;
 
   if (!submitCounter_) {
@@ -466,8 +499,7 @@ void VulkanImmediateCommands::discard(const CommandBufferWrapper& wrapper) {
   }
   auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
   VK_ASSERT(vf_.vkResetCommandBuffer(mutableWrapper.cmdBuf, VkCommandBufferResetFlags{0}));
-  mutableWrapper.cmdBuf = VK_NULL_HANDLE;
-  mutableWrapper.isEncoding = false;
+  setRowState(mutableWrapper, RowState::Free);
   numAvailableCommandBuffers_++;
   numWaitSemaphores_ = 0;
   numSignalSemaphores_ = 0;
@@ -481,8 +513,7 @@ void VulkanImmediateCommands::release(const CommandBufferWrapper& wrapper) {
   }
   auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
   VK_ASSERT(vf_.vkResetCommandBuffer(mutableWrapper.cmdBuf, VkCommandBufferResetFlags{0}));
-  mutableWrapper.cmdBuf = VK_NULL_HANDLE;
-  mutableWrapper.isEncoding = false;
+  setRowState(mutableWrapper, RowState::Free);
   numAvailableCommandBuffers_++;
   if (nextSubmitHandle_ == wrapper.handle) {
     nextSubmitHandle_ = {};
