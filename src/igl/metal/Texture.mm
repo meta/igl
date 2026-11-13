@@ -989,11 +989,7 @@ MTLPixelFormat Texture::textureFormatToMTLPixelFormat(TextureFormat value) {
 
     // Depth & Stencil
   case TextureFormat::Z_UNorm16:
-    if (@available(macOS 10.12, iOS 13.0, *)) {
-      return MTLPixelFormatDepth16Unorm;
-    } else {
-      return MTLPixelFormatDepth32Float;
-    }
+    return MTLPixelFormatDepth32Float;
   case TextureFormat::Z_UNorm24:
     return MTLPixelFormatDepth32Float;
   case TextureFormat::Z_UNorm32:
@@ -1030,12 +1026,7 @@ MTLPixelFormat Texture::textureFormatToMTLPixelFormat(TextureFormat value) {
  *         TextureFormat::Invalid if unsupported.
  */
 TextureFormat Texture::mtlPixelFormatToTextureFormat(MTLPixelFormat value) {
-  // Some fbsource targets don't allow enum default, this makes sure all of them compile
-  if (@available(macOS 10.12, iOS 13.0, *)) {
-    if (value == MTLPixelFormatDepth16Unorm) {
-      return TextureFormat::Z_UNorm16;
-    }
-  }
+// Some fbsource targets don't allow enum default, this makes sure all of them compile
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wswitch-enum"
   switch (value) {
