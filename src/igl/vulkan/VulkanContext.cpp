@@ -1930,19 +1930,25 @@ std::unique_ptr<VulkanImage> VulkanContext::createImageFromFileDescriptor(
     return nullptr;
   }
 
-  return std::make_unique<VulkanImage>(*this,
-                                       fileDescriptor,
-                                       memoryAllocationSize,
-                                       extent,
-                                       imageType,
-                                       format,
-                                       mipLevels,
-                                       arrayLayers,
-                                       tiling,
-                                       usageFlags,
-                                       flags,
-                                       samples,
-                                       debugName);
+  auto image = std::make_unique<VulkanImage>(*this,
+                                             fileDescriptor,
+                                             memoryAllocationSize,
+                                             extent,
+                                             imageType,
+                                             format,
+                                             mipLevels,
+                                             arrayLayers,
+                                             tiling,
+                                             usageFlags,
+                                             flags,
+                                             samples,
+                                             debugName);
+  if (!image->valid()) {
+    Result::setResult(outResult, getResultFromVkResult(image->initResult()));
+    return nullptr;
+  }
+  Result::setOk(outResult);
+  return image;
 }
 
 void VulkanContext::pruneTextures() {

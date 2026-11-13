@@ -714,7 +714,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   };
 
   // create image.. importing external memory cannot use VMA
-  VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
+  VkResult stepResult = ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (fd): vkCreateImage() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkImage_ = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
@@ -722,7 +729,11 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
 #ifndef VK_USE_PLATFORM_WIN32_KHR
   importedFd = dup(undupedFileDescriptor);
 #endif
-  IGL_DEBUG_ASSERT(importedFd >= 0);
+  if (importedFd < 0) {
+    IGL_LOG_ERROR("VulkanImage (fd): the file descriptor cannot be duplicated\n");
+    failInit(VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    return;
+  }
 
   // NOTE: Importing memory from a file descriptor transfers ownership of the fd from the
   // app to the Vk implementation. The app must not perform any operations on the fd after
@@ -766,20 +777,25 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
                memoryRequirements.memoryRequirements.memoryTypeBits,
                memoryAllocateInfo.memoryTypeIndex);
 
-  // @fb-only
-  // @fb-only
-// @fb-only
-  // @fb-only
-      // @fb-only
-  // @fb-only
-  // @fb-only
-  // @fb-only
-  // @fb-only
-  // @fb-only
-// @fb-only
-  VK_ASSERT(ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]));
-  VK_ASSERT(ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0));
-// @fb-only
+  stepResult = ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (fd): vkAllocateMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkMemory_[0] = VK_NULL_HANDLE;
+    // The descriptor belongs to the implementation only after a successful import.
+#ifndef VK_USE_PLATFORM_WIN32_KHR
+    close(importedFd);
+#endif
+    failInit(stepResult);
+    return;
+  }
+  stepResult = ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (fd): vkBindImageMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    failInit(stepResult);
+    return;
+  }
 
   VK_ASSERT(ivkSetDebugObjectName(&ctx_->vf_,
                                   device_,
@@ -847,7 +863,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   };
 
   // create image. importing external memory cannot use VMA
-  VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
+  VkResult stepResult = ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (Win32 handle): vkCreateImage() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkImage_ = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
@@ -880,8 +903,21 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
                memoryRequirements.memoryRequirements.memoryTypeBits,
                memoryAllocateInfo.memoryTypeIndex);
 
-  VK_ASSERT(ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]));
-  VK_ASSERT(ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0));
+  stepResult = ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[0]);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (Win32 handle): vkAllocateMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkMemory_[0] = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
+  stepResult = ctx_->vf_.vkBindImageMemory(device_, vkImage_, vkMemory_[0], 0);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (Win32 handle): vkBindImageMemory() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    failInit(stepResult);
+    return;
+  }
 
   VK_ASSERT(ivkSetDebugObjectName(&ctx_->vf_,
                                   device_,

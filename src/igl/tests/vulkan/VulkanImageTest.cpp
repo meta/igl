@@ -11,6 +11,8 @@
 
 #include <array>
 #include <cstdint>
+// NOLINTNEXTLINE(facebook-unused-include-check): std::directory_iterator
+#include <filesystem>
 #include <glm/common.hpp>
 #include <glm/gtc/color_space.hpp>
 #include <memory>
@@ -27,6 +29,10 @@
 #include <igl/vulkan/VulkanTexture.h>
 #if defined(IGL_ANDROID_HWBUFFER_SUPPORTED)
 #include <android/hardware_buffer.h>
+#endif
+#if !IGL_PLATFORM_WINDOWS
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_LINUX
@@ -1094,6 +1100,180 @@ TEST_F(VulkanImageFaultTest, AnOpenMainRecordingDoesNotStopTheRetry) {
   cmdQueue->submit(*openBuffer);
   openBuffer->waitUntilCompleted();
 }
+
+#if !IGL_PLATFORM_WINDOWS
+// The file-descriptor import constructor. The descriptor handed in is only duplicated by the
+// image; the duplicate belongs to the driver after a successful import and to the image before it.
+class VulkanImageFdImportFaultTest : public VulkanImageFaultTest {
+ protected:
+  void SetUp() override {
+    VulkanImageFaultTest::SetUp();
+    fd_ = makeDevice();
+    ASSERT_NE(fd_->device(), nullptr) << fd_->creationResult().message.c_str();
+  }
+
+  void TearDown() override {
+    if (ordinaryFd_ >= 0) {
+      close(ordinaryFd_);
+    }
+  }
+
+  // The memory a real import needs: an image whose memory the device exports (an opaque file
+  // descriptor). False when the device cannot export image memory that way.
+  bool exportMemory() {
+    exported_ = igl::vulkan::VulkanImage::createWithExportMemory(
+        fd_->context(),
+        VkExtent3D{.width = 64, .height = 64, .depth = 1},
+        VK_IMAGE_TYPE_2D,
+        kFormat,
+        1,
+        1,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        0,
+        VK_SAMPLE_COUNT_1_BIT,
+        "Image: exported for the fd import tests");
+    return exported_.valid() && exported_.exportedFd_ >= 0;
+  }
+
+  // A descriptor that is not image memory. The tests that fail the import before the driver
+  // consumes the descriptor do not need a real export, so they use this one.
+  void openOrdinaryDescriptor() {
+    ordinaryFd_ = open("/dev/null", O_RDONLY);
+    ASSERT_GE(ordinaryFd_, 0);
+  }
+
+  std::unique_ptr<igl::vulkan::VulkanImage> importOrdinaryDescriptor(Result* result) const {
+    return fd_->context().createImageFromFileDescriptor(
+        ordinaryFd_,
+        /*memoryAllocationSize=*/64 * 64 * 4,
+        VK_IMAGE_TYPE_2D,
+        VkExtent3D{.width = 64, .height = 64, .depth = 1},
+        kFormat,
+        1,
+        1,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        0,
+        VK_SAMPLE_COUNT_1_BIT,
+        result,
+        "Image: fd import fault test");
+  }
+
+  std::unique_ptr<igl::vulkan::VulkanImage> importDescriptor(Result* result) const {
+    return fd_->context().createImageFromFileDescriptor(
+        exported_.exportedFd_,
+        exported_.allocatedSize,
+        VK_IMAGE_TYPE_2D,
+        VkExtent3D{.width = 64, .height = 64, .depth = 1},
+        kFormat,
+        1,
+        1,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        0,
+        VK_SAMPLE_COUNT_1_BIT,
+        result,
+        "Image: fd import fault test");
+  }
+
+  // The number of descriptors this process holds (a leaked duplicate shows up as one more).
+  static size_t openDescriptors() {
+    size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+      static_cast<void>(entry);
+      ++count;
+    }
+    return count;
+  }
+
+  std::unique_ptr<util::device::vulkan::FaultingDevice> fd_;
+  igl::vulkan::VulkanImage exported_;
+  int ordinaryFd_ = -1;
+};
+
+// Runs on every device: the failing `vkCreateImage()` is the first step, before the driver sees the
+// descriptor, so an ordinary descriptor is enough.
+TEST_F(VulkanImageFdImportFaultTest, FdImportFailsAtImageCreate) {
+  openOrdinaryDescriptor();
+  fd_->resetCounters();
+  fd_->arm(Call::CreateImage, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  const size_t before = openDescriptors();
+  Result result;
+  const auto image = importOrdinaryDescriptor(&result);
+
+  EXPECT_EQ(image, nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+  EXPECT_EQ(fd_->failed(Call::CreateImage), 1u);
+  EXPECT_EQ(fd_->reached(Call::AllocateMemory), 0u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 0u); // nothing was created
+  EXPECT_EQ(openDescriptors(), before);
+}
+
+// Runs on every device that can create an image for opaque descriptor import: the failing
+// `vkAllocateMemory()` is armed before the driver consumes the descriptor, so an ordinary
+// descriptor is enough.
+TEST_F(VulkanImageFdImportFaultTest, FdImportFailsAtAllocateAndLeaksNothing) {
+  openOrdinaryDescriptor();
+  fd_->resetCounters();
+  fd_->arm(Call::AllocateMemory, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  const size_t before = openDescriptors();
+  Result result;
+  const auto image = importOrdinaryDescriptor(&result);
+  if (fd_->reached(Call::AllocateMemory) == 0) {
+    GTEST_SKIP() << "The driver cannot create an image for opaque file descriptor memory ("
+                 << result.message.c_str() << "), so the import never reaches the allocation";
+  }
+
+  EXPECT_EQ(image, nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+  EXPECT_EQ(fd_->failed(Call::AllocateMemory), 1u);
+  EXPECT_EQ(fd_->reached(Call::BindImageMemory), 0u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 1u); // the image created before is destroyed
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 0u);
+  EXPECT_EQ(openDescriptors(), before); // the duplicate was closed
+}
+
+// Needs memory the device really exports: the bind consumes the imported descriptor.
+TEST_F(VulkanImageFdImportFaultTest, FdImportFailsAtBindAndFreesTheMemory) {
+  if (!exportMemory()) {
+    GTEST_SKIP() << "The device cannot export image memory as an opaque file descriptor";
+  }
+  fd_->resetCounters();
+  fd_->arm(Call::BindImageMemory, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  Result result;
+  const auto image = importDescriptor(&result);
+
+  EXPECT_EQ(image, nullptr);
+  EXPECT_EQ(result.message,
+            igl::vulkan::getResultFromVkResult(VK_ERROR_OUT_OF_DEVICE_MEMORY).message);
+  EXPECT_EQ(fd_->failed(Call::BindImageMemory), 1u);
+  EXPECT_EQ(fd_->counted(Counted::DestroyImage), 1u);
+  EXPECT_EQ(fd_->counted(Counted::FreeMemory), 1u); // the imported memory is freed with the image
+}
+
+// Needs memory the device really exports.
+TEST_F(VulkanImageFdImportFaultTest, AnUnfaultedImportSucceeds) {
+  if (!exportMemory()) {
+    GTEST_SKIP() << "The device cannot export image memory as an opaque file descriptor";
+  }
+  fd_->resetCounters();
+  Result result;
+  const size_t before = openDescriptors();
+  {
+    const auto image = importDescriptor(&result);
+    ASSERT_NE(image, nullptr) << result.message.c_str();
+    EXPECT_TRUE(result.isOk());
+    EXPECT_TRUE(image->valid());
+    EXPECT_TRUE(image->isImported_);
+  }
+  fd_->context().waitDeferredTasks();
+  // The duplicate belongs to the driver after the import and is released with the memory.
+  EXPECT_LE(openDescriptors(), before);
+}
+#endif // !IGL_PLATFORM_WINDOWS
 
 TEST_F(VulkanImageFaultTest, CreateImageSecondAllocationFailure) {
   if (!IGL_VULKAN_USE_VMA) {
