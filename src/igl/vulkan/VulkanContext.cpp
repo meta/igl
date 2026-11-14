@@ -2996,6 +2996,60 @@ void VulkanContext::processDeferredTasks() const {
   }
 }
 
+VkResult VulkanContext::certifyAll(uint64_t timeoutNanoseconds) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(this);
+
+  if (!immediate_) {
+    // Before `initContext()` created the pools, or after it failed to: nothing was submitted.
+    return VK_SUCCESS;
+  }
+
+  // Both pools submit to the same queue; the staging pool gets what is left of the budget. A pool
+  // that was never created has submitted nothing.
+  VulkanImmediateCommands* const pools[] = {
+      immediate_.get(),
+      stagingDevice_ ? stagingDevice_->immediate.get() : nullptr,
+  };
+  // A fence wait, a checkpoint or a back-off of either pool that answered that the device is lost,
+  // during this call or before it (in `acquire()`, `waitAll()` or a destructor), means that nothing
+  // submitted to it runs any more: that ends the work of both pools, also the work neither of them
+  // waited for.
+  // Both pools share the main pool's queue state.
+  VulkanImmediateCommands::QueueState& queueState = *immediate_->queueState_;
+  const auto consumeLossAnswers = [&queueState, &pools]() {
+    if (queueState.lossAnswers == queueState.certifiedLossAnswers) {
+      return false;
+    }
+    queueState.certifiedLossAnswers = queueState.lossAnswers;
+    for (VulkanImmediateCommands* const pool : pools) {
+      if (pool) {
+        pool->certifyQueueIdle(true);
+      }
+    }
+    return true;
+  };
+  if (consumeLossAnswers()) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+  uint64_t remaining = timeoutNanoseconds;
+  VkResult result = VK_SUCCESS;
+  for (VulkanImmediateCommands* const pool : pools) {
+    if (!pool) {
+      continue;
+    }
+    // A pool reports VK_ERROR_DEVICE_LOST only for such an answer.
+    const VkResult poolResult = pool->certifyAll(remaining);
+    if (consumeLossAnswers()) {
+      return VK_ERROR_DEVICE_LOST;
+    }
+    if (result == VK_SUCCESS) {
+      result = poolResult;
+    }
+  }
+  return result;
+}
+
 void VulkanContext::waitDeferredTasks() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 

@@ -1213,6 +1213,17 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     return commands.queueState_->stopped;
   }
   /// Makes `commands` stop when `other` stops, as the two pools of a context do.
+  static uint64_t lossAnswers(const Commands& commands) {
+    return commands.queueState_->lossAnswers;
+  }
+  /// One back-off, the first of a call.
+  static VkResult backoff(Commands& commands) {
+    uint32_t attempt = 0;
+    return commands.backoff(attempt);
+  }
+  static Commands::QueueState& queueState(const Commands& commands) {
+    return *commands.queueState_;
+  }
   static void shareQueueStop(Commands& commands, const Commands& other) {
     commands.queueState_ = other.queueState_;
   }
@@ -1281,6 +1292,9 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
   }
   static size_t checkpointFences(const Commands& commands) {
     return commands.checkpoints_.size();
+  }
+  static VkFence checkpointFence(const Commands& commands, size_t index) {
+    return commands.checkpoints_[index].fence.vkFence_;
   }
   static const char* checkpointState(const Commands& commands, size_t index) {
     switch (commands.checkpoints_[index].state) {
@@ -1378,6 +1392,9 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
                     const char* name) :
       ctx_(test.getVulkanContext()), slot_(slot), realPool_(std::move(slot)) {
       slot_ = test.makeFakePool(name);
+      // As the pool it replaces, it shares the context's queue state, which is put back as it was.
+      shareQueueStop(*slot_, *realPool_);
+      savedQueueState_ = queueState(*realPool_);
     }
     FakeContextPool(const FakeContextPool&) = delete;
     FakeContextPool& operator=(const FakeContextPool&) = delete;
@@ -1388,6 +1405,7 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
       completeSubmissions(gQueue.submitted.size());
       ctx_.waitDeferredTasks();
       slot_ = std::move(realPool_);
+      queueState(*slot_) = savedQueueState_;
     }
     Commands& operator*() const {
       return *slot_;
@@ -1400,6 +1418,7 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     igl::vulkan::VulkanContext& ctx_;
     std::unique_ptr<Commands>& slot_;
     std::unique_ptr<Commands> realPool_;
+    Commands::QueueState savedQueueState_;
   };
 
   /// Holds `value` at `temporary` until destroyed.
@@ -3539,6 +3558,167 @@ TEST_F(VulkanImmediateCommandsTest, CertifyAllReportsFenceAndCheckpointErrors) {
   }
 }
 
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllReportsAPoolThatCannotCertify) {
+  auto& ctx = getVulkanContext();
+  for (const bool failStaging : {false, true}) {
+    // Both pools are on the fake queue: a device loss that one of them answers ends the other's
+    // work too.
+    const FakeContextPool fakeMain(*this, ctx.immediate_, "Context certify all failure test");
+    const FakeContextPool fakeStaging(
+        *this, ctx.stagingDevice_->immediate, "Context certify all failure test");
+    const FakeContextPool& fakePool = failStaging ? fakeStaging : fakeMain;
+    const auto exported = fakePool->submit(fakePool->acquire());
+    EXPECT_GE(exportFenceFd(*fakePool, exported), 0);
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY};
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_OUT_OF_HOST_MEMORY)
+        << "staging " << failStaging;
+    // Without time left, no checkpoint is submitted.
+    EXPECT_EQ(ctx.certifyAll(0), VK_TIMEOUT) << "staging " << failStaging;
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_SUCCESS) << "staging " << failStaging;
+    // A fence that reports device loss: nothing runs any more.
+    static_cast<void>(fakePool->submit(fakePool->acquire()));
+    gQueue.waitOverride = VK_ERROR_DEVICE_LOST;
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_DEVICE_LOST) << "staging " << failStaging;
+    EXPECT_EQ(retiredThrough(*fakeMain), submissions(*fakeMain)) << "staging " << failStaging;
+    EXPECT_EQ(retiredThrough(*fakeStaging), submissions(*fakeStaging)) << "staging " << failStaging;
+    gQueue.waitOverride.reset();
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllEndsBothPoolsWhenAFenceAnswersADeviceLoss) {
+  auto& ctx = getVulkanContext();
+  struct Case {
+    const char* name;
+    /// The submissions of each pool, in order: true for one whose fence was exported, which no
+    /// fence wait can answer for.
+    std::vector<bool> main;
+    std::vector<bool> staging;
+  };
+  const Case cases[] = {
+      {.name = "the main pool's fence answers; the staging pool's work was exported",
+       .main = {false},
+       .staging = {true}},
+      {.name = "the staging pool's fence answers; the main pool's work was exported",
+       .main = {true},
+       .staging = {false}},
+      {.name = "the main pool's fence answers; its later work was exported",
+       .main = {false, true},
+       .staging = {}},
+  };
+  const auto submitAll = [](Commands& pool, const std::vector<bool>& exports) {
+    for (const bool exported : exports) {
+      const auto handle = pool.submit(pool.acquire());
+      if (exported) {
+        EXPECT_GE(exportFenceFd(pool, handle), 0);
+      }
+    }
+  };
+  for (const Case& c : cases) {
+    const FakeContextPool main(*this, ctx.immediate_, "Context device loss test");
+    const FakeContextPool staging(*this, ctx.stagingDevice_->immediate, "Context device loss test");
+    submitAll(*main, c.main);
+    submitAll(*staging, c.staging);
+    // Every fence answers that the device is lost, and no time is left for a checkpoint: the
+    // exported work cannot be waited for, and still no longer runs.
+    gQueue.waitOverride = VK_ERROR_DEVICE_LOST;
+    EXPECT_EQ(ctx.certifyAll(0), VK_ERROR_DEVICE_LOST) << c.name;
+    EXPECT_EQ(retiredThrough(*main), submissions(*main)) << c.name;
+    EXPECT_EQ(retiredThrough(*staging), submissions(*staging)) << c.name;
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllDoesNotEndWorkForALossAFenceResetReported) {
+  auto& ctx = getVulkanContext();
+  for (const bool resetInMain : {true, false}) {
+    // One pool's submission finished, and its fence reset reports a device loss (only remembered);
+    // the other pool's submission does not finish.
+    const FakeContextPool main(*this, ctx.immediate_, "Reset loss test");
+    const FakeContextPool staging(*this, ctx.stagingDevice_->immediate, "Reset loss test");
+    Commands& finished = resetInMain ? *main : *staging;
+    Commands& pending = resetInMain ? *staging : *main;
+    static_cast<void>(finished.submit(finished.acquire()));
+    static_cast<void>(pending.submit(pending.acquire()));
+    completeSubmissions(1);
+    gQueue.resetResults = {VK_ERROR_DEVICE_LOST};
+    gQueue.blockingWaitsComplete = false;
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_TIMEOUT) << "reset in main " << resetInMain;
+    EXPECT_TRUE(finished.isDeviceLost()) << "reset in main " << resetInMain;
+    EXPECT_LT(retiredThrough(pending), submissions(pending)) << "reset in main " << resetInMain;
+  }
+  for (const bool resetInMain : {true, false}) {
+    // Both pools' submissions finished, and one fence reset reports a device loss, which is only
+    // remembered: the call reports that the work finished.
+    const FakeContextPool main(*this, ctx.immediate_, "Reset loss test");
+    const FakeContextPool staging(*this, ctx.stagingDevice_->immediate, "Reset loss test");
+    static_cast<void>(main->submit(main->acquire()));
+    static_cast<void>(staging->submit(staging->acquire()));
+    completeSubmissions(2);
+    // The main pool resets its fence first.
+    gQueue.resetResults = resetInMain ? std::vector<VkResult>{VK_ERROR_DEVICE_LOST}
+                                      : std::vector<VkResult>{VK_SUCCESS, VK_ERROR_DEVICE_LOST};
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_SUCCESS) << "reset in main " << resetInMain;
+    EXPECT_TRUE((resetInMain ? *main : *staging).isDeviceLost()) << "reset in main " << resetInMain;
+    EXPECT_EQ(retiredThrough(*main), submissions(*main)) << "reset in main " << resetInMain;
+    EXPECT_EQ(retiredThrough(*staging), submissions(*staging)) << "reset in main " << resetInMain;
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ContextCertifyAllDoesNotEndWorkForALossACheckpointResetReported) {
+  auto& ctx = getVulkanContext();
+  {
+    // The main pool's checkpoint fence reset reports a device loss (only remembered), and its next
+    // checkpoint proves its work finished; the staging pool's exported submission is not proven.
+    const FakeContextPool main(*this, ctx.immediate_, "Checkpoint reset loss test");
+    const FakeContextPool staging(
+        *this, ctx.stagingDevice_->immediate, "Checkpoint reset loss test");
+    const auto first = main->submit(main->acquire());
+    ASSERT_GE(exportFenceFd(*main, first), 0);
+    ASSERT_EQ(main->wait(first, kTestTimeout), VK_SUCCESS);
+    ASSERT_STREQ(checkpointState(*main, 0), "Signaled");
+    const VkFence resetFails = checkpointFence(*main, 0);
+    const auto unproven = staging->submit(staging->acquire());
+    ASSERT_GE(exportFenceFd(*staging, unproven), 0);
+    const auto second = main->submit(main->acquire());
+    ASSERT_GE(exportFenceFd(*main, second), 0);
+    gQueue.resetResults = {VK_ERROR_DEVICE_LOST};
+    // The main pool's next checkpoint is the next submission; it completes, and the staging pool's
+    // checkpoint after it does not.
+    completeSubmissions(gQueue.submitted.size() + 1);
+    gQueue.blockingWaitsComplete = false;
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_TIMEOUT);
+    // The checkpoint's fence, which could not be reset, was replaced.
+    EXPECT_NE(checkpointFence(*main, 0), resetFails);
+    EXPECT_TRUE(main->isDeviceLost());
+    EXPECT_EQ(retiredThrough(*main), submissions(*main));
+    EXPECT_LT(retiredThrough(*staging), submissions(*staging));
+  }
+  {
+    // The other order: the main pool cannot create its checkpoint fence, so its exported
+    // submission is not proven; the staging pool's checkpoint fence reset reports a device loss,
+    // and its next checkpoint proves its work finished.
+    const FakeContextPool main(*this, ctx.immediate_, "Checkpoint reset loss test");
+    const FakeContextPool staging(
+        *this, ctx.stagingDevice_->immediate, "Checkpoint reset loss test");
+    const auto first = staging->submit(staging->acquire());
+    ASSERT_GE(exportFenceFd(*staging, first), 0);
+    ASSERT_EQ(staging->wait(first, kTestTimeout), VK_SUCCESS);
+    ASSERT_STREQ(checkpointState(*staging, 0), "Signaled");
+    const VkFence resetFails = checkpointFence(*staging, 0);
+    const auto unproven = main->submit(main->acquire());
+    ASSERT_GE(exportFenceFd(*main, unproven), 0);
+    const auto second = staging->submit(staging->acquire());
+    ASSERT_GE(exportFenceFd(*staging, second), 0);
+    gQueue.createFenceResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    gQueue.resetResults = {VK_ERROR_DEVICE_LOST};
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    EXPECT_NE(checkpointFence(*staging, 0), resetFails);
+    EXPECT_TRUE(staging->isDeviceLost());
+    EXPECT_EQ(retiredThrough(*staging), submissions(*staging));
+    EXPECT_LT(retiredThrough(*main), submissions(*main));
+  }
+}
+
 TEST_F(VulkanImmediateCommandsTest, ACheckpointWhoseCreationReportsADeviceLossIsNotRetried) {
   const auto pool = makeFakePool("Checkpoint creation loss test");
   const auto exported = pool->submit(pool->acquire());
@@ -3553,6 +3733,423 @@ TEST_F(VulkanImmediateCommandsTest, ACheckpointWhoseCreationReportsADeviceLossIs
   // A later call creates the checkpoint.
   EXPECT_EQ(certifyAll(*pool, kTestTimeout), VK_SUCCESS);
   EXPECT_EQ(retiredThrough(*pool), submissions(*pool));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllEndsBothPoolsForALossABackoffAnsweredBefore) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool main(*this, ctx.immediate_, "Earlier device loss test");
+  const FakeContextPool staging(*this, ctx.stagingDevice_->immediate, "Earlier device loss test");
+  // Exported work in both pools, which only a checkpoint can prove finished, and none can be
+  // submitted.
+  const auto mainWork = main->submit(main->acquire());
+  ASSERT_GE(exportFenceFd(*main, mainWork), 0);
+  const auto stagingWork = staging->submit(staging->acquire());
+  ASSERT_GE(exportFenceFd(*staging, stagingWork), 0);
+  gQueue.submitResults.assign(100, VK_ERROR_OUT_OF_HOST_MEMORY);
+  // A back-off of the main pool answered, before the call, that the device is lost.
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+  main->waitAll();
+  ASSERT_EQ(main->wait(mainWork, 0), VK_ERROR_DEVICE_LOST);
+  // The call takes that answer as one: the staging pool's work no longer runs either.
+  EXPECT_EQ(ctx.certifyAll(0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(staging->wait(stagingWork, 0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(retiredThrough(*staging), submissions(*staging));
+  // Applied once: a later call does not take it again for an answer; nothing is left to wait for.
+  const uint64_t answers = lossAnswers(*main);
+  EXPECT_EQ(ctx.certifyAll(0), VK_SUCCESS);
+  EXPECT_EQ(lossAnswers(*main), answers);
+  gQueue.submitResults.clear();
+}
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllDoesNotWaitAfterALossABackoffAnsweredBefore) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool main(*this, ctx.immediate_, "Earlier device loss wait test");
+  const FakeContextPool staging(
+      *this, ctx.stagingDevice_->immediate, "Earlier device loss wait test");
+  // The main pool's work has not finished. The staging pool's work is exported: only a checkpoint
+  // can prove it finished, and none can be submitted.
+  const auto mainWork = main->submit(main->acquire());
+  const auto stagingWork = staging->submit(staging->acquire());
+  ASSERT_GE(exportFenceFd(*staging, stagingWork), 0);
+  gQueue.submitResults.assign(100, VK_ERROR_OUT_OF_HOST_MEMORY);
+  // A back-off of the staging pool answered, before the call, that the device is lost.
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+  staging->waitAll();
+  ASSERT_EQ(staging->wait(stagingWork, 0), VK_ERROR_DEVICE_LOST);
+  // The call takes that answer at once, without waiting for the main pool's work, which no longer
+  // runs either.
+  gQueue.blockingWaitsComplete = false;
+  const size_t blockingWaits = gQueue.blockingWaits;
+  EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(gQueue.blockingWaits, blockingWaits);
+  EXPECT_EQ(main->wait(mainWork, 0), VK_ERROR_DEVICE_LOST);
+  gQueue.blockingWaitsComplete = true;
+  gQueue.submitResults.clear();
+}
+
+TEST_F(VulkanImmediateCommandsTest, ABackoffCountsADeviceLossOnce) {
+  const auto pool = makeFakePool("Back-off loss count test");
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST, VK_SUCCESS, VK_ERROR_DEVICE_LOST};
+  for (int i = 0; i != 3; ++i) {
+    EXPECT_NE(backoff(*pool), VK_TIMEOUT) << i;
+  }
+  EXPECT_EQ(lossAnswers(*pool), 1u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ALossThatAPoolAnsweredEndsTheWaitOfTheOtherPoolOfItsQueue) {
+  const auto pool = makeFakePool("Shared loss test");
+  const auto other = makeFakePool("Shared loss test");
+  shareQueueStop(*other, *pool);
+  // Exported work in both pools, which no checkpoint can prove finished.
+  const auto work = pool->submit(pool->acquire());
+  ASSERT_GE(exportFenceFd(*pool, work), 0);
+  const auto otherWork = other->submit(other->acquire());
+  ASSERT_GE(exportFenceFd(*other, otherWork), 0);
+  gQueue.submitResults.assign(100, VK_ERROR_OUT_OF_HOST_MEMORY);
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+  pool->waitAll();
+  ASSERT_EQ(gQueue.backoffWaits.size(), 1u);
+  // The other pool's wait (as in its destructor) ends on that answer, without a back-off of its
+  // own.
+  other->waitAll();
+  EXPECT_EQ(gQueue.backoffWaits.size(), 1u);
+  EXPECT_EQ(other->wait(otherWork, 0), VK_ERROR_DEVICE_LOST);
+  gQueue.submitResults.clear();
+}
+TEST_F(VulkanImmediateCommandsTest, ALossThatAPoolAnsweredFreesTheRowsOfTheOtherPoolOfItsQueue) {
+  const auto pool = makeFakePool("Shared loss acquire test");
+  const auto other = makeFakePool("Shared loss acquire test");
+  shareQueueStop(*other, *pool);
+  // Every row of the other pool holds exported work, which no checkpoint can prove finished.
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    ASSERT_GE(exportFenceFd(*other, other->submit(other->acquire())), 0);
+  }
+  const auto work = pool->submit(pool->acquire());
+  ASSERT_GE(exportFenceFd(*pool, work), 0);
+  gQueue.submitResults.assign(100, VK_ERROR_OUT_OF_HOST_MEMORY);
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+  pool->waitAll();
+  ASSERT_EQ(gQueue.backoffWaits.size(), 1u);
+  // The other pool's exhausted acquisition frees its rows on that answer, without a back-off of
+  // its own.
+  const auto& wrapper = other->acquire();
+  EXPECT_EQ(gQueue.backoffWaits.size(), 1u);
+  EXPECT_EQ(retiredThrough(*other), submissions(*other));
+  other->discard(wrapper);
+  gQueue.submitResults.clear();
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ALossThatAPoolAnsweredFreesTheRowsOfTheOtherPoolWhoseWaitFailed) {
+  const auto pool = makeFakePool("Shared loss failed wait test");
+  const auto other = makeFakePool("Shared loss failed wait test");
+  shareQueueStop(*other, *pool);
+  // Every row of the other pool holds work with a trusted fence; the first pool proves the device
+  // lost.
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    static_cast<void>(other->submit(other->acquire()));
+  }
+  const auto work = pool->submit(pool->acquire());
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(pool->wait(work, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // The other pool's exhausted acquisition waits on its oldest fence, and that wait fails: the
+  // answer the first pool counted frees the rows, without a back-off.
+  const DebugAborts aborts;
+  gQueue.blockingWaitResults = {VK_ERROR_OUT_OF_HOST_MEMORY};
+  const auto& wrapper = other->acquire();
+  EXPECT_TRUE(gQueue.backoffWaits.empty());
+  EXPECT_EQ(retiredThrough(*other), submissions(*other));
+  other->discard(wrapper);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ALossThatAPoolAnsweredEndsTheDrainOfTheOtherPoolWhoseWaitFailed) {
+  const auto pool = makeFakePool("Shared loss failed drain test");
+  const auto other = makeFakePool("Shared loss failed drain test");
+  shareQueueStop(*other, *pool);
+  const auto otherWork = other->submit(other->acquire());
+  const auto work = pool->submit(pool->acquire());
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(pool->wait(work, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // The other pool's drain (as in its destructor) waits on its trusted fence, and that wait fails:
+  // the answer the first pool counted ends the drain, without a back-off.
+  const DebugAborts aborts;
+  gQueue.blockingWaitResults = {VK_ERROR_OUT_OF_HOST_MEMORY};
+  other->waitAll();
+  EXPECT_TRUE(gQueue.backoffWaits.empty());
+  EXPECT_EQ(other->wait(otherWork, 0), VK_ERROR_DEVICE_LOST);
+}
+
+TEST_F(VulkanImmediateCommandsTest, APoolTakesALossAnswerOnce) {
+  const DebugAborts aborts;
+  const auto pool = makeFakePool("Loss answer once test");
+  const auto other = makeFakePool("Loss answer once test");
+  shareQueueStop(*pool, *other);
+  // Every row of the pool holds exported work, which no checkpoint can prove finished.
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    ASSERT_GE(exportFenceFd(*pool, pool->submit(pool->acquire())), 0);
+  }
+  const auto otherWork = other->submit(other->acquire());
+  ASSERT_GE(exportFenceFd(*other, otherWork), 0);
+  gQueue.submitResults.assign(100, VK_ERROR_OUT_OF_HOST_MEMORY);
+  // A back-off of the other pool answers that the device is lost.
+  gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+  other->waitAll();
+  ASSERT_EQ(gQueue.backoffWaits.size(), 1u);
+  // The pool takes that answer, which ends its work, but resetting the row it frees fails once: it
+  // then backs off once, instead of taking the same answer again, and recovers that row.
+  gQueue.resetCommandBufferResults.assign(1, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+  const auto& wrapper = pool->acquire();
+  EXPECT_EQ(gQueue.backoffWaits.size(), 2u);
+  EXPECT_EQ(retiredThrough(*pool), submissions(*pool));
+  pool->discard(wrapper);
+  EXPECT_EQ(aborts.in("recycleCertifiedRow"), kDebugAbortsPerFailure);
+  gQueue.submitResults.clear();
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ALossProvedByARecordingThatWasNotSubmittedEndsTheWorkOfBothPools) {
+  // The fence of a recording that was not submitted answers that the device is lost, or answers
+  // success once a loss was reported (here by the creation of a checkpoint fence).
+  for (const bool successAfterAReportedLoss : {false, true}) {
+    SCOPED_TRACE(successAfterAReportedLoss);
+    auto& ctx = getVulkanContext();
+    const FakeContextPool main(*this, ctx.immediate_, "Dropped loss test");
+    const FakeContextPool staging(*this, ctx.stagingDevice_->immediate, "Dropped loss test");
+    // Exported work in both pools, which only a checkpoint can prove finished.
+    const auto stagingWork = staging->submit(staging->acquire());
+    ASSERT_GE(exportFenceFd(*staging, stagingWork), 0);
+    const auto mainWork = main->submit(main->acquire());
+    ASSERT_GE(exportFenceFd(*main, mainWork), 0);
+    if (successAfterAReportedLoss) {
+      gQueue.createFenceResult = VK_ERROR_DEVICE_LOST;
+      ASSERT_EQ(certifyAll(*main, kTestTimeout), VK_ERROR_UNKNOWN);
+      ASSERT_TRUE(main->isDeviceLost());
+    } else {
+      gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    }
+    const auto own = main->submit(main->acquire());
+    ASSERT_TRUE(droppedTheRecording(*main));
+    const uint64_t answers = lossAnswers(*main);
+    gQueue.blockingWaitResults = {successAfterAReportedLoss ? VK_SUCCESS : VK_ERROR_DEVICE_LOST};
+    EXPECT_EQ(main->wait(own, kTestTimeout), VK_ERROR_DEVICE_LOST);
+    // One answer is counted, and every submission of the pool ends, as lost.
+    EXPECT_EQ(lossAnswers(*main), answers + 1);
+    EXPECT_EQ(retiredThrough(*main), submissions(*main));
+    EXPECT_EQ(main->wait(mainWork, 0), VK_ERROR_DEVICE_LOST);
+    // The context takes the answer at once: the staging pool's work no longer runs either, with no
+    // wait or back-off of its own.
+    const size_t blockingWaits = gQueue.blockingWaits;
+    EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_DEVICE_LOST);
+    EXPECT_EQ(staging->wait(stagingWork, 0), VK_ERROR_DEVICE_LOST);
+    EXPECT_EQ(gQueue.blockingWaits, blockingWaits);
+    EXPECT_TRUE(gQueue.backoffWaits.empty());
+    EXPECT_EQ(gQueue.checkpoints, 0u);
+    // Waiting again counts nothing more.
+    EXPECT_EQ(main->wait(own, kTestTimeout), VK_ERROR_DEVICE_LOST);
+    main->waitAll();
+    EXPECT_EQ(lossAnswers(*main), answers + 1);
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, APoolSubmitsNothingAfterTheOtherPoolOfItsQueueProvedALoss) {
+  const auto pool = makeFakePool("Loss before submit test");
+  const auto other = makeFakePool("Loss before submit test");
+  shareQueueStop(*other, *pool);
+  const auto otherWork = other->submit(other->acquire());
+  // The fence of the pool's submission answers that the device is lost.
+  const auto work = pool->submit(pool->acquire());
+  gQueue.pollResults = {VK_TIMEOUT};
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(pool->wait(work, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // The other pool still has free rows: its next recording is not submitted, and its submitted work
+  // no longer runs.
+  const size_t submitCalls = gQueue.submitCalls;
+  const auto later = other->submit(other->acquire());
+  EXPECT_TRUE(droppedTheRecording(*other));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls);
+  EXPECT_EQ(other->wait(otherWork, 0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(other->wait(later, 0), VK_ERROR_DEVICE_LOST);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ASuccessAfterTheOtherPoolOfItsQueueProvedALossDoesNotMakeWorkSucceed) {
+  const auto pool = makeFakePool("Loss before success test");
+  const auto other = makeFakePool("Loss before success test");
+  shareQueueStop(*other, *pool);
+  const auto otherWork = other->submit(other->acquire());
+  const auto work = pool->submit(pool->acquire());
+  gQueue.pollResults = {VK_TIMEOUT};
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(pool->wait(work, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // The other pool's fence then answers success, as a lost device may: the loss comes first.
+  completeSubmissions(gQueue.submitted.size());
+  EXPECT_EQ(other->wait(otherWork, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_TRUE(other->isReady(otherWork));
+}
+
+TEST_F(VulkanImmediateCommandsTest, AWaitAfterTheOtherPoolOfItsQueueProvedALossWaitsForNothing) {
+  // The pool's work is exported and both checkpoints are pending, so a wait would wait for the
+  // oldest checkpoint, which signals and takes the whole (tiny) budget; or the work keeps its
+  // trusted fence, which a wait would wait on.
+  for (const bool exported : {true, false}) {
+    SCOPED_TRACE(exported);
+    const auto pool = makeFakePool("Loss before wait test");
+    const auto other = makeFakePool("Loss before wait test");
+    shareQueueStop(*other, *pool);
+    Commands::SubmitHandle work;
+    if (exported) {
+      gQueue.blockingWaitsComplete = false;
+      for (int i = 0; i != 2; ++i) {
+        ASSERT_GE(exportFenceFd(*pool, pool->submit(pool->acquire())), 0);
+        ASSERT_EQ(certifyAll(*pool, 1'000'000), VK_TIMEOUT);
+      }
+      ASSERT_STREQ(checkpointState(*pool, 0), "Pending");
+      ASSERT_STREQ(checkpointState(*pool, 1), "Pending");
+      gQueue.blockingWaitsComplete = true;
+      work = pool->submit(pool->acquire());
+      ASSERT_GE(exportFenceFd(*pool, work), 0);
+    } else {
+      work = pool->submit(pool->acquire());
+    }
+    // The other pool proves the device lost.
+    const auto otherWork = other->submit(other->acquire());
+    gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+    ASSERT_EQ(other->wait(otherWork, kTestTimeout), VK_ERROR_DEVICE_LOST);
+    // The wait returns that loss, waiting on no fence and submitting no checkpoint.
+    const size_t blockingWaits = gQueue.blockingWaits;
+    const size_t checkpoints = gQueue.checkpoints;
+    EXPECT_EQ(pool->wait(work, 1), VK_ERROR_DEVICE_LOST);
+    EXPECT_EQ(gQueue.blockingWaits, blockingWaits);
+    EXPECT_EQ(gQueue.checkpoints, checkpoints);
+    EXPECT_TRUE(pool->isReady(work));
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, TheFirstQueryAfterTheOtherPoolOfItsQueueProvedALossSeesIt) {
+  enum class Query : uint8_t { ZeroTimeWait, IsReady, IsRetired, DroppedWait };
+  for (const Query query :
+       {Query::ZeroTimeWait, Query::IsReady, Query::IsRetired, Query::DroppedWait}) {
+    SCOPED_TRACE(static_cast<int>(query));
+    const auto pool = makeFakePool("First query after a loss test");
+    const auto other = makeFakePool("First query after a loss test");
+    shareQueueStop(*other, *pool);
+    // Work that has not finished, with its trusted fence, or a recording that was not submitted.
+    if (query == Query::DroppedWait) {
+      gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    }
+    const auto work = pool->submit(pool->acquire());
+    ASSERT_EQ(droppedTheRecording(*pool), query == Query::DroppedWait);
+    // The other pool proves the device lost.
+    const auto otherWork = other->submit(other->acquire());
+    gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+    ASSERT_EQ(other->wait(otherWork, kTestTimeout), VK_ERROR_DEVICE_LOST);
+    // The first query of this pool answers that loss, without a blocking wait.
+    const size_t blockingWaits = gQueue.blockingWaits;
+    switch (query) {
+    case Query::ZeroTimeWait:
+      EXPECT_EQ(pool->wait(work, 0), VK_ERROR_DEVICE_LOST);
+      break;
+    case Query::IsReady:
+      EXPECT_TRUE(pool->isReady(work));
+      break;
+    case Query::IsRetired:
+      EXPECT_TRUE(isRetired(*pool, work));
+      break;
+    case Query::DroppedWait:
+      EXPECT_EQ(pool->wait(work, kTestTimeout), VK_ERROR_DEVICE_LOST);
+      break;
+    }
+    EXPECT_EQ(gQueue.blockingWaits, blockingWaits);
+    EXPECT_TRUE(pool->isDeviceLost());
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ACertifyAllAfterTheOtherPoolOfItsQueueProvedALossSubmitsNothing) {
+  const auto pool = makeFakePool("Loss before certifyAll test");
+  const auto other = makeFakePool("Loss before certifyAll test");
+  shareQueueStop(*other, *pool);
+  const auto work = pool->submit(pool->acquire());
+  ASSERT_GE(exportFenceFd(*pool, work), 0);
+  const auto otherWork = other->submit(other->acquire());
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(other->wait(otherWork, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // Only a checkpoint could prove the exported work finished: none is submitted.
+  const size_t checkpoints = gQueue.checkpoints;
+  EXPECT_EQ(certifyAll(*pool, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(gQueue.checkpoints, checkpoints);
+  EXPECT_EQ(pool->wait(work, 0), VK_ERROR_DEVICE_LOST);
+}
+
+TEST_F(VulkanImmediateCommandsTest, WaitAllOnARecordingThatWasNotSubmittedEndsOnTheOtherPoolsLoss) {
+  const auto pool = makeFakePool("Loss before waitAll test");
+  const auto other = makeFakePool("Loss before waitAll test");
+  shareQueueStop(*other, *pool);
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto own = pool->submit(pool->acquire());
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  const auto otherWork = other->submit(other->acquire());
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  ASSERT_EQ(other->wait(otherWork, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  // The wait for the recording that was not submitted ends at once: no wait on its fence (which
+  // the fake queue would fail), and no back-off.
+  pool->waitAll();
+  EXPECT_TRUE(gQueue.backoffWaits.empty());
+  EXPECT_EQ(pool->wait(own, 0), VK_ERROR_DEVICE_LOST);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllSkipsAPoolThatWasNeverCreated) {
+  auto& ctx = getVulkanContext();
+  // The staging device has no pool during the test; it gets its pool back afterwards, also after a
+  // failed assertion.
+  class PutBack {
+   public:
+    explicit PutBack(std::unique_ptr<Commands>& slot) : slot_(slot), pool_(std::move(slot)) {}
+    PutBack(const PutBack&) = delete;
+    PutBack& operator=(const PutBack&) = delete;
+    ~PutBack() {
+      slot_ = std::move(pool_);
+    }
+
+   private:
+    std::unique_ptr<Commands>& slot_;
+    std::unique_ptr<Commands> pool_;
+  };
+  const PutBack stagingPool(ctx.stagingDevice_->immediate);
+  ASSERT_EQ(ctx.stagingDevice_->immediate, nullptr);
+  const FakeContextPool main(*this, ctx.immediate_, "Missing pool test");
+  static_cast<void>(main->submit(main->acquire()));
+  EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_SUCCESS);
+  // A device loss ends the work of the pool that exists.
+  static_cast<void>(main->submit(main->acquire()));
+  gQueue.waitOverride = VK_ERROR_DEVICE_LOST;
+  EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(retiredThrough(*main), submissions(*main));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllBeforeThePoolsAreCreatedCertifiesNothing) {
+  // A context whose device, and so whose pools, were never created has submitted nothing.
+  vulkan::VulkanContext context(vulkan::VulkanContextConfig{}, nullptr);
+  EXPECT_EQ(context.certifyAll(0), VK_SUCCESS);
+  EXPECT_EQ(context.certifyAll(kTestTimeout), VK_SUCCESS);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllDoesNotTakeARememberedDeviceLossForAnAnswer) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool main(*this, ctx.immediate_, "Remembered device loss test");
+  const FakeContextPool staging(
+      *this, ctx.stagingDevice_->immediate, "Remembered device loss test");
+  // A submission reported the loss: the staging pool remembers it, but no fence wait or checkpoint
+  // answered it.
+  gQueue.submitResults = {VK_ERROR_DEVICE_LOST};
+  static_cast<void>(staging->submit(staging->acquire()));
+  ASSERT_TRUE(staging->isDeviceLost());
+  const auto exported = main->submit(main->acquire());
+  EXPECT_GE(exportFenceFd(*main, exported), 0);
+  // The staging pool's fence has not signaled, and no time is left for the main pool's checkpoint.
+  gQueue.waitOverride = VK_TIMEOUT;
+  EXPECT_EQ(ctx.certifyAll(0), VK_TIMEOUT);
+  EXPECT_LT(retiredThrough(*main), submissions(*main));
 }
 
 TEST_F(VulkanImmediateCommandsTest, ContextFenceExportGoesThroughThePool) {
@@ -3631,6 +4228,23 @@ TEST_F(VulkanImmediateCommandsTest, AContextThatCannotExportFencesReturnsMinusOn
   // Nothing was exported: the row's fence is still used.
   EXPECT_TRUE(fenceTrusted(pool, handle.bufferIndex));
   EXPECT_EQ(pool.wait(handle, kTestTimeout), VK_SUCCESS);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ContextCertifyAllCoversBothPools) {
+  auto& ctx = getVulkanContext();
+  auto& staging = *ctx.stagingDevice_->immediate;
+  const auto stagingHandle = staging.submit(staging.acquire());
+  const auto mainHandle = ctx.immediate_->submit(ctx.immediate_->acquire());
+  EXPECT_EQ(ctx.certifyAll(kTestTimeout), VK_SUCCESS);
+  EXPECT_STREQ(rowState(staging, stagingHandle.bufferIndex), "Free");
+  EXPECT_STREQ(rowState(*ctx.immediate_, mainHandle.bufferIndex), "Free");
+  EXPECT_TRUE(staging.isReady(stagingHandle));
+  EXPECT_TRUE(ctx.immediate_->isReady(mainHandle));
+
+  // A finite budget is shared by both pools.
+  static_cast<void>(staging.submit(staging.acquire()));
+  static_cast<void>(ctx.immediate_->submit(ctx.immediate_->acquire()));
+  EXPECT_EQ(ctx.certifyAll(5'000'000'000), VK_SUCCESS);
 }
 
 TEST_F(VulkanImmediateCommandsTest,

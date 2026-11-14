@@ -414,7 +414,7 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
     // busy row is quarantined), wait a little, longer each time, before trying again. A submission
     // whose fence cannot be used is never proven finished while no checkpoint can be submitted:
     // this then waits as long as that lasts, or until the device is lost.
-    if (!freeRow()) {
+    if (!freeRow() && !applyLossAnswers()) {
       IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): no command buffer can be freed now\n",
                          debugName_.c_str());
       static_cast<void>(backoff(attempt));
@@ -522,8 +522,9 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
   }
 
   if (timeoutNanoseconds == 0) {
-    // A zero-time wait only polls, which `isReady()` did.
-    return VK_TIMEOUT;
+    // A zero-time wait only polls, as `isReady()` does: a loss the other pool of the queue proved
+    // ends this pool's work too.
+    return applyLossAnswers() ? certifiedResult(ticket.prefix) : VK_TIMEOUT;
   }
 
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
@@ -562,7 +563,7 @@ void VulkanImmediateCommands::waitAll() {
       fences[numFences++] = buf.fence.vkFence_;
     }
   }
-  if (numFences == 0 || lossCertified_) {
+  if (numFences == 0 || applyLossAnswers() || lossCertified_) {
     return;
   }
   IGL_LOG_ERROR_ONCE(
@@ -602,12 +603,18 @@ void VulkanImmediateCommands::drainSubmitted() {
         "%d)\n",
         debugName_.c_str(),
         static_cast<int>(result));
-    static_cast<void>(backoff(attempt));
+    if (!applyLossAnswers()) {
+      static_cast<void>(backoff(attempt));
+    }
   }
 }
 
 VkResult VulkanImmediateCommands::certifyAll(uint64_t& remainingNanoseconds) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+
+  // The other pool's answers are applied before a checkpoint (`certifyThrough()`), not here:
+  // `VulkanContext::certifyAll()` takes them before it calls the pools, so applying them here again
+  // would make its next call return VK_ERROR_DEVICE_LOST instead of VK_SUCCESS.
 
   // Without time, only poll: no checkpoint is submitted and nothing is reset.
   const bool pollOnly = remainingNanoseconds == 0;
@@ -781,7 +788,11 @@ void VulkanImmediateCommands::certifyQueueIdle(bool lost) const noexcept {
     checkDeviceLost(VK_ERROR_DEVICE_LOST);
   }
   certify(submissionCounter_, lost);
-  // The queue is idle, so no checkpoint fence is pending, including those whose submission failed.
+  markCheckpointsIdle();
+}
+
+void VulkanImmediateCommands::markCheckpointsIdle() const noexcept {
+  // No checkpoint fence is pending, including those whose submission failed.
   for (Checkpoint& checkpoint : checkpoints_) {
     if (checkpoint.state == Checkpoint::State::Pending ||
         checkpoint.state == Checkpoint::State::Abandoned) {
@@ -791,6 +802,14 @@ void VulkanImmediateCommands::certifyQueueIdle(bool lost) const noexcept {
 }
 
 void VulkanImmediateCommands::certify(uint64_t ordinal, bool lost) const noexcept {
+  if (!lost) {
+    // A loss that the other pool of the queue proved first comes before this success.
+    static_cast<void>(applyLossAnswers());
+  }
+  recordCertification(ordinal, lost);
+}
+
+void VulkanImmediateCommands::recordCertification(uint64_t ordinal, bool lost) const noexcept {
   retiredThrough_ = std::max(retiredThrough_, ordinal);
   if (lost) {
     lossCertified_ = true;
@@ -800,7 +819,26 @@ void VulkanImmediateCommands::certify(uint64_t ordinal, bool lost) const noexcep
 }
 
 void VulkanImmediateCommands::certifyLoss() const noexcept {
+  if (!lossCertified_) {
+    noteLossAnswer();
+  }
   certifyQueueIdle(true);
+}
+
+void VulkanImmediateCommands::noteLossAnswer() const noexcept {
+  ++queueState_->lossAnswers;
+}
+
+bool VulkanImmediateCommands::applyLossAnswers() const noexcept {
+  if (queueState_->lossAnswers == appliedLossAnswers_) {
+    return false;
+  }
+  appliedLossAnswers_ = queueState_->lossAnswers;
+  // `certifyQueueIdle(true)`, without `certify()`, which would call back here.
+  checkDeviceLost(VK_ERROR_DEVICE_LOST);
+  recordCertification(submissionCounter_, true);
+  markCheckpointsIdle();
+  return true;
 }
 
 VkResult VulkanImmediateCommands::certifiedResult(uint64_t target) const noexcept {
@@ -850,7 +888,9 @@ VkResult VulkanImmediateCommands::waitFence(const VkFence* fence,
 VkResult VulkanImmediateCommands::certifyThrough(uint64_t target,
                                                  uint64_t& remainingNanoseconds,
                                                  const CommandBufferWrapper* IGL_NULLABLE own) {
-  bool lost = false;
+  // A loss that another pool of the queue proved ends this pool's work too: then no fence is waited
+  // on and no checkpoint is submitted.
+  bool lost = applyLossAnswers();
   while (retiredThrough_ < target) {
     uint64_t ordinal = 0;
     const VkFence* fence = lowestSourceFor(target, own, ordinal);
@@ -994,6 +1034,8 @@ bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
   if (ticket.kind == Ticket::Kind::Lost) {
     return true;
   }
+  // A loss the other pool of the queue proved ends this pool's work too.
+  static_cast<void>(applyLossAnswers());
   if (ticket.kind == Ticket::Kind::Dropped) {
     // As a fence that nothing signals: only a certified device loss ends it.
     return lossCertified_;
@@ -1010,6 +1052,8 @@ bool VulkanImmediateCommands::isRetired(SubmitHandle handle) const {
   if (ticket.kind == Ticket::Kind::Open) {
     return false;
   }
+  // A loss the other pool of the queue proved ends this pool's work too.
+  static_cast<void>(applyLossAnswers());
   if (ticket.kind == Ticket::Kind::Dropped && lossCertified_) {
     return true;
   }
@@ -1097,6 +1141,8 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
   const bool staleWrapper = wrapper.state == RowState::Free;
   lastSubmitDroppedTheRecording_ = false;
   lastSubmitOutcomeUnknown_ = false;
+  // The other pool of the queue may have proven the device lost: then nothing more is submitted.
+  static_cast<void>(applyLossAnswers());
 
   if (!staleWrapper && (chainPoisoned_ || queueState_->stopped || isDeviceLost())) {
     // This submission would wait on a chain semaphore that a recording that was not submitted never
@@ -1237,6 +1283,8 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::dropRecording(
 
 VkResult VulkanImmediateCommands::waitDropped(const CommandBufferWrapper& wrapper,
                                               uint64_t timeoutNanoseconds) const {
+  // A loss the other pool of the queue proved ends this pool's work too.
+  static_cast<void>(applyLossAnswers());
   if (lossCertified_) {
     return VK_ERROR_DEVICE_LOST;
   }

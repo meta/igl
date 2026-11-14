@@ -301,6 +301,7 @@ class VulkanImmediateCommands final {
   /// nothing signals: then it returns only once a device loss is certified (a success with no loss
   /// reported proves nothing, and it keeps backing off), or when that wait fails, which debug
   /// builds assert, as on master.
+  /// For a wait with a time limit that reports its result, use `VulkanContext::certifyAll()`.
   void waitAll();
 
   /// @brief Returns the fence associated with the handle until its command buffer is acquired
@@ -338,6 +339,14 @@ class VulkanImmediateCommands final {
     /// on a queue where a submission waits on a semaphore that nothing signals, nothing submitted
     /// after it can run.
     bool stopped = false;
+    /// @brief How many fence waits, checkpoint submissions and back-offs (counted once per pool)
+    /// of the pools sharing it answered that the device is lost: each such answer is fresh
+    /// evidence that nothing submitted to the device runs any more (see
+    /// `VulkanContext::certifyAll()`). A loss only remembered from another call
+    /// (`isDeviceLost()`), or derived from such an answer, is not one.
+    uint64_t lossAnswers = 0;
+    /// @brief The answers that `VulkanContext::certifyAll()` already applied to both pools.
+    uint64_t certifiedLossAnswers = 0;
   };
   /// @brief If `nextCmdBuf` is not null, it is a primary command buffer that the submission runs
   /// after the one of `wrapper`, such as the recording of a reusable command buffer. A recording
@@ -446,13 +455,28 @@ class VulkanImmediateCommands final {
 
   /// @brief Records that every submission up to `ordinal` finished, or no longer runs after a
   /// device loss (`lost`). After a certified loss a success answer certifies no success: Vulkan
-  /// allows a lost device to answer success, so it cannot make lost work succeed.
+  /// allows a lost device to answer success, so it cannot make lost work succeed. Before a success,
+  /// the losses that a pool sharing the queue state answered are applied (`applyLossAnswers()`).
   void certify(uint64_t ordinal, bool lost = false) const noexcept;
+  /// @brief `certify()` without applying the losses answered by a pool sharing the queue state.
+  void recordCertification(uint64_t ordinal, bool lost) const noexcept;
+  /// @brief Marks every pending or abandoned checkpoint signaled, once the queue is idle or the
+  /// device is lost: no checkpoint fence is pending any more.
+  void markCheckpointsIdle() const noexcept;
 
   /// @brief Records a fresh answer that the device is lost (from a fence wait or poll, a checkpoint
   /// submission or the back-off fence): nothing submitted runs any more, so every submission of the
-  /// pool ends, as lost (see `certifyQueueIdle()`).
+  /// pool ends, as lost (see `certifyQueueIdle()`). The first such answer of the pool is counted
+  /// for the pools sharing its queue state (see `noteLossAnswer()`).
   void certifyLoss() const noexcept;
+  /// @brief Counts a device-loss answer of this pool in its queue state (see
+  /// `QueueState::lossAnswers`).
+  void noteLossAnswer() const noexcept;
+  /// @brief Ends every submission of this pool, as lost, when a pool sharing its queue state
+  /// counted a device-loss answer that this pool has not applied yet; returns whether it did.
+  /// Called before a submission, a success is certified, or a back-off, so that the other pool's
+  /// answer stops submissions, freezes successes and ends a wait without one of its own.
+  bool applyLossAnswers() const noexcept;
 
   /// @brief Polls, at most once, the lowest fence that covers `ticket` when it is not yet
   /// certified, and records what the answer certifies.
@@ -614,6 +638,9 @@ class VulkanImmediateCommands final {
   /// @brief The part of `retiredThrough_` certified by fences that signaled, not by device loss. It
   /// no longer grows once a loss is certified (see `certify()`).
   mutable uint64_t succeededThrough_ = 0;
+  /// @brief The device-loss answers of the shared queue state that this pool applied (see
+  /// `applyLossAnswers()`).
+  mutable uint64_t appliedLossAnswers_ = 0;
   /// @brief Set once a fence, a checkpoint, the back-off fence, a queue idle, or the fence of a
   /// recording that was not submitted reported a device loss: nothing submitted runs any more.
   mutable bool lossCertified_ = false;

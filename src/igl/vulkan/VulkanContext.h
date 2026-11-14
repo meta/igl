@@ -367,6 +367,19 @@ class VulkanContext final {
 
   void waitDeferredTasks();
 
+  /// @brief Waits, for at most `timeoutNanoseconds` of fence waiting in total, until the GPU has
+  /// finished every submission made by this context: those of the command buffers and those of the
+  /// staging device (see `VulkanImmediateCommands::certifyAll()`). Returns `VK_SUCCESS` or
+  /// `VK_ERROR_DEVICE_LOST` when nothing submitted runs any more, which is when objects the
+  /// submitted work uses may be destroyed; otherwise `VK_TIMEOUT`, an out-of-memory code or
+  /// `VK_ERROR_UNKNOWN`. When a fence wait, a checkpoint submission or a back-off of either pool
+  /// answered that the device is lost, during the call or since the last call, nothing submitted to
+  /// it runs any more, also the work that was not waited for: the call returns
+  /// `VK_ERROR_DEVICE_LOST`. A loss only remembered (`isDeviceLost()`), such as one that a failed
+  /// fence reset reported, ends no work and is not reported. Recordings that are still open are
+  /// not waited for. Before `initContext()` created the pools, it returns `VK_SUCCESS`. Call it on
+  /// the context thread (see `setCurrentContextThread()`); debug builds check it.
+  [[nodiscard]] VkResult certifyAll(uint64_t timeoutNanoseconds);
   /// @param handle The handle to the GPU Fence
   /// @return The Vulkan fence associated with the handle
   // @fb-only
