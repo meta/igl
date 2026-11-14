@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <type_traits>
 #include <igl/vulkan/Common.h>
 
@@ -21,6 +22,29 @@ namespace {
 /// The submit id of an acquisition ordinal.
 [[nodiscard]] uint32_t lowBits(uint64_t ordinal) noexcept {
   return static_cast<uint32_t>(ordinal & 0xffffffffu);
+}
+
+[[nodiscard]] bool isOutOfMemory(VkResult result) noexcept {
+  return result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
+/// Waits on `fences` for at most `remainingNanoseconds` (`UINT64_MAX` waits without a limit) and
+/// subtracts the time the wait took, so that one budget covers every wait of a call.
+VkResult waitForFences(const VulkanFunctionTable& vf,
+                       VkDevice device,
+                       uint32_t count,
+                       const VkFence* fences,
+                       uint64_t& remainingNanoseconds) {
+  if (remainingNanoseconds == UINT64_MAX || remainingNanoseconds == 0) {
+    return vf.vkWaitForFences(device, count, fences, VK_TRUE, remainingNanoseconds);
+  }
+  const auto start = std::chrono::steady_clock::now();
+  const VkResult result = vf.vkWaitForFences(device, count, fences, VK_TRUE, remainingNanoseconds);
+  const auto elapsed = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+          .count());
+  remainingNanoseconds = elapsed >= remainingNanoseconds ? 0 : remainingNanoseconds - elapsed;
+  return result;
 }
 
 } // namespace
@@ -109,10 +133,22 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
     buffers_[i].handle.bufferIndex = i;
   }
   IGL_DEBUG_ASSERT(buffers_.size() == kMaxCommandBuffers);
+  checkpoints_.reserve(kMaxCheckpoints);
 }
 
 VulkanImmediateCommands::~VulkanImmediateCommands() {
   waitAll();
+
+  // A checkpoint fence cannot be destroyed while its signal is pending.
+  for (Checkpoint& checkpoint : checkpoints_) {
+    if (checkpoint.state == Checkpoint::State::Pending) {
+      const VkResult result =
+          vf_.vkWaitForFences(device_, 1, &checkpoint.fence.vkFence_, VK_TRUE, UINT64_MAX);
+      if (!checkDeviceLost(result)) {
+        VK_ASSERT(result);
+      }
+    }
+  }
 
   vf_.vkDestroyCommandPool(device_, commandPool_, nullptr);
 }
@@ -120,39 +156,231 @@ VulkanImmediateCommands::~VulkanImmediateCommands() {
 void VulkanImmediateCommands::purge() {
   IGL_PROFILER_FUNCTION();
 
+  pollPendingCheckpoints();
+  // The fence of an exported or unknown submission is never polled; a later answer covers it.
   for (auto& buf : buffers_) {
     IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
-    if (buf.state != RowState::Submitted) {
+    const RowRetirement& row = buf.retirement_;
+    if (buf.state != RowState::Submitted || row.quarantined || !row.fenceTrusted ||
+        retiredThrough_ >= row.prefix) {
       continue;
     }
-
     const VkResult result = vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0);
-
     if (result == VK_SUCCESS) {
-      certify(buf.retirement_.prefix);
-      VK_ASSERT(vf_.vkResetCommandBuffer(buf.cmdBuf, VkCommandBufferResetFlags{0}));
-      VK_ASSERT(vf_.vkResetFences(device_, 1, &buf.fence.vkFence_));
-      setRowState(buf, RowState::Free);
-      numAvailableCommandBuffers_++;
+      certify(row.prefix);
     } else if (checkDeviceLost(result)) {
-      // A lost device runs nothing any more: the submission is finished, and the row is kept.
-      certify(buf.retirement_.prefix, true);
+      certifyLoss();
+    } else if (result != VK_TIMEOUT) {
+      VK_ASSERT(result);
+    }
+  }
+  for (auto& buf : buffers_) {
+    if (buf.state == RowState::Submitted && !buf.retirement_.quarantined &&
+        retiredThrough_ >= buf.retirement_.prefix) {
+      static_cast<void>(recycleCertifiedRow(buf));
+    }
+  }
+}
+
+void VulkanImmediateCommands::pollPendingCheckpoints() const {
+  for (Checkpoint& checkpoint : checkpoints_) {
+    if (checkpoint.state != Checkpoint::State::Pending) {
+      continue;
+    }
+    const VkResult result = vf_.vkWaitForFences(device_, 1, &checkpoint.fence.vkFence_, VK_TRUE, 0);
+    if (result == VK_SUCCESS || checkDeviceLost(result)) {
+      noteFenceSignaled(&checkpoint.fence.vkFence_, checkpoint.covers, result != VK_SUCCESS);
     } else if (result != VK_TIMEOUT) {
       VK_ASSERT(result);
     }
   }
 }
 
+VkResult VulkanImmediateCommands::recycleCertifiedRow(CommandBufferWrapper& wrapper) {
+  // Its submission retired: one certified successful keeps that answer once the row is reused.
+  if (wrapper.retirement_.prefix <= succeededThrough_) {
+    wrapper.succeededAcquisition_ = wrapper.retirement_.acquisition;
+  }
+  const VkResult commandBufferResult =
+      vf_.vkResetCommandBuffer(wrapper.cmdBuf, VkCommandBufferResetFlags{0});
+  VK_ASSERT(commandBufferResult);
+  if (commandBufferResult != VK_SUCCESS) {
+    // The command buffer cannot be recorded again until a reset succeeds.
+    wrapper.retirement_.quarantined = true;
+    IGL_LOG_ERROR_ONCE(
+        "VulkanImmediateCommands (%s): a command buffer could not be reset (VkResult %d)\n",
+        debugName_.c_str(),
+        static_cast<int>(commandBufferResult));
+    return commandBufferResult;
+  }
+  const VkResult result = vf_.vkResetFences(device_, 1, &wrapper.fence.vkFence_);
+  VK_ASSERT(result);
+  if (result != VK_SUCCESS) {
+    // A reported device loss is remembered; it proves nothing about other submissions.
+    static_cast<void>(checkDeviceLost(result));
+    // The fence may still be signaled: keep the row out of circulation until its fence is reset or
+    // replaced.
+    wrapper.retirement_.quarantined = true;
+    IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): a fence could not be reset (VkResult %d)\n",
+                       debugName_.c_str(),
+                       static_cast<int>(result));
+    return result;
+  }
+  setRowState(wrapper, RowState::Free);
+  numAvailableCommandBuffers_++;
+  return VK_SUCCESS;
+}
+
+bool VulkanImmediateCommands::recycleOldest() {
+  CommandBufferWrapper* oldest = nullptr;
+  for (auto& buf : buffers_) {
+    if (buf.state == RowState::Submitted && !buf.retirement_.quarantined &&
+        (!oldest || buf.retirement_.prefix < oldest->retirement_.prefix)) {
+      oldest = &buf;
+    }
+  }
+  if (!oldest) {
+    return false;
+  }
+  const uint32_t availableBefore = numAvailableCommandBuffers_;
+  const uint64_t prefix = oldest->retirement_.prefix;
+  if (oldest->retirement_.fenceTrusted && retiredThrough_ < prefix) {
+    // One wait on the oldest submission's own fence.
+    uint64_t remaining = UINT64_MAX;
+    const VkResult result = waitForFences(vf_, device_, 1, &oldest->fence.vkFence_, remaining);
+    if (result == VK_SUCCESS || checkDeviceLost(result)) {
+      // A device loss ends every submission, as lost: the row is reused like a finished one.
+      if (result == VK_SUCCESS) {
+        certify(prefix);
+      } else {
+        certifyLoss();
+      }
+      static_cast<void>(recycleCertifiedRow(*oldest));
+    } else if (result != VK_TIMEOUT) {
+      VK_ASSERT(result);
+    }
+    return numAvailableCommandBuffers_ > availableBefore;
+  }
+  if (retiredThrough_ < prefix) {
+    uint64_t remaining = UINT64_MAX;
+    static_cast<void>(certifyThrough(prefix, remaining, nullptr));
+  }
+  if (retiredThrough_ >= prefix) {
+    static_cast<void>(recycleCertifiedRow(*oldest));
+  }
+  return numAvailableCommandBuffers_ > availableBefore;
+}
+
+bool VulkanImmediateCommands::recoverQuarantinedRow() {
+  for (auto& buf : buffers_) {
+    if (buf.state != RowState::Submitted || !buf.retirement_.quarantined) {
+      continue;
+    }
+    // Its submission finished before the row was quarantined.
+    if (vf_.vkResetCommandBuffer(buf.cmdBuf, VkCommandBufferResetFlags{0}) != VK_SUCCESS) {
+      continue;
+    }
+    if (vf_.vkResetFences(device_, 1, &buf.fence.vkFence_) != VK_SUCCESS) {
+      // Replace the fence. Nothing pending uses it, and a fence handed out for the old submission
+      // (`getVkFenceFromSubmitHandle()`) is valid only until the row is acquired again, which is
+      // what follows: rows are recovered only when none is free.
+      VulkanFence fence(vf_,
+                        device_,
+                        VkFenceCreateFlagBits{},
+                        buf.fence.exportable(),
+                        IGL_FORMAT("Fence: commandBuffer #{}", buf.handle.bufferIndex).c_str());
+      if (fence.initResult() != VK_SUCCESS) {
+        static_cast<void>(checkDeviceLost(fence.initResult()));
+        continue;
+      }
+      buf.fence = std::move(fence);
+    }
+    buf.retirement_.quarantined = false;
+    setRowState(buf, RowState::Free);
+    numAvailableCommandBuffers_++;
+    return true;
+  }
+  return false;
+}
+
+bool VulkanImmediateCommands::freeRow() {
+  return recoverQuarantinedRow() || recycleOldest();
+}
+
+VkResult VulkanImmediateCommands::backoff(uint32_t& attempt) {
+  constexpr std::array<uint64_t, 5> kDelayNanoseconds = {
+      1'000'000, 2'000'000, 4'000'000, 8'000'000, 16'000'000};
+  const uint64_t delay = kDelayNanoseconds[attempt];
+  if (attempt + 1 < kDelayNanoseconds.size()) {
+    ++attempt;
+  }
+  VkResult result = ensureBackoffFence();
+  if (result == VK_SUCCESS && backoffFence_) {
+    result = vf_.vkWaitForFences(device_, 1, &backoffFence_->vkFence_, VK_TRUE, delay);
+  }
+  if (result == VK_TIMEOUT) {
+    return result;
+  }
+  // Nothing on a working device signals this fence. An answer that the device is lost proves that
+  // nothing submitted runs any more; so does a success once a loss was already reported.
+  if (result == VK_ERROR_DEVICE_LOST || (result == VK_SUCCESS && isDeviceLost())) {
+    certifyLoss();
+    return result;
+  }
+  if (result == VK_SUCCESS) {
+    IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): the back-off fence answered as signaled\n",
+                       debugName_.c_str());
+  } else {
+    IGL_LOG_ERROR_ONCE(
+        "VulkanImmediateCommands (%s): the back-off fence wait failed (VkResult %d)\n",
+        debugName_.c_str(),
+        static_cast<int>(result));
+  }
+  // The fence wait failed (or the fence could not be created), or answered at once what proves
+  // nothing: wait on the host, so that this does not spin.
+  hostBackoffDelay(delay);
+  return result;
+}
+
+void VulkanImmediateCommands::hostBackoffDelay(uint64_t nanoseconds) {
+  std::unique_lock<std::mutex> lock(hostBackoffMutex_);
+  hostBackoffWakeup_.wait_for(lock, std::chrono::nanoseconds(nanoseconds), [] { return false; });
+}
+
+VkResult VulkanImmediateCommands::ensureBackoffFence() {
+  if (!backoffFence_ || backoffFence_->vkFence_ == VK_NULL_HANDLE) {
+    backoffFence_.emplace(vf_,
+                          device_,
+                          VkFenceCreateFlagBits{},
+                          false,
+                          IGL_FORMAT("Fence: {} back-off", debugName_).c_str());
+  }
+  return backoffFence_->initResult();
+}
+
 const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::acquire() {
   IGL_PROFILER_FUNCTION();
   if (!numAvailableCommandBuffers_) {
+    // Free every row whose submission finished, without waiting; wait below only when none did.
     purge();
+    if (!numAvailableCommandBuffers_) {
+      IGL_LOG_INFO("Waiting for command buffers...\n");
+    }
   }
 
+  uint32_t attempt = 0;
   while (!numAvailableCommandBuffers_) {
-    IGL_LOG_INFO("Waiting for command buffers...\n");
     IGL_PROFILER_ZONE("Waiting for command buffers...", IGL_PROFILER_COLOR_WAIT);
-    purge();
+    // Block, with no time limit, on the oldest submission instead of polling every row in a loop.
+    // When no row can be freed now (no checkpoint can be submitted, a fence wait failed, or every
+    // busy row is quarantined), wait a little, longer each time, before trying again. A submission
+    // whose fence cannot be used is never proven finished while no checkpoint can be submitted:
+    // this then waits as long as that lasts, or until the device is lost.
+    if (!freeRow()) {
+      IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): no command buffer can be freed now\n",
+                         debugName_.c_str());
+      static_cast<void>(backoff(attempt));
+    }
     IGL_PROFILER_ZONE_END();
   }
 
@@ -255,21 +483,15 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
 
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
-  // The submission that the ticket waits for is still in its row (a row is freed only once its
-  // fence signaled), so some row fence covers it.
-  uint64_t ordinal = 0;
-  const VkFence* fence = lowestSourceFor(ticket.prefix, ticket.own, ordinal);
-  if (fence == nullptr) {
-    IGL_DEBUG_ABORT("No fence covers a submission that has not finished");
-    return VK_ERROR_UNKNOWN;
-  }
-  const VkResult result = waitFence(fence, ordinal, timeoutNanoseconds);
+  uint64_t remaining = timeoutNanoseconds;
+  const VkResult result = certifyThrough(ticket.prefix, remaining, ticket.own);
 
-  if (result == VK_TIMEOUT) {
+  // The work may have been certified while the time ran out: then that is the answer.
+  if (result == VK_TIMEOUT && retiredThrough_ < ticket.prefix) {
     return VK_TIMEOUT;
   }
 
-  if (result != VK_SUCCESS) {
+  if (result != VK_SUCCESS && result != VK_TIMEOUT) {
     IGL_LOG_ERROR_ONCE(
         "VulkanImmediateCommands::wait - Waiting for command buffer fence failed with error %i",
         static_cast<int>(result));
@@ -278,31 +500,100 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
 
   purge();
 
-  return result;
+  // A success answer after a certified loss does not make the handle's work succeed.
+  return retiredThrough_ >= ticket.prefix ? certifiedResult(ticket.prefix) : result;
 }
 
 void VulkanImmediateCommands::waitAll() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+  uint32_t attempt = 0;
+  for (;;) {
+    uint64_t unbounded = UINT64_MAX;
+    [[maybe_unused]] const VkResult result = certifyAll(unbounded);
+    if (retiredThrough_ >= submissionCounter_) {
+      return;
+    }
+    // Objects the submitted work uses must not be destroyed before it is proven finished: try
+    // again a little later (a checkpoint could not be submitted, or a fence wait failed).
+    IGL_LOG_ERROR_ONCE(
+        "VulkanImmediateCommands (%s): the submitted work cannot be proven finished now (VkResult "
+        "%d)\n",
+        debugName_.c_str(),
+        static_cast<int>(result));
+    static_cast<void>(backoff(attempt));
+  }
+}
+
+VkResult VulkanImmediateCommands::certifyAll(uint64_t& remainingNanoseconds) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+
+  // Without time, only poll: no checkpoint is submitted and nothing is reset.
+  const bool pollOnly = remainingNanoseconds == 0;
 
   VkFence fences[kMaxCommandBuffers] = {};
 
   uint32_t numFences = 0;
+  uint64_t trustedThrough = 0;
+  uint64_t untrustedThrough = 0;
 
   for (const auto& buf : buffers_) {
     IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
-    if (buf.state == RowState::Submitted) {
+    // A quarantined row's submission finished before its fence reset failed, and that fence's
+    // state is undefined: it is never waited on.
+    if (buf.state != RowState::Submitted || buf.retirement_.quarantined) {
+      continue;
+    }
+    const RowRetirement& row = buf.retirement_;
+    if (row.fenceTrusted) {
       fences[numFences++] = buf.fence.vkFence_;
+      trustedThrough = std::max(trustedThrough, row.prefix);
+    } else {
+      untrustedThrough = std::max(untrustedThrough, row.prefix);
     }
   }
 
+  VkResult result = VK_SUCCESS;
+  bool lost = false;
   if (numFences) {
-    const VkResult result = vf_.vkWaitForFences(device_, numFences, fences, VK_TRUE, UINT64_MAX);
-    if (!checkDeviceLost(result)) {
+    result = waitForFences(vf_, device_, numFences, fences, remainingNanoseconds);
+    if (result == VK_SUCCESS) {
+      certify(trustedThrough);
+    } else if (checkDeviceLost(result)) {
+      // Nothing submitted runs any more: no checkpoint is needed, nor submitted to the lost device.
+      certifyLoss();
+      if (!pollOnly) {
+        purge();
+      }
+      return VK_ERROR_DEVICE_LOST;
+    } else if (result != VK_TIMEOUT) {
       VK_ASSERT(result);
     }
   }
 
-  purge();
+  // Exported and unknown submissions that no trusted fence covers need a checkpoint.
+  if (result == VK_SUCCESS && untrustedThrough > retiredThrough_) {
+    result = certifyThrough(untrustedThrough, remainingNanoseconds, nullptr);
+    if (result == VK_ERROR_DEVICE_LOST) {
+      lost = true;
+      result = VK_SUCCESS;
+    }
+  }
+
+  if (!pollOnly) {
+    purge();
+  }
+
+  return (result == VK_SUCCESS && lost) ? VK_ERROR_DEVICE_LOST : result;
+}
+
+bool VulkanImmediateCommands::answersAsCurrentRecording(SubmitHandle handle) const noexcept {
+  const uint32_t currentId = buffers_[handle.bufferIndex].handle.submitId;
+  const uint32_t floorId = lowBits(buffers_[handle.bufferIndex].retirement_.aliasFloor);
+  // Submit ids skip 0 and order acquisitions modulo 2^32, so `handle` lies in
+  // [aliasFloor, current) exactly when its distance from the floor is the smaller.
+  return handle.submitId != 0 && floorId != currentId &&
+         static_cast<uint32_t>(handle.submitId - floorId) <
+             static_cast<uint32_t>(currentId - floorId);
 }
 
 bool VulkanImmediateCommands::isRecycled(SubmitHandle handle) const {
@@ -316,16 +607,6 @@ bool VulkanImmediateCommands::isRecycled(SubmitHandle handle) const {
   // already recycled and reused by another command buffer
   return buffers_[handle.bufferIndex].handle.submitId != handle.submitId &&
          !answersAsCurrentRecording(handle);
-}
-
-bool VulkanImmediateCommands::answersAsCurrentRecording(SubmitHandle handle) const noexcept {
-  const uint32_t currentId = buffers_[handle.bufferIndex].handle.submitId;
-  const uint32_t floorId = lowBits(buffers_[handle.bufferIndex].retirement_.aliasFloor);
-  // Submit ids skip 0 and order acquisitions modulo 2^32, so `handle` lies in
-  // [aliasFloor, current) exactly when its distance from the floor is the smaller.
-  return handle.submitId != 0 && floorId != currentId &&
-         static_cast<uint32_t>(handle.submitId - floorId) <
-             static_cast<uint32_t>(currentId - floorId);
 }
 
 VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOfRow(
@@ -350,37 +631,81 @@ VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOf(
   if (buf.handle.submitId == handle.submitId || answersAsCurrentRecording(handle)) {
     return ticketOfRow(buf);
   }
+  if (succeededBefore(buf, handle)) {
+    return {.kind = Ticket::Kind::Settled};
+  }
   // An older recording of this row: it closed before the row was acquired again, so its prefix is
   // at most the previous recording's.
   return {.kind = Ticket::Kind::Prefix, .prefix = buf.retirement_.previousPrefix};
+}
+
+bool VulkanImmediateCommands::succeededBefore(const CommandBufferWrapper& buf,
+                                              SubmitHandle handle) noexcept {
+  const uint64_t current = buf.retirement_.acquisition;
+  // Submit ids order acquisitions modulo 2^32.
+  const uint64_t age = static_cast<uint32_t>(lowBits(current) - handle.submitId);
+  return buf.succeededAcquisition_ != 0 && age <= current &&
+         current - age <= buf.succeededAcquisition_;
 }
 
 const VkFence* IGL_NULLABLE
 VulkanImmediateCommands::lowestSourceFor(uint64_t target,
                                          const CommandBufferWrapper* IGL_NULLABLE own,
                                          uint64_t& ordinal) const noexcept {
-  if (own && own->state == RowState::Submitted && own->retirement_.prefix == target) {
+  if (own && own->state == RowState::Submitted && own->retirement_.fenceTrusted &&
+      own->retirement_.prefix == target) {
     // The common case: the handle's own submission, whose fence no other source precedes.
     ordinal = target;
     return &own->fence.vkFence_;
   }
   const VkFence* fence = nullptr;
   ordinal = UINT64_MAX;
+  // A quarantined row needs no check here: one whose submission finished has its prefix at most
+  // retiredThrough_, which is below every target this search is asked for, and the fence of one
+  // whose discarded recording could not be reset is not trusted.
   for (const auto& buf : buffers_) {
-    if (buf.state == RowState::Submitted && buf.retirement_.prefix >= target &&
-        buf.retirement_.prefix < ordinal) {
-      ordinal = buf.retirement_.prefix;
+    const RowRetirement& row = buf.retirement_;
+    if (buf.state == RowState::Submitted && row.fenceTrusted && row.prefix >= target &&
+        row.prefix < ordinal) {
+      ordinal = row.prefix;
       fence = &buf.fence.vkFence_;
+    }
+  }
+  for (const Checkpoint& checkpoint : checkpoints_) {
+    if (checkpoint.state == Checkpoint::State::Pending && checkpoint.covers >= target &&
+        checkpoint.covers < ordinal) {
+      ordinal = checkpoint.covers;
+      fence = &checkpoint.fence.vkFence_;
     }
   }
   return fence;
 }
 
+void VulkanImmediateCommands::certifyQueueIdle(bool lost) const noexcept {
+  if (lost) {
+    checkDeviceLost(VK_ERROR_DEVICE_LOST);
+  }
+  certify(submissionCounter_, lost);
+  // The queue is idle, so no checkpoint fence is pending, including those whose submission failed.
+  for (Checkpoint& checkpoint : checkpoints_) {
+    if (checkpoint.state == Checkpoint::State::Pending ||
+        checkpoint.state == Checkpoint::State::Abandoned) {
+      checkpoint.state = Checkpoint::State::Signaled;
+    }
+  }
+}
+
 void VulkanImmediateCommands::certify(uint64_t ordinal, bool lost) const noexcept {
   retiredThrough_ = std::max(retiredThrough_, ordinal);
-  if (!lost) {
+  if (lost) {
+    lossCertified_ = true;
+  } else if (!lossCertified_) {
     succeededThrough_ = std::max(succeededThrough_, ordinal);
   }
+}
+
+void VulkanImmediateCommands::certifyLoss() const noexcept {
+  certifyQueueIdle(true);
 }
 
 VkResult VulkanImmediateCommands::certifiedResult(uint64_t target) const noexcept {
@@ -398,18 +723,168 @@ void VulkanImmediateCommands::pollFor(const Ticket& ticket) const {
   }
   const VkResult result = vf_.vkWaitForFences(device_, 1, fence, VK_TRUE, 0);
   if (result == VK_SUCCESS || checkDeviceLost(result)) {
-    certify(ordinal, result != VK_SUCCESS);
+    noteFenceSignaled(fence, ordinal, result != VK_SUCCESS);
+  }
+}
+
+void VulkanImmediateCommands::noteFenceSignaled(const VkFence* fence,
+                                                uint64_t ordinal,
+                                                bool lost) const noexcept {
+  if (lost) {
+    certifyLoss();
+  } else {
+    certify(ordinal);
+  }
+  for (Checkpoint& checkpoint : checkpoints_) {
+    if (&checkpoint.fence.vkFence_ == fence && checkpoint.state == Checkpoint::State::Pending) {
+      checkpoint.state = Checkpoint::State::Signaled;
+    }
   }
 }
 
 VkResult VulkanImmediateCommands::waitFence(const VkFence* fence,
                                             uint64_t ordinal,
-                                            uint64_t timeoutNanoseconds) const {
-  const VkResult result = vf_.vkWaitForFences(device_, 1, fence, VK_TRUE, timeoutNanoseconds);
+                                            uint64_t& remainingNanoseconds) const {
+  const VkResult result = waitForFences(vf_, device_, 1, fence, remainingNanoseconds);
   if (result == VK_SUCCESS || checkDeviceLost(result)) {
-    certify(ordinal, result != VK_SUCCESS);
+    noteFenceSignaled(fence, ordinal, result != VK_SUCCESS);
   }
   return result;
+}
+
+VkResult VulkanImmediateCommands::certifyThrough(uint64_t target,
+                                                 uint64_t& remainingNanoseconds,
+                                                 const CommandBufferWrapper* IGL_NULLABLE own) {
+  bool lost = false;
+  while (retiredThrough_ < target) {
+    uint64_t ordinal = 0;
+    const VkFence* fence = lowestSourceFor(target, own, ordinal);
+    if (!fence && remainingNanoseconds == 0) {
+      // No time is left to wait for a checkpoint: do not submit one.
+      return VK_TIMEOUT;
+    }
+    const VkResult result = fence ? waitFence(fence, ordinal, remainingNanoseconds)
+                                  : submitCheckpoint(remainingNanoseconds);
+    if (result == VK_ERROR_DEVICE_LOST) {
+      lost = true;
+    } else if (result != VK_SUCCESS) {
+      return result;
+    }
+  }
+  return lost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+}
+
+bool VulkanImmediateCommands::replaceCheckpointFence(Checkpoint& checkpoint) {
+  VulkanFence fence(
+      vf_,
+      device_,
+      VkFenceCreateFlagBits{},
+      false,
+      IGL_FORMAT("Fence: {} checkpoint #{}", debugName_, &checkpoint - checkpoints_.data())
+          .c_str());
+  if (fence.initResult() != VK_SUCCESS) {
+    static_cast<void>(checkDeviceLost(fence.initResult()));
+    return false;
+  }
+  checkpoint.fence = std::move(fence);
+  checkpoint.state = Checkpoint::State::Unused;
+  return true;
+}
+
+VkResult VulkanImmediateCommands::submitCheckpoint(uint64_t& remainingNanoseconds) {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_SUBMIT);
+
+  Checkpoint* slot = nullptr;
+  for (Checkpoint& checkpoint : checkpoints_) {
+    if (checkpoint.state == Checkpoint::State::Unused ||
+        checkpoint.state == Checkpoint::State::Signaled) {
+      slot = &checkpoint;
+      break;
+    }
+  }
+  for (Checkpoint& checkpoint : checkpoints_) {
+    // A quarantined checkpoint signaled before its reset failed: it can get a new fence.
+    if (!slot && checkpoint.state == Checkpoint::State::Quarantined &&
+        replaceCheckpointFence(checkpoint)) {
+      slot = &checkpoint;
+    }
+  }
+  if (!slot && checkpoints_.size() < kMaxCheckpoints) {
+    VulkanFence fence(
+        vf_,
+        device_,
+        VkFenceCreateFlagBits{},
+        false,
+        IGL_FORMAT("Fence: {} checkpoint #{}", debugName_, checkpoints_.size()).c_str());
+    if (fence.initResult() != VK_SUCCESS) {
+      // A device loss reported here is remembered, but proves nothing about the submitted work, and
+      // another try would fail the same way: report it as an error that ends the call.
+      return checkDeviceLost(fence.initResult()) ? VK_ERROR_UNKNOWN : fence.initResult();
+    }
+    slot = &checkpoints_.emplace_back(Checkpoint{.fence = std::move(fence)});
+  }
+  if (!slot) {
+    // Every checkpoint is pending (or abandoned): wait for the oldest pending one first.
+    Checkpoint* oldest = nullptr;
+    for (Checkpoint& checkpoint : checkpoints_) {
+      if (checkpoint.state == Checkpoint::State::Pending &&
+          (!oldest || checkpoint.covers < oldest->covers)) {
+        oldest = &checkpoint;
+      }
+    }
+    if (!oldest) {
+      return VK_ERROR_UNKNOWN;
+    }
+    const VkResult result =
+        waitFence(&oldest->fence.vkFence_, oldest->covers, remainingNanoseconds);
+    if (result != VK_SUCCESS) {
+      return result;
+    }
+    if (remainingNanoseconds == 0) {
+      // That wait used the rest of the time: do not reset and submit another checkpoint.
+      return VK_TIMEOUT;
+    }
+    slot = oldest;
+  }
+
+  if (slot->state == Checkpoint::State::Signaled) {
+    const VkResult resetResult = vf_.vkResetFences(device_, 1, &slot->fence.vkFence_);
+    if (resetResult != VK_SUCCESS) {
+      IGL_LOG_ERROR_ONCE(
+          "VulkanImmediateCommands (%s): a checkpoint fence could not be reset (VkResult %d)\n",
+          debugName_.c_str(),
+          static_cast<int>(resetResult));
+      // A reported device loss is remembered; it proves nothing about the submitted work.
+      static_cast<void>(checkDeviceLost(resetResult));
+      // The fence may still be signaled: it is never submitted again, but replaced when a new fence
+      // can be created.
+      if (!replaceCheckpointFence(*slot)) {
+        slot->state = Checkpoint::State::Quarantined;
+        // A loss that only a reset reported does not prove that the work no longer runs.
+        return resetResult == VK_ERROR_DEVICE_LOST ? VK_ERROR_UNKNOWN : resetResult;
+      }
+    }
+  }
+  // An empty batch: its fence signals once all work submitted earlier to the queue has completed.
+  const VkResult result = vf_.vkQueueSubmit(queue_, 0, nullptr, slot->fence.vkFence_);
+  if (result == VK_SUCCESS || checkDeviceLost(result)) {
+    slot->covers = submissionCounter_;
+    slot->state = Checkpoint::State::Pending;
+    if (result == VK_ERROR_DEVICE_LOST) {
+      certifyLoss();
+    }
+    return result;
+  }
+  if (isOutOfMemory(result)) {
+    // Nothing was submitted: the fence is unchanged.
+    slot->state = Checkpoint::State::Unused;
+    return result;
+  }
+  slot->state = Checkpoint::State::Abandoned;
+  IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): a checkpoint submission failed (VkResult %d)\n",
+                     debugName_.c_str(),
+                     static_cast<int>(result));
+  return VK_ERROR_UNKNOWN;
 }
 
 bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
@@ -489,6 +964,7 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
   // Without the full chain, a submission that waits on injected semaphores still signals its chain
   // semaphore so that the next submission is ordered after those waits.
   const bool signalChainSemaphore = chainSubmitsWithSemaphores_ || numWaitSemaphores_ != 0;
+  VkResult result = VK_SUCCESS;
   if (useTimelineSemaphoreAndSynchronization2_) {
     // @lint-ignore CLANGTIDY
     VkSemaphoreSubmitInfo waitSemaphores[kSubmitSemaphoreCapacity] = {};
@@ -538,7 +1014,7 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkQueueSubmit2KHR()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
-    const VkResult result = vf_.vkQueueSubmit2KHR(queue_, 1u, &si, wrapper.fence.vkFence_);
+    result = vf_.vkQueueSubmit2KHR(queue_, 1u, &si, wrapper.fence.vkFence_);
     if (!checkDeviceLost(result)) {
       VK_ASSERT(result);
     }
@@ -599,7 +1075,7 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkQueueSubmit()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
-    const VkResult result = vf_.vkQueueSubmit(queue_, 1u, &si, vkFence);
+    result = vf_.vkQueueSubmit(queue_, 1u, &si, vkFence);
     if (!checkDeviceLost(result)) {
       VK_ASSERT(result);
     }
@@ -613,7 +1089,13 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
   numSignalSemaphores_ = 0;
 
   if (!staleWrapper) {
-    const_cast<CommandBufferWrapper&>(wrapper).retirement_.prefix = ++submissionCounter_;
+    // A submission that reached the queue, or may have, takes the next submission ordinal. Its
+    // fence is trusted after a success or a device loss (which certifies), but not after any other
+    // error, out of memory included: then only a later fence or a checkpoint proves the submission
+    // finished.
+    RowRetirement& row = const_cast<CommandBufferWrapper&>(wrapper).retirement_;
+    row.prefix = ++submissionCounter_;
+    row.fenceTrusted = row.fenceTrusted && (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST);
   }
 
   // reset
@@ -635,10 +1117,23 @@ void VulkanImmediateCommands::discard(const CommandBufferWrapper& wrapper) {
 }
 
 void VulkanImmediateCommands::freeUnsubmittedRow(CommandBufferWrapper& wrapper) {
-  VK_ASSERT(vf_.vkResetCommandBuffer(wrapper.cmdBuf, VkCommandBufferResetFlags{0}));
+  const VkResult result = vf_.vkResetCommandBuffer(wrapper.cmdBuf, VkCommandBufferResetFlags{0});
+  VK_ASSERT(result);
   RowRetirement& row = wrapper.retirement_;
   row.prefix = submissionCounter_;
   row.closedUnsubmitted = true;
+  if (result != VK_SUCCESS) {
+    // The command buffer cannot be recorded again until a reset succeeds: quarantine the row (see
+    // `recoverQuarantinedRow()`). Its fence was never submitted, so nothing may wait on it.
+    row.quarantined = true;
+    row.fenceTrusted = false;
+    IGL_LOG_ERROR_ONCE(
+        "VulkanImmediateCommands (%s): a command buffer could not be reset (VkResult %d)\n",
+        debugName_.c_str(),
+        static_cast<int>(result));
+    setRowState(wrapper, RowState::Submitted);
+    return;
+  }
   setRowState(wrapper, RowState::Free);
   numAvailableCommandBuffers_++;
 }
@@ -723,6 +1218,41 @@ VkFence VulkanImmediateCommands::getVkFenceFromSubmitHandle(SubmitHandle handle)
   }
 
   return buffers_[handle.bufferIndex].fence.vkFence_;
+}
+
+int VulkanImmediateCommands::exportFenceFd(SubmitHandle handle) {
+  int fenceFd = -1;
+#if defined(VK_KHR_external_fence_fd)
+  if (!vf_.vkGetFenceFdKHR) {
+    return -1;
+  }
+  const VkFence vkFence = getVkFenceFromSubmitHandle(handle);
+  IGL_DEBUG_ASSERT(vkFence != VK_NULL_HANDLE);
+  if (vkFence == VK_NULL_HANDLE) {
+    // The handle no longer has a fence: its row was acquired again.
+    return -1;
+  }
+  bool& fenceTrusted = buffers_[handle.bufferIndex].retirement_.fenceTrusted;
+  const bool wasTrusted = fenceTrusted;
+  // A successful export resets the fence: never poll or wait on it again.
+  fenceTrusted = false;
+
+  const VkFenceGetFdInfoKHR getFdInfo = {
+      .sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
+      .fence = vkFence,
+      .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
+  };
+  const VkResult result = vf_.vkGetFenceFdKHR(device_, &getFdInfo, &fenceFd);
+  if (result != VK_SUCCESS) {
+    // A failed export leaves the fence as it was.
+    fenceTrusted = wasTrusted;
+    IGL_LOG_ERROR("Unable to get fence fd from submit handle: %llu",
+                  static_cast<unsigned long long>(handle.handle()));
+  }
+#else
+  static_cast<void>(handle);
+#endif // defined(VK_KHR_external_fence_fd)
+  return fenceFd;
 }
 
 void VulkanImmediateCommands::storeFDInSubmitHandle(SubmitHandle handle, int fd) noexcept {

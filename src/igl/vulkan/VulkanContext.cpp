@@ -1783,7 +1783,20 @@ Result VulkanContext::waitIdle() const {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
   for (VkQueue queue : {deviceQueues_.graphicsQueue, deviceQueues_.computeQueue}) {
-    VK_ASSERT_RETURN(vf_.vkQueueWaitIdle(queue));
+    const VkResult result = vf_.vkQueueWaitIdle(queue);
+    if (queue == deviceQueues_.graphicsQueue &&
+        (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)) {
+      // Both command buffer pools submit only to the graphics queue: everything they submitted
+      // finished, or no longer runs.
+      const bool lost = result == VK_ERROR_DEVICE_LOST;
+      if (immediate_) {
+        immediate_->certifyQueueIdle(lost);
+      }
+      if (stagingDevice_ && stagingDevice_->immediate) {
+        stagingDevice_->immediate->certifyQueueIdle(lost);
+      }
+    }
+    VK_ASSERT_RETURN(result);
   }
 
   return getResultFromVkResult(VK_SUCCESS);
@@ -2941,6 +2954,7 @@ VkFence VulkanContext::getVkFenceFromSubmitHandle(igl::SubmitHandle handle) cons
 
 // @fb-only
 int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const noexcept {
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(this);
   int fenceFd = -1;
 #if defined(IGL_PLATFORM_ANDROID) && defined(VK_KHR_external_fence_fd)
   if (handle == 0) {
@@ -2957,19 +2971,9 @@ int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const no
     return -1;
   }
 
-  const VkFence vkFence = getVkFenceFromSubmitHandle(handle);
-  IGL_DEBUG_ASSERT(vkFence != VK_NULL_HANDLE);
-
-  const VkFenceGetFdInfoKHR getFdInfo = {
-      .sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
-      .fence = vkFence,
-      .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
-  };
-
-  const VkResult result = vf_.vkGetFenceFdKHR(vkDevice_, &getFdInfo, &fenceFd);
-  if (result != VK_SUCCESS) {
-    IGL_LOG_ERROR("Unable to get fence fd from submit handle: %lu", handle);
-  }
+  // The pool exports the fence, so that it stops waiting on the fence whose payload moved to the
+  // file descriptor.
+  fenceFd = immediate_->exportFenceFd(VulkanImmediateCommands::SubmitHandle(handle));
   immediate_->storeFDInSubmitHandle(VulkanImmediateCommands::SubmitHandle(handle), fenceFd);
 #endif // defined(IGL_PLATFORM_ANDROID)
   return fenceFd;
