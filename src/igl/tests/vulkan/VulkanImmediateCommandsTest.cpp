@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <igl/vulkan/VulkanImmediateCommands.h>
@@ -30,12 +31,20 @@
 #include <igl/CommandBuffer.h>
 #include <igl/ComputeCommandEncoder.h>
 #include <igl/ComputePipelineState.h>
+#include <igl/Framebuffer.h>
 #include <igl/ShaderCreator.h>
 #include <igl/Timer.h>
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/CommandBuffer.h>
+#include <igl/vulkan/Common.h>
 #include <igl/vulkan/Device.h>
+#include <igl/vulkan/PlatformDevice.h>
+#include <igl/vulkan/Texture.h>
+#include <igl/vulkan/VulkanBuffer.h>
 #include <igl/vulkan/VulkanContext.h>
+#include <igl/vulkan/VulkanImage.h>
 #include <igl/vulkan/VulkanStagingDevice.h>
+#include <igl/vulkan/VulkanTexture.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
@@ -157,11 +166,18 @@ VKAPI_ATTR VkResult VKAPI_CALL traceEndCommandBuffer(VkCommandBuffer cb) {
   return gTrace.real.vkEndCommandBuffer(cb);
 }
 
-/// The traced name of the command buffer of a batch: `none` for a batch without one.
+/// The traced names of the command buffers of a batch, joined with `+`: `none` for a batch without
+/// one.
 template<typename T>
 std::string batchCommandBuffer(uint32_t count, const T* commandBuffers) {
-  return count == 0 ? std::string("none")
-                    : handleName(gTrace.commandBuffers, "cb", commandBuffers[0]);
+  if (count == 0) {
+    return "none";
+  }
+  std::string names = handleName(gTrace.commandBuffers, "cb", commandBuffers[0]);
+  for (uint32_t i = 1; i < count; ++i) {
+    names += "+" + handleName(gTrace.commandBuffers, "cb", commandBuffers[i]);
+  }
+  return names;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL traceResetCommandBuffer(VkCommandBuffer cb,
@@ -685,7 +701,149 @@ size_t timesSubmitted(VkFence fence) {
 
 // Entries for the context's own function table (see `ScopedTableEntry`).
 
-#if IGL_PLATFORM_ANDROID
+VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer /*cb*/) {
+  return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL outOfMemoryQueueSubmit(VkQueue /*queue*/,
+                                                      uint32_t /*count*/,
+                                                      const VkSubmitInfo* /*submits*/,
+                                                      VkFence /*fence*/) {
+  return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL outOfMemoryQueueSubmit2(VkQueue /*queue*/,
+                                                       uint32_t /*count*/,
+                                                       const VkSubmitInfo2* /*submits*/,
+                                                       VkFence /*fence*/) {
+  return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+/// Counts, and can fail, the recordings, submissions, barriers and fence waits of staging
+/// operations.
+struct StagingFaults {
+  PFN_vkEndCommandBuffer realEnd = nullptr;
+  PFN_vkQueueSubmit realSubmit = nullptr;
+  PFN_vkQueueSubmit2KHR realSubmit2 = nullptr;
+  PFN_vkCmdPipelineBarrier realBarrier = nullptr;
+  uint32_t ends = 0;
+  uint32_t submits = 0;
+  uint32_t barriers = 0;
+  /// The recording, counted from 1, whose end fails; 0 for none.
+  uint32_t failingEnd = 0;
+  /// The submission, counted from 1, from which two submissions run out of memory; 0 for none.
+  uint32_t firstFailingSubmit = 0;
+  PFN_vkWaitForFences realWait = nullptr;
+  /// The submission, counted from 1, that runs but reports VK_ERROR_UNKNOWN; 0 for none.
+  uint32_t unknownSubmit = 0;
+  /// What every fence wait and poll answers, unless VK_SUCCESS.
+  VkResult fenceAnswer = VK_SUCCESS;
+};
+thread_local StagingFaults gStaging;
+
+VKAPI_ATTR VkResult VKAPI_CALL stagingEndCommandBuffer(VkCommandBuffer cb) {
+  return ++gStaging.ends == gStaging.failingEnd ? VK_ERROR_OUT_OF_DEVICE_MEMORY
+                                                : gStaging.realEnd(cb);
+}
+
+bool stagingSubmitFails() {
+  ++gStaging.submits;
+  return gStaging.firstFailingSubmit != 0 && gStaging.submits >= gStaging.firstFailingSubmit &&
+         gStaging.submits < gStaging.firstFailingSubmit + 2;
+}
+
+VkResult stagingSubmitResult(VkResult realResult) {
+  return gStaging.submits == gStaging.unknownSubmit && realResult == VK_SUCCESS ? VK_ERROR_UNKNOWN
+                                                                                : realResult;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL stagingQueueSubmit(VkQueue queue,
+                                                  uint32_t count,
+                                                  const VkSubmitInfo* submits,
+                                                  VkFence fence) {
+  return stagingSubmitFails()
+             ? VK_ERROR_OUT_OF_HOST_MEMORY
+             : stagingSubmitResult(gStaging.realSubmit(queue, count, submits, fence));
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL stagingQueueSubmit2(VkQueue queue,
+                                                   uint32_t count,
+                                                   const VkSubmitInfo2* submits,
+                                                   VkFence fence) {
+  return stagingSubmitFails()
+             ? VK_ERROR_OUT_OF_HOST_MEMORY
+             : stagingSubmitResult(gStaging.realSubmit2(queue, count, submits, fence));
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL stagingWaitForFences(VkDevice device,
+                                                    uint32_t count,
+                                                    const VkFence* fences,
+                                                    VkBool32 waitAll,
+                                                    uint64_t timeout) {
+  return gStaging.fenceAnswer != VK_SUCCESS
+             ? gStaging.fenceAnswer
+             : gStaging.realWait(device, count, fences, waitAll, timeout);
+}
+
+VKAPI_ATTR void VKAPI_CALL stagingCmdPipelineBarrier(VkCommandBuffer cb,
+                                                     VkPipelineStageFlags srcStageMask,
+                                                     VkPipelineStageFlags dstStageMask,
+                                                     VkDependencyFlags dependencyFlags,
+                                                     uint32_t memoryBarrierCount,
+                                                     const VkMemoryBarrier* memoryBarriers,
+                                                     uint32_t bufferBarrierCount,
+                                                     const VkBufferMemoryBarrier* bufferBarriers,
+                                                     uint32_t imageBarrierCount,
+                                                     const VkImageMemoryBarrier* imageBarriers) {
+  ++gStaging.barriers;
+  gStaging.realBarrier(cb,
+                       srcStageMask,
+                       dstStageMask,
+                       dependencyFlags,
+                       memoryBarrierCount,
+                       memoryBarriers,
+                       bufferBarrierCount,
+                       bufferBarriers,
+                       imageBarrierCount,
+                       imageBarriers);
+}
+
+thread_local PFN_vkGetQueryPoolResults gRealGetQueryPoolResults = nullptr;
+thread_local size_t gQueryReads = 0;
+
+VKAPI_ATTR VkResult VKAPI_CALL countingGetQueryPoolResults(VkDevice device,
+                                                           VkQueryPool queryPool,
+                                                           uint32_t firstQuery,
+                                                           uint32_t queryCount,
+                                                           size_t dataSize,
+                                                           void* data,
+                                                           VkDeviceSize stride,
+                                                           VkQueryResultFlags flags) {
+  ++gQueryReads;
+  return gRealGetQueryPoolResults(
+      device, queryPool, firstQuery, queryCount, dataSize, data, stride, flags);
+}
+
+thread_local PFN_vkDestroyCommandPool gRealDestroyCommandPool = nullptr;
+thread_local size_t gCommandPoolsDestroyed = 0;
+
+/// The command pools destroyed, in order.
+thread_local std::vector<VkCommandPool> gDestroyedCommandPools;
+
+VKAPI_ATTR void VKAPI_CALL recordingDestroyCommandPool(VkDevice device,
+                                                       VkCommandPool commandPool,
+                                                       const VkAllocationCallbacks* allocator) {
+  gDestroyedCommandPools.push_back(commandPool);
+  gRealDestroyCommandPool(device, commandPool, allocator);
+}
+
+VKAPI_ATTR void VKAPI_CALL countingDestroyCommandPool(VkDevice device,
+                                                      VkCommandPool commandPool,
+                                                      const VkAllocationCallbacks* allocator) {
+  ++gCommandPoolsDestroyed;
+  gRealDestroyCommandPool(device, commandPool, allocator);
+}
+
 thread_local PFN_vkWaitForFences gRealWaitForFences = nullptr;
 /// The fences that the context's pools polled or waited on.
 thread_local std::vector<uint64_t> gWaitedFences;
@@ -700,7 +858,6 @@ VKAPI_ATTR VkResult VKAPI_CALL recordingWaitForFences(VkDevice device,
   }
   return gRealWaitForFences(device, count, fences, waitAll, timeout);
 }
-#endif // IGL_PLATFORM_ANDROID
 
 thread_local PFN_vkQueueWaitIdle gRealQueueWaitIdle = nullptr;
 /// What a successful `vkQueueWaitIdle()` answers instead.
@@ -731,6 +888,67 @@ VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit2(VkQueue queue,
                                                     VkFence fence) {
   gSubmitsAfterIdle += gIdleSeen ? 1 : 0;
   return gRealContextSubmit2(queue, count, submits, fence);
+}
+
+thread_local size_t gCheckpointFailures = 0;
+thread_local PFN_vkDestroyDevice gRealDestroyDevice = nullptr;
+thread_local bool gDeviceDestroyed = false;
+thread_local PFN_vkDestroyPipelineCache gRealDestroyPipelineCache = nullptr;
+thread_local const vulkan::VulkanContext* gTeardownContext = nullptr;
+thread_local size_t gTasksLeftAfterTheSweeps = 0;
+
+/// Called by the context's destructor after its last deferred-task sweep: records the tasks left.
+VKAPI_ATTR void VKAPI_CALL recordingDestroyPipelineCache(VkDevice device,
+                                                         VkPipelineCache cache,
+                                                         const VkAllocationCallbacks* allocator) {
+  gTasksLeftAfterTheSweeps = gTeardownContext ? gTeardownContext->deferredTasks.size() : 0;
+  gRealDestroyPipelineCache(device, cache, allocator);
+}
+
+/// Set when the object that the requeueing tasks own is destroyed after the device.
+thread_local bool gOwnedDestroyedAfterTheDevice = false;
+
+/// Owned by the requeueing tasks, as a task that destroys a semaphore owns it.
+struct OwnedByTasks {
+  OwnedByTasks() = default;
+  OwnedByTasks(const OwnedByTasks&) = delete;
+  OwnedByTasks& operator=(const OwnedByTasks&) = delete;
+  OwnedByTasks(OwnedByTasks&&) = delete;
+  OwnedByTasks& operator=(OwnedByTasks&&) = delete;
+  ~OwnedByTasks() {
+    gOwnedDestroyedAfterTheDevice = gDeviceDestroyed;
+  }
+};
+
+/// A deferred task that queues another such task, with the default handle, each time it runs. Each
+/// one owns a share of an `OwnedByTasks`.
+struct RequeueingTask {
+  vulkan::VulkanContext* IGL_NONNULL context;
+  int* IGL_NONNULL runs;
+  std::shared_ptr<OwnedByTasks> owned;
+  void operator()() const {
+    ++*runs;
+    context->deferredTask(std::packaged_task<void()>(
+        RequeueingTask{.context = context, .runs = runs, .owned = owned}));
+  }
+};
+
+/// Checkpoints (empty batches) run out of memory while `gCheckpointFailures` lasts.
+VKAPI_ATTR VkResult VKAPI_CALL failingCheckpointSubmit(VkQueue queue,
+                                                       uint32_t count,
+                                                       const VkSubmitInfo* submits,
+                                                       VkFence fence) {
+  if (count == 0 && gCheckpointFailures != 0) {
+    --gCheckpointFailures;
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+  }
+  return gRealContextSubmit(queue, count, submits, fence);
+}
+
+VKAPI_ATTR void VKAPI_CALL recordingDestroyDevice(VkDevice device,
+                                                  const VkAllocationCallbacks* allocator) {
+  gDeviceDestroyed = true;
+  gRealDestroyDevice(device, allocator);
 }
 
 /// Which descriptor pool each descriptor set came from, and the pool of the last set written with
@@ -915,6 +1133,8 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
       return "Encoding";
     case Commands::RowState::Submitted:
       return "Submitted";
+    case Commands::RowState::Dropped:
+      return "Dropped";
     }
     return "?";
   }
@@ -951,6 +1171,113 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
   }
   static uint32_t numAvailable(const Commands& commands) {
     return commands.numAvailableCommandBuffers_;
+  }
+  static bool droppedTheRecording(const Commands& commands) {
+    return commands.lastSubmitDroppedTheRecording();
+  }
+  static Commands::SubmitHandle lastAccepted(const Commands& commands) {
+    return commands.lastAcceptedSubmitHandle();
+  }
+  static bool isRetired(const Commands& commands, Commands::SubmitHandle handle) {
+    return commands.isRetired(handle);
+  }
+  static bool outcomesLost(const Commands& commands, uint32_t row) {
+    return commands.buffers_[row].outcomesLost_;
+  }
+  static bool chainPoisoned(const Commands& commands) {
+    return commands.chainPoisoned_;
+  }
+  static bool recycleDroppedRows(Commands& commands) {
+    return commands.recycleDroppedRows();
+  }
+  static VkResult waitRetired(Commands& commands,
+                              Commands::SubmitHandle handle,
+                              uint64_t timeoutNanoseconds) {
+    return commands.waitRetired(handle, timeoutNanoseconds);
+  }
+  /// One try of an exhausted `acquire()` to free a row.
+  static bool tryFreeRow(Commands& commands) {
+    return commands.freeRow();
+  }
+  /// The queue state the pool uses, and the one it owns.
+  static const void* sharedQueueState(const Commands& commands) {
+    return commands.queueState_;
+  }
+  static const void* ownQueueState(const Commands& commands) {
+    return &commands.ownQueueState_;
+  }
+  static VkCommandPool commandPoolOf(const Commands& commands) {
+    return commands.commandPool_;
+  }
+  static bool queueStopped(const Commands& commands) {
+    return commands.queueState_->stopped;
+  }
+  /// Makes `commands` stop when `other` stops, as the two pools of a context do.
+  static void shareQueueStop(Commands& commands, const Commands& other) {
+    commands.queueState_ = other.queueState_;
+  }
+  /// Whether every submission waits on the previous one's semaphore (see `VulkanContextConfig`).
+  static bool& chained(Commands& commands) {
+    return commands.chainSubmitsWithSemaphores_;
+  }
+  /// A reusable command buffer whose run A is in flight and whose run B, from the next slot, was
+  /// not submitted because two tries to submit it ran out of memory, and an ordinary command
+  /// buffer.
+  struct ReusableRunsWithADroppedRun {
+    std::shared_ptr<ICommandQueue> queue;
+    std::shared_ptr<IFramebuffer> framebuffer;
+    std::shared_ptr<ICommandBuffer> reusable;
+    std::shared_ptr<ICommandBuffer> ordinary;
+    Commands::SubmitHandle runA;
+    SubmitHandle runB = 0;
+  };
+
+  /// Sets up `runs` on `pool`, a pool on the fake queue that the context submits to.
+  void startReusableRunsWithADroppedRun(const Commands& pool, ReusableRunsWithADroppedRun& runs) {
+    auto& platformDevice = *iglDev_->getPlatformDevice<vulkan::PlatformDevice>();
+    ASSERT_TRUE(platformDevice.supportsReusableCommandBuffers());
+    Result ret;
+    runs.queue = iglDev_->createCommandQueue({}, &ret);
+    ASSERT_NE(runs.queue, nullptr);
+    const auto texture = iglDev_->createTexture(
+        TextureDesc::new2D(
+            TextureFormat::RGBA_UNorm8, 4, 4, TextureDesc::TextureUsageBits::Attachment),
+        &ret);
+    ASSERT_NE(texture, nullptr);
+    FramebufferDesc framebufferDesc;
+    framebufferDesc.colorAttachments[0].texture = texture;
+    runs.framebuffer = iglDev_->createFramebuffer(framebufferDesc, &ret);
+    ASSERT_NE(runs.framebuffer, nullptr);
+    runs.reusable =
+        platformDevice.createReusableCommandBuffer({.debugName = "Dropped run test"}, &ret);
+    ASSERT_NE(runs.reusable, nullptr);
+    const RenderPassDesc renderPass{
+        .colorAttachments = {{.loadAction = LoadAction::Clear, .storeAction = StoreAction::Store}}};
+
+    auto encoder = runs.reusable->createRenderCommandEncoder(renderPass, runs.framebuffer, &ret);
+    ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+    encoder->endEncoding();
+    ASSERT_NE(runs.queue->submit(*runs.reusable), 0u);
+    runs.runA = pool.getLastSubmitHandle();
+
+    encoder = runs.reusable->createRenderCommandEncoder(renderPass, runs.framebuffer, &ret);
+    ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+    encoder->endEncoding();
+    // Both tries to submit run B run out of memory: it is not submitted, and the caller gets its
+    // handle, which never completes, as on a queue where it is never signaled.
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    runs.runB = runs.queue->submit(*runs.reusable);
+    ASSERT_TRUE(droppedTheRecording(pool));
+    ASSERT_NE(runs.runB, 0u);
+    ASSERT_EQ(pool.getLastSubmitHandle().handle(), runs.runB);
+    ASSERT_EQ(lastAccepted(pool), runs.runA);
+
+    // Run A took the first row, and run B the second, which stays out of circulation.
+    ASSERT_EQ(runs.runA.bufferIndex, 0u);
+    ASSERT_STREQ(rowState(pool, 1), "Dropped");
+    runs.ordinary = runs.queue->createCommandBuffer({}, &ret);
+    ASSERT_NE(runs.ordinary, nullptr);
+    ASSERT_EQ(gQueue.completed, 0u);
   }
   static size_t checkpointFences(const Commands& commands) {
     return commands.checkpoints_.size();
@@ -1075,6 +1402,24 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     std::unique_ptr<Commands> realPool_;
   };
 
+  /// Holds `value` at `temporary` until destroyed.
+  template<typename T>
+  class ScopedValue {
+   public:
+    ScopedValue(T& value, T temporary) : value_(value), saved_(value) {
+      value_ = temporary;
+    }
+    ScopedValue(const ScopedValue&) = delete;
+    ScopedValue& operator=(const ScopedValue&) = delete;
+    ~ScopedValue() {
+      value_ = saved_;
+    }
+
+   private:
+    T& value_;
+    T saved_;
+  };
+
   /// Replaces one entry of the context's function table until destroyed.
   template<typename Fn>
   class ScopedTableEntry {
@@ -1185,6 +1530,13 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
       const igl::vulkan::VulkanImmediateCommands::CommandBufferWrapper& wrapper,
       VkSemaphore semaphore) {
     return commands.submit(wrapper, semaphore);
+  }
+
+  /// Submits `wrapper` with `next` after it in the same batch, as a reusable command buffer's run.
+  static Commands::SubmitHandle submitWithNext(Commands& commands,
+                                               const Commands::CommandBufferWrapper& wrapper,
+                                               VkCommandBuffer next) {
+    return commands.submit(wrapper, VK_NULL_HANDLE, next);
   }
 };
 
@@ -2488,13 +2840,21 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsCallTrace) {
     /// What the submissions of the second recording answer, and what its end answers.
     std::vector<VkResult> submitResults;
     VkResult endResult = VK_SUCCESS;
+    bool chained = true;
+    /// Whether the second and the third recordings are submitted.
+    bool secondSubmitted = true;
+    bool thirdSubmitted = true;
     std::vector<std::string> expected;
   };
-  // Out of memory and an unknown result take a submission whose fence is never polled: the later
-  // fence covers it, and the row is reset without a poll. A device loss keeps a trusted fence,
-  // which the later fence already covers.
+  // Out of memory once: the same batch is submitted again. A recording that cannot run (its end
+  // fails, or two tries to submit it run out of memory) is not submitted: its row is not reset, and
+  // the next submission, which would wait on its chain semaphore, is not submitted either; without
+  // the chain the next submission waits on the last semaphore that was signaled (sem0). An unknown
+  // result takes a submission whose fence is never polled: the later fence covers it, and the row
+  // is reset without a poll. A device loss keeps a trusted fence, and nothing is submitted after
+  // it.
   const std::vector<Case> cases = {
-      {.name = "out of memory",
+      {.name = "out of memory once",
        .submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY},
        .expected =
            {
@@ -2504,18 +2864,63 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsCallTrace) {
                "vkBeginCommandBuffer cb1 flags=1",
                "vkEndCommandBuffer cb1",
                "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+               "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
                "vkBeginCommandBuffer cb2 flags=1",
                "vkEndCommandBuffer cb2",
                "vkQueueSubmit cb2 fence2 waits=1 signals=1 wait:sem1 signal:sem2",
                "vkWaitForFences all=1 timeout=0 fence0",
                "vkWaitForFences all=1 timeout=0 fence2",
-               "vkWaitForFences all=1 timeout=max fence0 fence2",
-               "vkResetCommandBuffer cb0 flags=0",
-               "vkResetFences fence0",
-               "vkResetCommandBuffer cb1 flags=0",
-               "vkResetFences fence1",
-               "vkResetCommandBuffer cb2 flags=0",
-               "vkResetFences fence2",
+           }},
+      {.name = "out of memory twice",
+       .submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY},
+       .secondSubmitted = false,
+       .thirdSubmitted = false,
+       .expected =
+           {
+               "vkBeginCommandBuffer cb0 flags=1",
+               "vkEndCommandBuffer cb0",
+               "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+               "vkBeginCommandBuffer cb1 flags=1",
+               "vkEndCommandBuffer cb1",
+               "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+               "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+               "vkBeginCommandBuffer cb2 flags=1",
+               "vkEndCommandBuffer cb2",
+               "vkWaitForFences all=1 timeout=0 fence0",
+           }},
+      {.name = "out of memory twice, without the chain",
+       .submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY},
+       .chained = false,
+       .secondSubmitted = false,
+       .expected =
+           {
+               "vkBeginCommandBuffer cb0 flags=1",
+               "vkEndCommandBuffer cb0",
+               "vkQueueSubmit cb0 fence0 waits=0 signals=0",
+               "vkBeginCommandBuffer cb1 flags=1",
+               "vkEndCommandBuffer cb1",
+               "vkQueueSubmit cb1 fence1 waits=0 signals=0",
+               "vkQueueSubmit cb1 fence1 waits=0 signals=0",
+               "vkBeginCommandBuffer cb2 flags=1",
+               "vkEndCommandBuffer cb2",
+               "vkQueueSubmit cb2 fence2 waits=0 signals=0",
+               "vkWaitForFences all=1 timeout=0 fence0",
+               "vkWaitForFences all=1 timeout=0 fence2",
+           }},
+      {.name = "failed end",
+       .endResult = VK_ERROR_OUT_OF_HOST_MEMORY,
+       .secondSubmitted = false,
+       .thirdSubmitted = false,
+       .expected =
+           {
+               "vkBeginCommandBuffer cb0 flags=1",
+               "vkEndCommandBuffer cb0",
+               "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+               "vkBeginCommandBuffer cb1 flags=1",
+               "vkEndCommandBuffer cb1",
+               "vkBeginCommandBuffer cb2 flags=1",
+               "vkEndCommandBuffer cb2",
+               "vkWaitForFences all=1 timeout=0 fence0",
            }},
       {.name = "unknown result",
        .submitResults = {VK_ERROR_UNKNOWN},
@@ -2532,16 +2937,10 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsCallTrace) {
                "vkQueueSubmit cb2 fence2 waits=1 signals=1 wait:sem1 signal:sem2",
                "vkWaitForFences all=1 timeout=0 fence0",
                "vkWaitForFences all=1 timeout=0 fence2",
-               "vkWaitForFences all=1 timeout=max fence0 fence2",
-               "vkResetCommandBuffer cb0 flags=0",
-               "vkResetFences fence0",
-               "vkResetCommandBuffer cb1 flags=0",
-               "vkResetFences fence1",
-               "vkResetCommandBuffer cb2 flags=0",
-               "vkResetFences fence2",
            }},
       {.name = "device lost",
        .submitResults = {VK_ERROR_DEVICE_LOST},
+       .thirdSubmitted = false,
        .expected =
            {
                "vkBeginCommandBuffer cb0 flags=1",
@@ -2552,16 +2951,8 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsCallTrace) {
                "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
                "vkBeginCommandBuffer cb2 flags=1",
                "vkEndCommandBuffer cb2",
-               "vkQueueSubmit cb2 fence2 waits=1 signals=1 wait:sem1 signal:sem2",
                "vkWaitForFences all=1 timeout=0 fence0",
-               "vkWaitForFences all=1 timeout=0 fence2",
-               "vkWaitForFences all=1 timeout=max fence0 fence1 fence2",
-               "vkResetCommandBuffer cb0 flags=0",
-               "vkResetFences fence0",
-               "vkResetCommandBuffer cb1 flags=0",
-               "vkResetFences fence1",
-               "vkResetCommandBuffer cb2 flags=0",
-               "vkResetFences fence2",
+               "vkWaitForFences all=1 timeout=0 fence1",
            }},
   };
   for (const Case& c : cases) {
@@ -2572,18 +2963,23 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsCallTrace) {
                                              false,
                                              false,
                                              false,
-                                             "Failed submit trace test");
+                                             "Failed submit trace test",
+                                             c.chained);
     gTrace.lines.clear();
     const auto first = commands.submit(commands.acquire());
     gTrace.submitResults = c.submitResults;
     gTrace.endResult = c.endResult;
-    const auto failed = commands.submit(commands.acquire());
+    const auto second = commands.submit(commands.acquire());
+    EXPECT_EQ(droppedTheRecording(commands), !c.secondSubmitted) << c.name;
     gTrace.submitResults.clear();
     const auto third = commands.submit(commands.acquire());
-    EXPECT_TRUE(commands.isReady(first));
-    EXPECT_EQ(commands.wait(third), VK_SUCCESS);
-    EXPECT_TRUE(commands.isReady(failed));
-    commands.waitAll();
+    EXPECT_EQ(droppedTheRecording(commands), !c.thirdSubmitted) << c.name;
+    EXPECT_EQ(commands.wait(first), VK_SUCCESS) << c.name;
+    if (c.thirdSubmitted) {
+      EXPECT_EQ(commands.wait(third), VK_SUCCESS) << c.name;
+    }
+    // A recording that was not submitted never completes.
+    EXPECT_EQ(commands.isReady(second), c.secondSubmitted) << c.name;
     EXPECT_EQ(gTrace.lines, c.expected) << c.name << "\n" << joinLines(gTrace.lines);
   }
 }
@@ -2848,34 +3244,50 @@ TEST_F(VulkanImmediateCommandsTest, ARowFreedAfterAWaitProvesItsSubmissionFinish
 
 TEST_F(VulkanImmediateCommandsTest, FailedSubmitsTakeOrdinalsOnlyWhenTheyMayHaveRun) {
   const auto pool = makeFakePool("Failed submit ordinal test");
+  // Without the chain, so that a recording that is not submitted does not stop the later ones.
+  chained(*pool) = false;
 
-  // Out of memory: the submission takes an ordinal whose fence is never polled or waited on,
-  // because it may never signal; a later fence certifies it.
+  // Out of memory once: the batch is submitted again, and takes an ordinal.
   const auto first = pool->submit(pool->acquire());
   gQueue.submitResults = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
-  const auto outOfMemory = pool->submit(pool->acquire());
-  EXPECT_EQ(gQueue.submitCalls, 2u);
+  const auto retried = pool->submit(pool->acquire());
+  EXPECT_EQ(gQueue.submitCalls, 3u);
   EXPECT_EQ(submissions(*pool), 2u);
-  const VkFence outOfMemoryFence = pool->getVkFenceFromSubmitHandle(outOfMemory);
-  const auto afterOutOfMemory = pool->submit(pool->acquire());
-  EXPECT_FALSE(pool->isReady(outOfMemory));
-  completeSubmissions(gQueue.submitted.size());
+  EXPECT_FALSE(droppedTheRecording(*pool));
+  EXPECT_STREQ(rowState(*pool, retried.bufferIndex), "Submitted");
+  EXPECT_FALSE(pool->isReady(retried));
+  completeSubmissions(2);
   EXPECT_TRUE(pool->isReady(first));
-  EXPECT_TRUE(pool->isReady(outOfMemory));
-  EXPECT_TRUE(pool->isReady(afterOutOfMemory));
+  EXPECT_TRUE(pool->isReady(retried));
 
-  // An unknown result: the same.
+  // When the second try runs out of memory too, nothing was submitted: no ordinal, and the handle
+  // never completes.
+  const auto before = pool->submit(pool->acquire());
+  gQueue.submitResults = {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY};
+  const auto& closed = pool->acquire();
+  const auto notSubmitted = closed.handle;
+  EXPECT_EQ(pool->submit(closed), notSubmitted);
+  EXPECT_EQ(gQueue.submitCalls, 6u);
+  EXPECT_EQ(submissions(*pool), 3u);
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_STREQ(rowState(*pool, notSubmitted.bufferIndex), "Dropped");
+  completeSubmissions(3);
+  EXPECT_TRUE(pool->isReady(before));
+  EXPECT_FALSE(pool->isReady(notSubmitted));
+
+  // An unknown result takes an ordinal whose fence is never polled or waited on; a later fence
+  // certifies it.
   gQueue.submitResults = {VK_ERROR_UNKNOWN};
   const auto unknown = pool->submit(pool->acquire());
   EXPECT_EQ(submissions(*pool), 4u);
+  EXPECT_FALSE(droppedTheRecording(*pool));
   const VkFence unknownFence = pool->getVkFenceFromSubmitHandle(unknown);
   const auto later = pool->submit(pool->acquire());
   EXPECT_FALSE(pool->isReady(unknown));
-  completeSubmissions(gQueue.submitted.size());
+  completeSubmissions(5);
   EXPECT_TRUE(pool->isReady(unknown));
   EXPECT_TRUE(pool->isReady(later));
   for (const uint64_t polled : gQueue.polledFences) {
-    EXPECT_NE(polled, handleKey(outOfMemoryFence));
     EXPECT_NE(polled, handleKey(unknownFence));
   }
 
@@ -2885,13 +3297,19 @@ TEST_F(VulkanImmediateCommandsTest, FailedSubmitsTakeOrdinalsOnlyWhenTheyMayHave
   EXPECT_EQ(pool->wait(lastUnknown, 1'000'000'000), VK_SUCCESS);
   EXPECT_EQ(gQueue.checkpoints, 1u);
 
-  // A device loss takes an ordinal and keeps a trusted fence.
+  // A device loss takes an ordinal and keeps a trusted fence. Nothing is submitted after it.
   gQueue.submitResults = {VK_ERROR_DEVICE_LOST};
   const auto lost = pool->submit(pool->acquire());
   EXPECT_EQ(submissions(*pool), 7u);
   EXPECT_TRUE(pool->isDeviceLost());
   EXPECT_EQ(pool->wait(lost, 1'000'000'000), VK_SUCCESS);
   EXPECT_EQ(gQueue.checkpoints, 1u);
+  const size_t submitCalls = gQueue.submitCalls;
+  const auto afterTheLoss = pool->submit(pool->acquire());
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls);
+  EXPECT_EQ(submissions(*pool), 7u);
+  EXPECT_STREQ(rowState(*pool, afterTheLoss.bufferIndex), "Dropped");
 }
 
 TEST_F(VulkanImmediateCommandsTest, ExportedRowsAreNeverPolledAndAcquireUsesOneCheckpoint) {
@@ -2970,6 +3388,36 @@ TEST_F(VulkanImmediateCommandsTest, CertifyAllReportsWhyItCouldNotCertify) {
     EXPECT_EQ(pool->wait(handle, 1'000'000), VK_ERROR_DEVICE_LOST);
     gQueue.waitOverride.reset();
   }
+}
+
+TEST_F(VulkanImmediateCommandsTest, AFailedEndSubmitsNothing) {
+  const auto pool = makeFakePool("Failed end test");
+  // Without the chain, so that a recording that is not submitted does not stop the later ones.
+  chained(*pool) = false;
+  const auto first = pool->submit(pool->acquire());
+  gQueue.endResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+  const auto& notEnded = pool->acquire();
+  const auto notEndedHandle = notEnded.handle;
+  const VkFence notEndedFence = notEnded.fence.vkFence_;
+  // The recording never runs: nothing is submitted, and it takes no ordinal. Its handle is
+  // returned, and never completes.
+  EXPECT_EQ(pool->submit(notEnded), notEndedHandle);
+  EXPECT_EQ(gQueue.submitCalls, 1u);
+  EXPECT_EQ(submissions(*pool), 1u);
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_STREQ(rowState(*pool, notEndedHandle.bufferIndex), "Dropped");
+  EXPECT_EQ(pool->getLastSubmitHandle(), notEndedHandle);
+  EXPECT_EQ(lastAccepted(*pool), first);
+  EXPECT_EQ(timesSubmitted(notEndedFence), 0u);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(first));
+  EXPECT_FALSE(pool->isReady(notEndedHandle));
+
+  // The next recording runs.
+  const auto next = pool->submit(pool->acquire());
+  EXPECT_FALSE(droppedTheRecording(*pool));
+  EXPECT_EQ(submissions(*pool), 2u);
+  EXPECT_EQ(lastAccepted(*pool), next);
 }
 
 TEST_F(VulkanImmediateCommandsTest, ACheckpointWaitsForTheOldestPendingOneWhenBothAreInUse) {
@@ -3185,6 +3633,1407 @@ TEST_F(VulkanImmediateCommandsTest, AContextThatCannotExportFencesReturnsMinusOn
   EXPECT_EQ(pool.wait(handle, kTestTimeout), VK_SUCCESS);
 }
 
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatCannotRunIsNotSubmittedWithTheOneAfterItCallTrace) {
+  auto& ctx = getVulkanContext();
+  const VkCommandPoolCreateInfo poolInfo = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+      .queueFamilyIndex = ctx.deviceQueues_.graphicsQueueFamilyIndex,
+  };
+  VkCommandPool scratchPool = VK_NULL_HANDLE;
+  ASSERT_EQ(ctx.vf_.vkCreateCommandPool(ctx.getVkDevice(), &poolInfo, nullptr, &scratchPool),
+            VK_SUCCESS);
+  // The calls of the submission of a recording with a primary command buffer after it.
+  const auto traceOf = [&](VkResult endResult, const std::vector<VkResult>& submitResults) {
+    const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+    vulkan::VulkanImmediateCommands commands(vf,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             false,
+                                             false,
+                                             "Next command buffer trace test");
+    // A primary command buffer that runs after the row's own in the same batch, as the recording
+    // of a reusable command buffer does. The traced submissions never reach the device.
+    const VkCommandBufferAllocateInfo allocateInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = scratchPool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    VkCommandBuffer next = VK_NULL_HANDLE;
+    EXPECT_EQ(vf.vkAllocateCommandBuffers(ctx.getVkDevice(), &allocateInfo, &next), VK_SUCCESS);
+    const auto first = commands.submit(commands.acquire());
+    gTrace.lines.clear();
+    gTrace.endResult = endResult;
+    gTrace.submitResults = submitResults;
+    const auto handle = submitWithNext(commands, commands.acquire(), next);
+    gTrace.submitResults.clear();
+    const std::vector<std::string> lines = gTrace.lines;
+    const bool dropped = endResult != VK_SUCCESS || submitResults.size() > 1;
+    EXPECT_EQ(droppedTheRecording(commands), dropped);
+    EXPECT_EQ(commands.wait(first), VK_SUCCESS);
+    EXPECT_EQ(commands.isReady(handle), !dropped);
+    ctx.vf_.vkFreeCommandBuffers(ctx.getVkDevice(), scratchPool, 1, &next);
+    return lines;
+  };
+  const std::vector<std::string> ran = traceOf(VK_SUCCESS, {});
+  const std::string withBoth =
+      "vkQueueSubmit cb1+cb32 fence1 waits=1 signals=1 wait:sem0 signal:sem1";
+  ASSERT_EQ(std::count(ran.begin(), ran.end(), withBoth), 1) << joinLines(ran);
+
+  // A recording that cannot be ended is not submitted, nor is the command buffer after it.
+  std::vector<std::string> expected = ran;
+  expected.erase(std::find(expected.begin(), expected.end(), withBoth));
+  const std::vector<std::string> notEnded = traceOf(VK_ERROR_OUT_OF_DEVICE_MEMORY, {});
+  EXPECT_EQ(notEnded, expected) << joinLines(notEnded);
+
+  // Out of memory once: the same batch, with both command buffers, is submitted again. Out of
+  // memory twice: the same two tries, and then nothing.
+  expected = ran;
+  expected.insert(std::find(expected.begin(), expected.end(), withBoth), withBoth);
+  const std::vector<std::string> outOfMemory = traceOf(VK_SUCCESS, {VK_ERROR_OUT_OF_HOST_MEMORY});
+  EXPECT_EQ(outOfMemory, expected) << joinLines(outOfMemory);
+  const std::vector<std::string> outOfMemoryTwice =
+      traceOf(VK_SUCCESS, {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY});
+  EXPECT_EQ(outOfMemoryTwice, expected) << joinLines(outOfMemoryTwice);
+
+  ctx.vf_.vkDestroyCommandPool(ctx.getVkDevice(), scratchPool, nullptr);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatIsNotSubmittedDropsItsInjectedSemaphoresCallTrace) {
+  auto& ctx = getVulkanContext();
+  // An opaque non-null handle: the traced submissions never reach the device.
+  // NOLINTNEXTLINE(performance-no-int-to-ptr)
+  const auto signalSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x20));
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  // Without the chain, and with an injected signal but no injected wait: nothing orders later work
+  // after the recording, so the next submission is not stopped.
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Dropped semaphores trace test",
+                                           false);
+  const auto first = commands.submit(commands.acquire());
+  gTrace.lines.clear();
+  EXPECT_TRUE(commands.signalSemaphore(signalSemaphore, 0));
+  gTrace.endResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+  const auto notEnded = commands.submit(commands.acquire());
+  EXPECT_TRUE(droppedTheRecording(commands));
+  EXPECT_FALSE(queueStopped(commands));
+  const auto next = commands.submit(commands.acquire());
+  EXPECT_FALSE(droppedTheRecording(commands));
+  // The injected signal went with the recording that was not submitted: the next batch signals
+  // nothing, and waits on nothing.
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkEndCommandBuffer cb1",
+      "vkBeginCommandBuffer cb2 flags=1",
+      "vkEndCommandBuffer cb2",
+      "vkQueueSubmit cb2 fence2 waits=0 signals=0",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+  EXPECT_EQ(commands.wait(next), VK_SUCCESS);
+  EXPECT_TRUE(commands.isReady(first));
+  EXPECT_FALSE(commands.isReady(notEnded));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ADroppedRecordingIsNotMeasured) {
+  if (!iglDev_->hasFeature(DeviceFeatures::Timers)) {
+    GTEST_SKIP() << "Timers are not supported";
+  }
+  auto& ctx = getVulkanContext();
+  Result ret;
+  const auto timer = iglDev_->createTimer(&ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(timer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+  const CommandBufferDesc desc{.timer = timer};
+
+  const auto measured = queue->createCommandBuffer(desc, &ret);
+  ASSERT_NE(measured, nullptr);
+  EXPECT_NE(queue->submit(*measured), 0u);
+  measured->waitUntilCompleted();
+  ASSERT_TRUE(timer->resultsAvailable());
+  const auto measurement = timer->getElapsedTimeNanos();
+
+  const ScopedTableEntry<PFN_vkGetQueryPoolResults> countReads(
+      ctx.vf_, &VulkanFunctionTable::vkGetQueryPoolResults, countingGetQueryPoolResults);
+  gRealGetQueryPoolResults = countReads.saved();
+  const auto dropped = queue->createCommandBuffer(desc, &ret);
+  ASSERT_NE(dropped, nullptr);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    // It is not submitted: the caller gets its handle, which never completes.
+    EXPECT_EQ(queue->submit(*dropped), ctx.immediate_->getLastSubmitHandle().handle());
+  }
+  EXPECT_TRUE(droppedTheRecording(*ctx.immediate_));
+
+  // The dropped recording never wrote its timestamps: the timer keeps the last measurement and does
+  // not read the dropped recording's queries.
+  gQueryReads = 0;
+  EXPECT_TRUE(timer->resultsAvailable());
+  EXPECT_EQ(timer->getElapsedTimeNanos(), measurement);
+  EXPECT_EQ(gQueryReads, 0u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ARecordingThatCouldNotBeSubmittedIsNotMeasured) {
+  if (!iglDev_->hasFeature(DeviceFeatures::Timers)) {
+    GTEST_SKIP() << "Timers are not supported";
+  }
+  auto& ctx = getVulkanContext();
+  Result ret;
+  const auto timer = iglDev_->createTimer(&ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(timer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+  const CommandBufferDesc desc{.timer = timer};
+
+  const auto measured = queue->createCommandBuffer(desc, &ret);
+  ASSERT_NE(measured, nullptr);
+  const SubmitHandle measuredHandle = queue->submit(*measured);
+  EXPECT_NE(measuredHandle, 0u);
+  measured->waitUntilCompleted();
+  ASSERT_TRUE(timer->resultsAvailable());
+  const auto measurement = timer->getElapsedTimeNanos();
+
+  const ScopedTableEntry<PFN_vkGetQueryPoolResults> countReads(
+      ctx.vf_, &VulkanFunctionTable::vkGetQueryPoolResults, countingGetQueryPoolResults);
+  gRealGetQueryPoolResults = countReads.saved();
+  const auto notSubmitted = queue->createCommandBuffer(desc, &ret);
+  ASSERT_NE(notSubmitted, nullptr);
+  {
+    // Both tries to submit it run out of memory.
+    const ScopedTableEntry<PFN_vkQueueSubmit> submitFails(
+        ctx.vf_, &VulkanFunctionTable::vkQueueSubmit, outOfMemoryQueueSubmit);
+    const ScopedTableEntry<PFN_vkQueueSubmit2KHR> submit2Fails(
+        ctx.vf_, &VulkanFunctionTable::vkQueueSubmit2KHR, outOfMemoryQueueSubmit2);
+    // Nothing is submitted: the caller gets the recording's own handle, not the earlier
+    // submission's.
+    const SubmitHandle handle = queue->submit(*notSubmitted);
+    EXPECT_NE(handle, 0u);
+    EXPECT_NE(handle, measuredHandle);
+    EXPECT_EQ(handle, ctx.immediate_->getLastSubmitHandle().handle());
+  }
+  EXPECT_TRUE(droppedTheRecording(*ctx.immediate_));
+
+  // Nothing ran: the timer keeps the last measurement and does not read the recording's queries.
+  gQueryReads = 0;
+  EXPECT_TRUE(timer->resultsAvailable());
+  EXPECT_EQ(timer->getElapsedTimeNanos(), measurement);
+  EXPECT_EQ(gQueryReads, 0u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AStagingCopyThatIsNotSubmittedFails) {
+  auto& ctx = getVulkanContext();
+  // The staging device waits with the context's fence timeout: bounded here, so that a regression
+  // fails instead of hanging.
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  auto& staging = *ctx.stagingDevice_;
+  // Without the chain, so that a copy that is not submitted does not stop the later ones.
+  const ScopedValue<bool> unchained(chained(*staging.immediate), false);
+  const ScopedValue<bool> unchainedContext(chained(*ctx.immediate_), false);
+  Result ret;
+  // A small upload is recorded as a buffer update; a large one is copied through staging blocks.
+  for (const size_t size : {size_t{256}, size_t{256} * 1024}) {
+    const auto buffer =
+        ctx.createBuffer(size,
+                         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         &ret,
+                         "Dropped staging copy test");
+    ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+    ASSERT_NE(buffer, nullptr);
+    ASSERT_FALSE(buffer->isMapped());
+    const std::vector<uint8_t> original(size, 0x5a);
+    ASSERT_TRUE(staging.bufferSubData(*buffer, 0, size, original.data())) << size;
+    const std::vector<uint8_t> uploaded(size, 0x3c);
+    std::vector<uint8_t> readBack(size, 0xa5);
+    {
+      const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+          ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+      EXPECT_FALSE(staging.bufferSubData(*buffer, 0, size, uploaded.data())) << size;
+      const ScopedTableEntry<PFN_vkWaitForFences> waits(
+          ctx.vf_, &VulkanFunctionTable::vkWaitForFences, recordingWaitForFences);
+      gRealWaitForFences = waits.saved();
+      gWaitedFences.clear();
+      EXPECT_FALSE(staging.getBufferSubData(*buffer, 0, size, readBack.data())) << size;
+      // The readback does not wait for its copy, which was not submitted.
+      const VkFence droppedFence =
+          staging.immediate->getVkFenceFromSubmitHandle(staging.immediate->getLastSubmitHandle());
+      ASSERT_NE(droppedFence, VK_NULL_HANDLE) << size;
+      EXPECT_EQ(std::count(gWaitedFences.begin(), gWaitedFences.end(), handleKey(droppedFence)), 0)
+          << size;
+    }
+    // Nothing was read back, and the buffer keeps what it held. Copies that run succeed.
+    EXPECT_EQ(std::count(readBack.begin(), readBack.end(), 0xa5), static_cast<ptrdiff_t>(size))
+        << size;
+    EXPECT_TRUE(staging.getBufferSubData(*buffer, 0, size, readBack.data())) << size;
+    EXPECT_EQ(readBack, original) << size;
+    EXPECT_TRUE(staging.bufferSubData(*buffer, 0, size, uploaded.data())) << size;
+    EXPECT_TRUE(staging.getBufferSubData(*buffer, 0, size, readBack.data())) << size;
+    EXPECT_EQ(readBack, uploaded) << size;
+  }
+
+  // A multi-planar image upload.
+  constexpr uint32_t kPlanarSize = 4;
+  const auto planar =
+      ctx.createImage(VK_IMAGE_TYPE_2D,
+                      VkExtent3D{.width = kPlanarSize, .height = kPlanarSize, .depth = 1},
+                      vulkan::textureFormatToVkFormat(TextureFormat::YUV_NV12),
+                      1,
+                      1,
+                      VK_IMAGE_TILING_OPTIMAL,
+                      VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                      0,
+                      VK_SAMPLE_COUNT_1_BIT,
+                      &ret,
+                      "Dropped staging copy test");
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  const auto planarProperties = TextureFormatProperties::fromTextureFormat(TextureFormat::YUV_NV12);
+  const auto planarRange = TextureRangeDesc::new2D(0, 0, kPlanarSize, kPlanarSize);
+  const std::vector<uint8_t> planarPixels(kPlanarSize * kPlanarSize * 3 / 2, 0x3c);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    EXPECT_FALSE(staging.imageData(planar,
+                                   TextureType::TwoD,
+                                   planarRange,
+                                   planarProperties,
+                                   0,
+                                   VK_IMAGE_ASPECT_COLOR_BIT,
+                                   planarPixels.data()));
+  }
+  // The recording that was not submitted changed no layout.
+  EXPECT_EQ(planar.imageLayout_, VK_IMAGE_LAYOUT_UNDEFINED);
+  EXPECT_TRUE(staging.imageData(planar,
+                                TextureType::TwoD,
+                                planarRange,
+                                planarProperties,
+                                0,
+                                VK_IMAGE_ASPECT_COLOR_BIT,
+                                planarPixels.data()));
+  EXPECT_EQ(planar.imageLayout_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  // A texture upload, and a readback of the texture.
+  const TextureDesc textureDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                     16,
+                                                     16,
+                                                     TextureDesc::TextureUsageBits::Sampled |
+                                                         TextureDesc::TextureUsageBits::Attachment);
+  const auto texture = iglDev_->createTexture(textureDesc, &ret);
+  ASSERT_NE(texture, nullptr);
+  const auto range = TextureRangeDesc::new2D(0, 0, 16, 16);
+  const std::vector<uint8_t> originalPixels(16 * 16 * 4, 0x5a);
+  ASSERT_TRUE(texture->upload(range, originalPixels.data()).isOk());
+  FramebufferDesc framebufferDesc;
+  framebufferDesc.colorAttachments[0].texture = texture;
+  const auto framebuffer = iglDev_->createFramebuffer(framebufferDesc, &ret);
+  ASSERT_NE(framebuffer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+  const std::vector<uint8_t> pixels(16 * 16 * 4, 0x3c);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    EXPECT_FALSE(texture->upload(range, pixels.data()).isOk());
+  }
+  // The texture keeps what it held.
+  std::vector<uint8_t> pixelsBack(pixels.size(), 0xa5);
+  framebuffer->copyBytesColorAttachment(*queue, 0, pixelsBack.data(), range);
+  EXPECT_EQ(pixelsBack, originalPixels);
+  ASSERT_TRUE(texture->upload(range, pixels.data()).isOk());
+
+  // A texture that was never used is in the undefined layout until an upload runs.
+  const auto sampled = iglDev_->createTexture(
+      TextureDesc::new2D(
+          TextureFormat::RGBA_UNorm8, 16, 16, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  ASSERT_NE(sampled, nullptr);
+  const VkImageLayout& sampledLayout =
+      static_cast<vulkan::Texture&>(*sampled).getVulkanTexture().image.imageLayout_;
+  ASSERT_EQ(sampledLayout, VK_IMAGE_LAYOUT_UNDEFINED);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    EXPECT_FALSE(sampled->upload(range, pixels.data()).isOk());
+  }
+  EXPECT_EQ(sampledLayout, VK_IMAGE_LAYOUT_UNDEFINED);
+  ASSERT_TRUE(sampled->upload(range, pixels.data()).isOk());
+  EXPECT_EQ(sampledLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  pixelsBack.assign(pixels.size(), 0xa5);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    framebuffer->copyBytesColorAttachment(*queue, 0, pixelsBack.data(), range);
+  }
+  EXPECT_EQ(std::count(pixelsBack.begin(), pixelsBack.end(), 0xa5),
+            static_cast<ptrdiff_t>(pixelsBack.size()));
+  framebuffer->copyBytesColorAttachment(*queue, 0, pixelsBack.data(), range);
+  EXPECT_EQ(pixelsBack, pixels);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReadbackCopiesAndRestoresTheLayoutInOneRecording) {
+  auto& ctx = getVulkanContext();
+  // The staging device waits with the context's fence timeout: bounded here, so that a regression
+  // fails instead of hanging.
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  Result ret;
+  const TextureDesc textureDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                     16,
+                                                     16,
+                                                     TextureDesc::TextureUsageBits::Sampled |
+                                                         TextureDesc::TextureUsageBits::Attachment);
+  const auto texture = iglDev_->createTexture(textureDesc, &ret);
+  ASSERT_NE(texture, nullptr);
+  const auto range = TextureRangeDesc::new2D(0, 0, 16, 16);
+  const std::vector<uint8_t> pixels(16 * 16 * 4, 0x3c);
+  ASSERT_TRUE(texture->upload(range, pixels.data()).isOk());
+  FramebufferDesc framebufferDesc;
+  framebufferDesc.colorAttachments[0].texture = texture;
+  const auto framebuffer = iglDev_->createFramebuffer(framebufferDesc, &ret);
+  ASSERT_NE(framebuffer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+  const VkImageLayout& trackedLayout =
+      static_cast<vulkan::Texture&>(*texture).getVulkanTexture().image.imageLayout_;
+  const VkImageLayout layout = trackedLayout;
+  Commands& staging = *ctx.stagingDevice_->immediate;
+
+  const ScopedTableEntry<PFN_vkEndCommandBuffer> ends(
+      ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, stagingEndCommandBuffer);
+  const ScopedTableEntry<PFN_vkQueueSubmit> submits(
+      ctx.vf_, &VulkanFunctionTable::vkQueueSubmit, stagingQueueSubmit);
+  const ScopedTableEntry<PFN_vkQueueSubmit2KHR> submits2(
+      ctx.vf_, &VulkanFunctionTable::vkQueueSubmit2KHR, stagingQueueSubmit2);
+  const ScopedTableEntry<PFN_vkCmdPipelineBarrier> barriers(
+      ctx.vf_, &VulkanFunctionTable::vkCmdPipelineBarrier, stagingCmdPipelineBarrier);
+  const auto readBack = [&](uint32_t failingEnd, uint32_t firstFailingSubmit) {
+    gStaging = {
+        .realEnd = ends.saved(),
+        .realSubmit = submits.saved(),
+        .realSubmit2 = submits2.saved(),
+        .realBarrier = barriers.saved(),
+        .failingEnd = failingEnd,
+        .firstFailingSubmit = firstFailingSubmit,
+    };
+    std::vector<uint8_t> pixelsBack(pixels.size(), 0xa5);
+    framebuffer->copyBytesColorAttachment(*queue, 0, pixelsBack.data(), range);
+    return pixelsBack;
+  };
+
+  // The transition to the transfer layout, the copy and the transition back are one recording
+  // and one submission.
+  EXPECT_EQ(readBack(0, 0), pixels);
+  EXPECT_EQ(gStaging.ends, 1u);
+  EXPECT_EQ(gStaging.submits, 1u);
+  EXPECT_EQ(gStaging.barriers, 2u);
+
+  // So no second recording or submission can fail on its own: failing the second end, or the
+  // second submission and its retry, changes nothing.
+  EXPECT_EQ(readBack(2, 0), pixels);
+  EXPECT_FALSE(droppedTheRecording(staging));
+  EXPECT_EQ(readBack(0, 2), pixels);
+  EXPECT_FALSE(droppedTheRecording(staging));
+  EXPECT_EQ(trackedLayout, layout);
+
+  // Without the chain from here, so that a readback that is not submitted does not stop the later
+  // ones (each recording then starts with a barrier that orders it after earlier work).
+  const ScopedValue<bool> unchained(chained(staging), false);
+  // When that recording is not submitted because its end fails, nothing is read and the image
+  // keeps its layout; a readback that runs afterwards reads the image from the layout IGL tracks.
+  const std::vector<uint8_t> untouched(pixels.size(), 0xa5);
+  EXPECT_EQ(readBack(1, 0), untouched);
+  EXPECT_TRUE(droppedTheRecording(staging));
+  EXPECT_EQ(trackedLayout, layout);
+  EXPECT_EQ(readBack(0, 0), pixels);
+
+  // The same when both tries to submit it run out of memory.
+  EXPECT_EQ(readBack(0, 1), untouched);
+  EXPECT_TRUE(droppedTheRecording(staging));
+  EXPECT_EQ(trackedLayout, layout);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReadbackReadsOnlyACopyKnownToHaveRunAndFinished) {
+  auto& ctx = getVulkanContext();
+  // The staging device waits with the context's fence timeout: finite here, so that a fence that
+  // never answers ends the wait.
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  auto& staging = *ctx.stagingDevice_;
+  Result ret;
+  constexpr size_t kSize = size_t{64} * 1024;
+  const auto buffer =
+      ctx.createBuffer(kSize,
+                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                       &ret,
+                       "Unproven readback test");
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+  const std::vector<uint8_t> content(kSize, 0x3c);
+  ASSERT_TRUE(staging.bufferSubData(*buffer, 0, kSize, content.data()));
+  const auto texture =
+      iglDev_->createTexture(TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                16,
+                                                16,
+                                                TextureDesc::TextureUsageBits::Sampled |
+                                                    TextureDesc::TextureUsageBits::Attachment),
+                             &ret);
+  ASSERT_NE(texture, nullptr);
+  const auto range = TextureRangeDesc::new2D(0, 0, 16, 16);
+  const std::vector<uint8_t> pixels(16 * 16 * 4, 0x3c);
+  ASSERT_TRUE(texture->upload(range, pixels.data()).isOk());
+  FramebufferDesc framebufferDesc;
+  framebufferDesc.colorAttachments[0].texture = texture;
+  const auto framebuffer = iglDev_->createFramebuffer(framebufferDesc, &ret);
+  ASSERT_NE(framebuffer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+
+  const ScopedTableEntry<PFN_vkQueueSubmit> submits(
+      ctx.vf_, &VulkanFunctionTable::vkQueueSubmit, stagingQueueSubmit);
+  const ScopedTableEntry<PFN_vkQueueSubmit2KHR> submits2(
+      ctx.vf_, &VulkanFunctionTable::vkQueueSubmit2KHR, stagingQueueSubmit2);
+  const ScopedTableEntry<PFN_vkWaitForFences> waits(
+      ctx.vf_, &VulkanFunctionTable::vkWaitForFences, stagingWaitForFences);
+  const auto fault = [&](VkResult fenceAnswer, uint32_t unknownSubmit) {
+    gStaging = {
+        .realSubmit = submits.saved(),
+        .realSubmit2 = submits2.saved(),
+        .realWait = waits.saved(),
+        .unknownSubmit = unknownSubmit,
+        .fenceAnswer = fenceAnswer,
+    };
+  };
+  // Without faults, every block whose copy retired is returned and every staging buffer that is
+  // free again is released.
+  const auto settle = [&] {
+    fault(VK_SUCCESS, 0);
+    staging.immediate->waitAll();
+    for (int pass = 0; pass < 4; ++pass) {
+      staging.mergeRegionsAndFreeBuffers();
+    }
+    EXPECT_EQ(staging.getFreeStagingBufferSize(), 0u);
+  };
+  const auto readBuffer = [&](std::vector<uint8_t>& out) {
+    out.assign(kSize, 0xa5);
+    return staging.getBufferSubData(*buffer, 0, kSize, out.data());
+  };
+  const auto readImage = [&] {
+    std::vector<uint8_t> out(pixels.size(), 0xa5);
+    framebuffer->copyBytesColorAttachment(*queue, 0, out.data(), range);
+    return out;
+  };
+  const std::vector<uint8_t> untouched(kSize, 0xa5);
+  const std::vector<uint8_t> untouchedPixels(pixels.size(), 0xa5);
+  std::vector<uint8_t> bufferBack;
+
+  // A readback whose copy finished returns its block to a new staging buffer.
+  settle();
+  ASSERT_TRUE(readBuffer(bufferBack));
+  EXPECT_EQ(bufferBack, content);
+  const VkDeviceSize freeAfterReadback = staging.getFreeStagingBufferSize();
+
+  // When fence waits and polls time out or fail, the copy may still run: nothing is read, and its
+  // block is not free again, not even after a merge, until the copy retires.
+  for (const VkResult fenceAnswer : {VK_TIMEOUT, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+    settle();
+    fault(fenceAnswer, 0);
+    EXPECT_FALSE(readBuffer(bufferBack)) << fenceAnswer;
+    EXPECT_EQ(bufferBack, untouched) << fenceAnswer;
+    EXPECT_EQ(staging.getFreeStagingBufferSize(), freeAfterReadback - kSize) << fenceAnswer;
+    staging.mergeRegionsAndFreeBuffers();
+    EXPECT_EQ(staging.getFreeStagingBufferSize(), freeAfterReadback - kSize) << fenceAnswer;
+    EXPECT_EQ(readImage(), untouchedPixels) << fenceAnswer;
+  }
+
+  // A submission that reports VK_ERROR_UNKNOWN may or may not have run, even once a checkpoint
+  // proves that it retired: nothing is read, and the block is free again.
+  settle();
+  fault(VK_SUCCESS, 1);
+  EXPECT_FALSE(readBuffer(bufferBack));
+  EXPECT_EQ(bufferBack, untouched);
+  EXPECT_EQ(staging.getFreeStagingBufferSize(), freeAfterReadback);
+  fault(VK_SUCCESS, 1);
+  EXPECT_EQ(readImage(), untouchedPixels);
+
+  // Copies known to have run and finished are read again.
+  settle();
+  EXPECT_TRUE(readBuffer(bufferBack));
+  EXPECT_EQ(bufferBack, content);
+  EXPECT_EQ(readImage(), pixels);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReadbackAfterADeviceLossReadsNothing) {
+  auto& ctx = getVulkanContext();
+  // The staging device waits with the context's fence timeout: bounded here, so that a regression
+  // fails instead of hanging.
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  auto& staging = *ctx.stagingDevice_;
+  Result ret;
+  constexpr size_t kSize = size_t{64} * 1024;
+  const auto buffer =
+      ctx.createBuffer(kSize,
+                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                       &ret,
+                       "Device loss readback test");
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+  const std::vector<uint8_t> content(kSize, 0x3c);
+  ASSERT_TRUE(staging.bufferSubData(*buffer, 0, kSize, content.data()));
+  const auto texture =
+      iglDev_->createTexture(TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
+                                                16,
+                                                16,
+                                                TextureDesc::TextureUsageBits::Sampled |
+                                                    TextureDesc::TextureUsageBits::Attachment),
+                             &ret);
+  ASSERT_NE(texture, nullptr);
+  const auto range = TextureRangeDesc::new2D(0, 0, 16, 16);
+  const std::vector<uint8_t> pixels(16 * 16 * 4, 0x3c);
+  ASSERT_TRUE(texture->upload(range, pixels.data()).isOk());
+  FramebufferDesc framebufferDesc;
+  framebufferDesc.colorAttachments[0].texture = texture;
+  const auto framebuffer = iglDev_->createFramebuffer(framebufferDesc, &ret);
+  ASSERT_NE(framebuffer, nullptr);
+  const auto queue = iglDev_->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+
+  // The readback's fence reports a device loss: its submission retired, but nothing it copied can
+  // be trusted.
+  const ScopedTableEntry<PFN_vkWaitForFences> waits(
+      ctx.vf_, &VulkanFunctionTable::vkWaitForFences, stagingWaitForFences);
+  gStaging = {.realWait = waits.saved(), .fenceAnswer = VK_ERROR_DEVICE_LOST};
+  std::vector<uint8_t> bufferBack(kSize, 0xa5);
+  EXPECT_FALSE(staging.getBufferSubData(*buffer, 0, kSize, bufferBack.data()));
+  EXPECT_EQ(bufferBack, std::vector<uint8_t>(kSize, 0xa5));
+  EXPECT_TRUE(staging.immediate->isDeviceLost());
+
+  // The loss is remembered: a later readback is not submitted, and reads nothing either.
+  gStaging.fenceAnswer = VK_SUCCESS;
+  std::vector<uint8_t> pixelsBack(pixels.size(), 0xa5);
+  framebuffer->copyBytesColorAttachment(*queue, 0, pixelsBack.data(), range);
+  EXPECT_EQ(pixelsBack, std::vector<uint8_t>(pixels.size(), 0xa5));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingOpenAcrossASubmitThatSubmittedNothingDoesNotAnswerForTheRecordingThatTakesItsRow) {
+  const auto pool = makeFakePool("Submit call cohort test");
+  // Without the chain, so that the recording that is not submitted does not stop the later ones.
+  chained(*pool) = false;
+  const auto notSubmittedTwice =
+      std::vector<VkResult>{VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+
+  // Control: no submit() call between the acquisitions of a released recording and of the one that
+  // takes its row, which had the same submit id: the released one answers for the open one.
+  const auto pending = pool->submit(pool->acquire());
+  const auto& released = pool->acquire();
+  const auto releasedHandle = released.handle;
+  pool->release(released);
+  const auto& taker = pool->acquire();
+  ASSERT_EQ(taker.handle.bufferIndex, releasedHandle.bufferIndex);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(pending));
+  EXPECT_FALSE(pool->isReady(releasedHandle));
+  pool->discard(taker);
+  EXPECT_TRUE(pool->isReady(releasedHandle));
+
+  // A submit() call that submitted nothing came in between: as with any submit() call, the two
+  // never shared a submit id, so the released recording answers for its own prefix only, even while
+  // the recording that took its row is open.
+  const auto inFlight = pool->submit(pool->acquire());
+  const auto& open = pool->acquire();
+  const auto openHandle = open.handle;
+  gQueue.submitResults = notSubmittedTwice;
+  static_cast<void>(pool->submit(pool->acquire()));
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  pool->release(open);
+  const auto& secondTaker = pool->acquire();
+  ASSERT_EQ(secondTaker.handle.bufferIndex, openHandle.bufferIndex);
+  EXPECT_FALSE(pool->isReady(openHandle));
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(inFlight));
+  EXPECT_TRUE(pool->isReady(openHandle));
+  pool->discard(secondTaker);
+
+  // Since that call, more submit() calls were made than submissions: with no submit() call between
+  // the acquisitions, a released recording still answers for the one that takes its row.
+  const auto& releasedAgain = pool->acquire();
+  const auto releasedAgainHandle = releasedAgain.handle;
+  pool->release(releasedAgain);
+  const auto& thirdTaker = pool->acquire();
+  ASSERT_EQ(thirdTaker.handle.bufferIndex, releasedAgainHandle.bufferIndex);
+  completeSubmissions(gQueue.submitted.size());
+  EXPECT_FALSE(pool->isReady(releasedAgainHandle));
+  pool->discard(thirdTaker);
+  EXPECT_TRUE(pool->isReady(releasedAgainHandle));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatIsNotSubmittedKeepsItsOwnHandleWhichNeverCompletes) {
+  const auto pool = makeFakePool("Not submitted handle test");
+  const auto before = pool->submit(pool->acquire());
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto& closed = pool->acquire();
+  const auto own = closed.handle;
+  const VkFence fence = closed.fence.vkFence_;
+  EXPECT_EQ(pool->submit(closed), own);
+  EXPECT_EQ(pool->getLastSubmitHandle(), own);
+  EXPECT_EQ(lastAccepted(*pool), before);
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+  EXPECT_TRUE(rowAgrees(*pool, own.bufferIndex));
+  EXPECT_EQ(submissions(*pool), 1u);
+  EXPECT_EQ(timesSubmitted(fence), 0u);
+  // Its fence is the row's, as the fence of a submission that never reached the queue; nothing
+  // signals it, so it cannot be exported.
+  EXPECT_EQ(pool->getVkFenceFromSubmitHandle(own), fence);
+  EXPECT_EQ(exportFenceFd(*pool, own), -1);
+  EXPECT_EQ(gQueue.exports, 0u);
+
+  // Once everything submitted before it finished it retired, as it never runs, but it never
+  // completes.
+  EXPECT_FALSE(isRetired(*pool, own));
+  EXPECT_EQ(waitRetired(*pool, own, 0), VK_TIMEOUT);
+  completeSubmissions(gQueue.submitted.size());
+  EXPECT_TRUE(pool->isReady(before));
+  EXPECT_TRUE(isRetired(*pool, own));
+  EXPECT_FALSE(pool->isReady(own));
+  EXPECT_EQ(pool->wait(own, 0), VK_TIMEOUT);
+  EXPECT_EQ(pool->wait(own, 1'000'000), VK_TIMEOUT);
+  // A bounded certification proves everything submitted finished: the recording submitted nothing.
+  EXPECT_EQ(certifyAll(*pool, kTestTimeout), VK_SUCCESS);
+  EXPECT_EQ(retiredThrough(*pool), submissions(*pool));
+  // The row stays out of circulation: it is freed only once a device loss is certified.
+  for (uint32_t i = 0; i != 2 * Commands::kMaxCommandBuffers; ++i) {
+    const auto& wrapper = pool->acquire();
+    EXPECT_NE(wrapper.handle.bufferIndex, own.bufferIndex);
+    pool->discard(wrapper);
+  }
+  EXPECT_FALSE(recycleDroppedRows(*pool));
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+
+  // A wait without a time limit waits on its fence as on one that nothing signals (the fake queue
+  // fails such a wait, and answers as if the fence were signaled). With no device loss reported,
+  // that answer proves nothing: the wait fails, and the recording does not read as finished.
+  VkResult unbounded = VK_SUCCESS;
+  EXPECT_NONFATAL_FAILURE(unbounded = pool->wait(own),
+                          "Unbounded wait on a fence that has no pending signal");
+  EXPECT_EQ(unbounded, VK_ERROR_UNKNOWN);
+  EXPECT_FALSE(pool->isDeviceLost());
+  EXPECT_FALSE(pool->isReady(own));
+  // An answer that the device is lost ends the wait; the recording never reads as finished.
+  gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
+  EXPECT_EQ(pool->wait(own), VK_ERROR_DEVICE_LOST);
+  EXPECT_TRUE(pool->isDeviceLost());
+  EXPECT_TRUE(pool->isReady(own));
+  EXPECT_EQ(pool->wait(own, 0), VK_ERROR_DEVICE_LOST);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       TheFenceOfARecordingThatWasNotSubmittedProvesALossByTheBackoffRule) {
+  // The answers of a wait on the fence of a recording that was not submitted, which nothing
+  // signals: an answer that the device is lost; a success once a loss was reported (here by the
+  // creation of a checkpoint fence); a success with no loss reported, which proves nothing.
+  enum class Answer : uint8_t { DeviceLost, SuccessAfterAReportedLoss, Success };
+  for (const Answer answer :
+       {Answer::DeviceLost, Answer::SuccessAfterAReportedLoss, Answer::Success}) {
+    SCOPED_TRACE(static_cast<int>(answer));
+    const auto pool = makeFakePool("Dropped fence answer test");
+    // Exported work that only a checkpoint can prove finished, then a recording that cannot run.
+    const auto exported = pool->submit(pool->acquire());
+    ASSERT_GE(exportFenceFd(*pool, exported), 0);
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    const auto own = pool->submit(pool->acquire());
+    ASSERT_TRUE(droppedTheRecording(*pool));
+    if (answer == Answer::SuccessAfterAReportedLoss) {
+      gQueue.createFenceResult = VK_ERROR_DEVICE_LOST;
+      ASSERT_EQ(certifyAll(*pool, kTestTimeout), VK_ERROR_UNKNOWN);
+      ASSERT_TRUE(pool->isDeviceLost());
+    }
+    ASSERT_FALSE(pool->isReady(exported));
+    gQueue.blockingWaitResults = {answer == Answer::DeviceLost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS};
+    const VkResult result = pool->wait(own, kTestTimeout);
+    if (answer == Answer::Success) {
+      EXPECT_EQ(result, VK_ERROR_UNKNOWN);
+      EXPECT_FALSE(pool->isReady(own));
+      EXPECT_FALSE(pool->isReady(exported));
+      EXPECT_FALSE(pool->isDeviceLost());
+    } else {
+      // The loss ends every submission of the pool: the exported work no longer runs either.
+      EXPECT_EQ(result, VK_ERROR_DEVICE_LOST);
+      EXPECT_TRUE(pool->isReady(own));
+      EXPECT_EQ(retiredThrough(*pool), submissions(*pool));
+      EXPECT_EQ(pool->wait(exported, 0), VK_ERROR_DEVICE_LOST);
+    }
+    EXPECT_EQ(gQueue.checkpoints, 0u);
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       WaitAllTakesTheAnswerOfARecordingThatWasNotSubmittedByTheSameRule) {
+  enum class Answer : uint8_t { DeviceLost, SuccessAfterAReportedLoss, Success };
+  for (const Answer answer :
+       {Answer::DeviceLost, Answer::SuccessAfterAReportedLoss, Answer::Success}) {
+    SCOPED_TRACE(static_cast<int>(answer));
+    const auto pool = makeFakePool("Dropped fence waitAll test");
+    if (answer == Answer::SuccessAfterAReportedLoss) {
+      // A fence reset that reports the loss: it is remembered, and certifies nothing.
+      static_cast<void>(pool->submit(pool->acquire()));
+      completeSubmissions(gQueue.submitted.size());
+      gQueue.resetResults = {VK_ERROR_DEVICE_LOST};
+      const DebugAborts aborts;
+      ASSERT_EQ(certifyAll(*pool, kTestTimeout), VK_SUCCESS);
+      ASSERT_TRUE(pool->isDeviceLost());
+    } else {
+      gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    }
+    // A recording that cannot run, or that comes after a reported loss, is not submitted.
+    const auto own = pool->submit(pool->acquire());
+    ASSERT_TRUE(droppedTheRecording(*pool));
+    if (answer == Answer::Success) {
+      // A success with no loss reported proves nothing: the wait goes on, backing off, until a
+      // back-off reports the loss.
+      gQueue.blockingWaitResults = {VK_SUCCESS, VK_SUCCESS, VK_SUCCESS};
+      gQueue.backoffResults = {VK_TIMEOUT, VK_TIMEOUT, VK_ERROR_DEVICE_LOST};
+    } else {
+      gQueue.blockingWaitResults = {answer == Answer::DeviceLost ? VK_ERROR_DEVICE_LOST
+                                                                 : VK_SUCCESS};
+    }
+    pool->waitAll();
+    EXPECT_TRUE(gQueue.blockingWaitResults.empty());
+    EXPECT_EQ(gQueue.backoffWaits.size(), answer == Answer::Success ? 3u : 0u);
+    EXPECT_TRUE(pool->isReady(own));
+    EXPECT_EQ(pool->wait(own, 0), VK_ERROR_DEVICE_LOST);
+    EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AFailedWaitOrResetOfARecordingThatWasNotSubmittedAssertsAsItAlwaysDid) {
+  const DebugAborts aborts;
+  const auto pool = makeFakePool("Dropped row assertion test");
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto own = pool->submit(pool->acquire());
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  // A wait on its fence that fails asserts, as `waitAll()` always did; the row stays out.
+  gQueue.blockingWaitResults = {VK_ERROR_OUT_OF_HOST_MEMORY};
+  pool->waitAll();
+  EXPECT_EQ(aborts.in("waitAll"), kDebugAbortsPerFailure);
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+  // Once a loss is certified the row is reset: each reset that fails asserts, and the row stays
+  // out until both resets work.
+  certifyQueueIdle(*pool, true);
+  gQueue.resetCommandBufferResults = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  EXPECT_FALSE(recycleDroppedRows(*pool));
+  EXPECT_EQ(aborts.in("recycleDroppedRows"), kDebugAbortsPerFailure);
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+  gQueue.resetResults = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  EXPECT_FALSE(recycleDroppedRows(*pool));
+  EXPECT_EQ(aborts.in("recycleDroppedRows"), 2 * kDebugAbortsPerFailure);
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Dropped");
+  EXPECT_TRUE(recycleDroppedRows(*pool));
+  EXPECT_STREQ(rowState(*pool, own.bufferIndex), "Free");
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       WaitAllWaitsForARecordingThatIsNotSubmittedButTheDestructorDoesNot) {
+  {
+    const auto pool = makeFakePool("Not submitted wait all test");
+    static_cast<void>(pool->submit(pool->acquire()));
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+    completeSubmissions(gQueue.submitted.size());
+    // As on the fence of a submission that never reached the queue: without a time limit. The fake
+    // queue answers that wait as signaled, which proves nothing; the wait goes on until a back-off
+    // reports a device loss.
+    gQueue.backoffResults = {VK_ERROR_DEVICE_LOST};
+    EXPECT_NONFATAL_FAILURE(pool->waitAll(),
+                            "Unbounded wait on a fence that has no pending signal");
+    EXPECT_EQ(gQueue.backoffWaits.size(), 1u);
+  }
+  // The destructor waits only for what was submitted, which finished: it makes no wait without a
+  // time limit, which the fake queue would fail.
+  {
+    const auto pool = makeFakePool("Not submitted destructor test");
+    static_cast<void>(pool->submit(pool->acquire()));
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+    completeSubmissions(gQueue.submitted.size());
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReusableRunThatIsNotSubmittedNeverCompletes) {
+  auto& ctx = getVulkanContext();
+  // The context's command buffers are submitted to the fake queue, so that run A stays in flight
+  // until a blocking wait completes it.
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Reusable run test");
+  ReusableRunsWithADroppedRun runs;
+  ASSERT_NO_FATAL_FAILURE(startReusableRunsWithADroppedRun(*fakePool, runs));
+
+  // Waiting for the reusable command buffer waits for run B, as on the fence of a submission that
+  // never reached the queue: without a time limit, which the fake queue fails. Run A is not what
+  // it waits for.
+  EXPECT_NONFATAL_FAILURE(runs.reusable->waitUntilCompleted(),
+                          "Unbounded wait on a fence that has no pending signal");
+  EXPECT_EQ(gQueue.completed, 0u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReusableRunThatIsNotSubmittedFreesItsSlotWithTheRunBeforeIt) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Reusable slot test");
+  ReusableRunsWithADroppedRun runs;
+  ASSERT_NO_FATAL_FAILURE(startReusableRunsWithADroppedRun(*fakePool, runs));
+  // Every slot runs again, run B's included: a run first waits for the slot's last run, which for
+  // run B's slot is run A (a wait on run B would have no time limit, which the fake queue fails).
+  // The runs are not submitted, as the queue stopped after run B.
+  const RenderPassDesc renderPass{
+      .colorAttachments = {{.loadAction = LoadAction::Clear, .storeAction = StoreAction::Store}}};
+  ASSERT_EQ(ctx.config_.maxResourceCount, 3u);
+  for (uint32_t i = 0; i != ctx.config_.maxResourceCount; ++i) {
+    // The third slot has no recording yet; the first two run theirs again.
+    if (i == 0) {
+      Result ret;
+      auto encoder = runs.reusable->createRenderCommandEncoder(renderPass, runs.framebuffer, &ret);
+      ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+      encoder->endEncoding();
+    }
+    EXPECT_NE(runs.queue->submit(*runs.reusable), 0u) << i;
+  }
+  EXPECT_EQ(gQueue.completed, 1u);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AReusableCommandBufferWhoseLastRunIsNotSubmittedOutlivesTheRunBeforeIt) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Reusable destruction test");
+  ReusableRunsWithADroppedRun runs;
+  ASSERT_NO_FATAL_FAILURE(startReusableRunsWithADroppedRun(*fakePool, runs));
+  const ScopedTableEntry<PFN_vkDestroyCommandPool> countDestroys(
+      ctx.vf_, &VulkanFunctionTable::vkDestroyCommandPool, countingDestroyCommandPool);
+  gRealDestroyCommandPool = countDestroys.saved();
+  gCommandPoolsDestroyed = 0;
+
+  // Run A may still execute the recordings: their command pool outlives the reusable command
+  // buffer until run A finished. Run B, which was not submitted, does not hold them longer.
+  runs.reusable.reset();
+  EXPECT_EQ(gCommandPoolsDestroyed, 0u);
+  completeSubmissions(gQueue.submitted.size());
+  // A submission (here not submitted, as the queue stopped) runs the deferred tasks whose work
+  // retired.
+  runs.queue->submit(*runs.ordinary);
+  EXPECT_EQ(gCommandPoolsDestroyed, 1u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AFirstStagingCopyThatIsNotSubmittedLeavesItsBlockFree) {
+  auto& ctx = getVulkanContext();
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  // A staging device of its own, whose pool has submitted nothing yet; without the chain, so that
+  // the copies after the one that is not submitted run.
+  auto staging = std::make_unique<igl::vulkan::VulkanStagingDevice>(ctx);
+  // Its destructor waits without a time limit for everything submitted: when the test fails, the
+  // staging device is leaked instead, so that the failure cannot hang the test.
+  struct LeakOnFailure {
+    explicit LeakOnFailure(std::unique_ptr<igl::vulkan::VulkanStagingDevice>& staging) :
+      staging(staging) {}
+    std::unique_ptr<igl::vulkan::VulkanStagingDevice>& staging;
+    LeakOnFailure(const LeakOnFailure&) = delete;
+    LeakOnFailure& operator=(const LeakOnFailure&) = delete;
+    ~LeakOnFailure() {
+      if (::testing::Test::HasFailure()) {
+        [[maybe_unused]] const igl::vulkan::VulkanStagingDevice* const leaked = staging.release();
+      }
+    }
+  };
+  const LeakOnFailure leakOnFailure{staging};
+  chained(*staging->immediate) = false;
+  ASSERT_TRUE(staging->immediate->getLastSubmitHandle().empty());
+  Result ret;
+  constexpr size_t kSize = size_t{256} * 1024;
+  const auto target =
+      ctx.createBuffer(kSize,
+                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                       &ret,
+                       "Buffer: first staging copy");
+  ASSERT_NE(target, nullptr);
+  const std::vector<uint8_t> data(kSize, 0x5a);
+  {
+    // Both tries to submit the copy run out of memory: it is not submitted.
+    const ScopedTableEntry<PFN_vkQueueSubmit> submitFails(
+        ctx.vf_, &VulkanFunctionTable::vkQueueSubmit, outOfMemoryQueueSubmit);
+    const ScopedTableEntry<PFN_vkQueueSubmit2KHR> submit2Fails(
+        ctx.vf_, &VulkanFunctionTable::vkQueueSubmit2KHR, outOfMemoryQueueSubmit2);
+    EXPECT_FALSE(staging->bufferSubData(*target, 0, data.size(), data.data()));
+  }
+  ASSERT_TRUE(droppedTheRecording(*staging->immediate));
+  ASSERT_TRUE(lastAccepted(*staging->immediate).empty());
+  ASSERT_EQ(submissions(*staging->immediate), 0u);
+  // The block is free again: a merge recovers the whole staging buffer, releases it, and leaves the
+  // free size at 0 (it would wrap if the block were not counted as free).
+  const VkDeviceSize freeAfterTheFailure = staging->getFreeStagingBufferSize();
+  ASSERT_GE(freeAfterTheFailure, kSize);
+  staging->mergeRegionsAndFreeBuffers();
+  ASSERT_EQ(staging->getFreeStagingBufferSize(), 0u);
+
+  // Copies that run afterwards upload and read back the data.
+  ASSERT_TRUE(staging->bufferSubData(*target, 0, data.size(), data.data()));
+  std::vector<uint8_t> back(kSize, 0);
+  ASSERT_TRUE(staging->getBufferSubData(*target, 0, back.size(), back.data()));
+  EXPECT_EQ(back, data);
+  // Everything submitted is proven finished, within a time limit.
+  EXPECT_EQ(certifyAll(*staging->immediate, kTestTimeout), VK_SUCCESS);
+  EXPECT_EQ(retiredThrough(*staging->immediate), submissions(*staging->immediate));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ADeferredTaskOfARecordingThatIsNotSubmittedRunsOnceTheWorkBeforeItRetired) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Not submitted deferred task test");
+  const auto queue = iglDev_->createCommandQueue({}, nullptr);
+  ASSERT_NE(queue, nullptr);
+  const auto before = ctx.immediate_->submit(ctx.immediate_->acquire());
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto dropped = ctx.immediate_->submit(ctx.immediate_->acquire());
+  ASSERT_TRUE(droppedTheRecording(*ctx.immediate_));
+  bool ran = false;
+  ctx.deferredTask(std::packaged_task<void()>([&ran] { ran = true; }), dropped);
+
+  // A frame runs the deferred tasks whose work retired (the frame is not submitted: the queue
+  // stopped).
+  const auto frame = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(frame, nullptr);
+  queue->submit(*frame);
+  EXPECT_FALSE(ran);
+  completeSubmissions(1);
+  EXPECT_TRUE(ctx.immediate_->isReady(before));
+  const auto nextFrame = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(nextFrame, nullptr);
+  queue->submit(*nextFrame);
+  // The recording never runs, and never completes: its task runs once the work before it retired.
+  EXPECT_TRUE(ran);
+  EXPECT_FALSE(ctx.immediate_->isReady(dropped));
+}
+
+TEST_F(VulkanImmediateCommandsTest, WaitDeferredTasksKeepsTheTasksOfWorkNotProvenFinished) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Deferred task wait test");
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, 1'000'000);
+  const auto done = ctx.immediate_->submit(ctx.immediate_->acquire());
+  completeSubmissions(1);
+  ASSERT_TRUE(ctx.immediate_->isReady(done));
+  const auto pending = ctx.immediate_->submit(ctx.immediate_->acquire());
+  std::vector<int> order;
+  ctx.deferredTask(std::packaged_task<void()>([&order] { order.push_back(1); }), pending);
+  ctx.deferredTask(std::packaged_task<void()>([&order] { order.push_back(2); }), done);
+
+  // The first task's work does not finish within the fence timeout: it stays queued, and so does
+  // the task after it, whose work finished.
+  gQueue.blockingWaitsComplete = false;
+  ctx.waitDeferredTasks();
+  EXPECT_TRUE(order.empty());
+  gQueue.blockingWaitsComplete = true;
+  ctx.waitDeferredTasks();
+  EXPECT_EQ(order, (std::vector<int>{1, 2}));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ADeferredTaskCanQueueAnotherOne) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Nested deferred task test");
+  const auto done = ctx.immediate_->submit(ctx.immediate_->acquire());
+  completeSubmissions(1);
+  std::vector<int> order;
+  ctx.deferredTask(std::packaged_task<void()>([&ctx, &order, done] {
+                     order.push_back(1);
+                     ctx.deferredTask(std::packaged_task<void()>([&order] { order.push_back(2); }),
+                                      done);
+                   }),
+                   done);
+  ctx.waitDeferredTasks();
+  EXPECT_EQ(order, (std::vector<int>{1, 2}));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AnExhaustedAcquireReusesTheRowsOfDroppedRecordingsOnceALossIsCertified) {
+  const auto pool = makeFakePool("Dropped rows reuse test");
+  // The first recording cannot be ended; with the chain, every later one is not submitted either.
+  gQueue.endResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+  }
+  // Every row holds a recording that was not submitted: none is freed before a loss is certified.
+  EXPECT_FALSE(tryFreeRow(*pool));
+  certifyQueueIdle(*pool, true);
+  // Then one try of an exhausted acquisition frees them, as lost.
+  EXPECT_TRUE(tryFreeRow(*pool));
+  for (uint32_t row = 0; row != Commands::kMaxCommandBuffers; ++row) {
+    EXPECT_STREQ(rowState(*pool, row), "Free") << row;
+    EXPECT_TRUE(outcomesLost(*pool, row)) << row;
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AnAcquireAfterARememberedDeviceLossEndsOnceABackoffReportsTheLoss) {
+  const auto pool = makeFakePool("Remembered loss test");
+  // A submission reports the loss, which the pool remembers; its fence then answers as signaled, as
+  // a lost device may: its row is freed as finished, and no loss is certified.
+  gQueue.submitResults = {VK_ERROR_DEVICE_LOST};
+  const auto lost = pool->submit(pool->acquire());
+  ASSERT_TRUE(pool->isDeviceLost());
+  completeSubmissions(gQueue.submitted.size());
+  EXPECT_EQ(pool->wait(lost, 0), VK_SUCCESS);
+  // Every later recording is not submitted. Once they hold every row, an acquisition frees a row
+  // only once a loss is certified: the second back-off reports it.
+  for (uint32_t i = 0; i != Commands::kMaxCommandBuffers; ++i) {
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+  }
+  gQueue.backoffResults = {VK_TIMEOUT, VK_SUCCESS};
+  const auto& wrapper = pool->acquire();
+  EXPECT_EQ(gQueue.backoffWaits, backoffs(2));
+  EXPECT_TRUE(outcomesLost(*pool, wrapper.handle.bufferIndex));
+  pool->discard(wrapper);
+}
+
+TEST_F(VulkanImmediateCommandsTest, EverySubmitCallThatFailsAssertsAsItAlwaysDid) {
+  const DebugAborts aborts;
+  const auto pool = makeFakePool("Submit assertion test");
+  chained(*pool) = false;
+  // Out of memory once: the retry submits the recording, after the failed call asserted.
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY};
+  static_cast<void>(pool->submit(pool->acquire()));
+  EXPECT_FALSE(droppedTheRecording(*pool));
+  EXPECT_EQ(aborts.in("::submit("), kDebugAbortsPerFailure);
+  // Out of memory twice: both calls assert, and the recording is not submitted.
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  static_cast<void>(pool->submit(pool->acquire()));
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_EQ(aborts.in("::submit("), 3 * kDebugAbortsPerFailure);
+  // A failed end asserts too.
+  gQueue.endResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  static_cast<void>(pool->submit(pool->acquire()));
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_EQ(aborts.in("::submit("), 4 * kDebugAbortsPerFailure);
+  completeSubmissions(gQueue.submitted.size());
+}
+
+TEST_F(VulkanImmediateCommandsTest, WaitingForTheRetirementOfAnOpenRecordingAssertsAsAWaitDoes) {
+  const auto pool = makeFakePool("Open retirement wait test");
+  const auto& open = pool->acquire();
+  const DebugAborts aborts;
+  EXPECT_EQ(waitRetired(*pool, open.handle, kTestTimeout), VK_ERROR_UNKNOWN);
+  EXPECT_EQ(aborts.in("waitRetired"), kDebugAbortsPerFailure);
+  EXPECT_EQ(pool->wait(open.handle, kTestTimeout), VK_ERROR_UNKNOWN);
+  EXPECT_EQ(aborts.in("::wait("), kDebugAbortsPerFailure);
+  pool->discard(open);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AnOlderHandleOfARowReusedAfterALossIsNotExported) {
+  const DebugAborts aborts;
+  const auto pool = makeFakePool("Lost row export test");
+  chained(*pool) = false;
+  gQueue.endResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  const auto dropped = pool->submit(pool->acquire());
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  certifyQueueIdle(*pool, true);
+  // The other rows stay open, so the next acquisition reuses the dropped recording's row, with a
+  // later submit id.
+  std::vector<const Commands::CommandBufferWrapper*> open;
+  for (uint32_t i = 1; i != Commands::kMaxCommandBuffers; ++i) {
+    open.push_back(&pool->acquire());
+  }
+  const auto& reused = pool->acquire();
+  ASSERT_EQ(reused.handle.bufferIndex, dropped.bufferIndex);
+  ASSERT_NE(reused.handle.submitId, dropped.submitId);
+  // The handle reads lost, and is refused without the assertion on a handle whose row was reused.
+  const size_t abortsBefore = gDebugAborts.size();
+  EXPECT_EQ(exportFenceFd(*pool, dropped), -1);
+  EXPECT_EQ(gDebugAborts.size(), abortsBefore);
+  EXPECT_EQ(pool->getVkFenceFromSubmitHandle(dropped), VK_NULL_HANDLE);
+  EXPECT_EQ(gQueue.exports, 0u);
+  pool->discard(reused);
+  for (const auto* wrapper : open) {
+    pool->release(*wrapper);
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ABindlessUpdateAfterARecordingThatIsNotSubmittedDoesNotWaitForIt) {
+  vulkan::VulkanContextConfig config = util::device::vulkan::getContextConfig();
+  config.enableDescriptorIndexing = true;
+  const auto device = util::device::vulkan::createTestDevice(config);
+  ASSERT_NE(device, nullptr);
+  auto& ctx = device->getVulkanContext();
+  if (!ctx.config_.enableDescriptorIndexing) {
+    GTEST_SKIP() << "Descriptor indexing is not supported";
+  }
+  Result ret;
+  const auto queue = device->createCommandQueue({}, &ret);
+  ASSERT_NE(queue, nullptr);
+  const auto first = queue->createCommandBuffer({}, &ret);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(queue->submit(*first), 0u);
+  first->waitUntilCompleted();
+  // A texture created since the last update of the bindless descriptor set: the next encoder
+  // updates it, after the last submission finished.
+  const auto texture = device->createTexture(
+      TextureDesc::new2D(TextureFormat::RGBA_UNorm8, 4, 4, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  ASSERT_NE(texture, nullptr);
+  const auto dropped = queue->createCommandBuffer({}, &ret);
+  ASSERT_NE(dropped, nullptr);
+  {
+    const ScopedTableEntry<PFN_vkEndCommandBuffer> endFails(
+        ctx.vf_, &VulkanFunctionTable::vkEndCommandBuffer, failingEndCommandBuffer);
+    static_cast<void>(queue->submit(*dropped));
+  }
+  ASSERT_TRUE(droppedTheRecording(*ctx.immediate_));
+  const VkFence droppedFence =
+      ctx.immediate_->getVkFenceFromSubmitHandle(ctx.immediate_->getLastSubmitHandle());
+  ASSERT_NE(droppedFence, VK_NULL_HANDLE);
+  // Bounded, so that a regression fails instead of hanging.
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, kTestTimeout);
+  const ScopedTableEntry<PFN_vkWaitForFences> waits(
+      ctx.vf_, &VulkanFunctionTable::vkWaitForFences, recordingWaitForFences);
+  gRealWaitForFences = waits.saved();
+  gWaitedFences.clear();
+  const auto next = queue->createCommandBuffer({}, &ret);
+  ASSERT_NE(next, nullptr);
+  auto encoder = next->createComputeCommandEncoder();
+  ASSERT_NE(encoder, nullptr);
+  encoder->endEncoding();
+  // The update waited for the last submission that reached the queue, not for the dropped one.
+  EXPECT_EQ(std::count(gWaitedFences.begin(), gWaitedFences.end(), handleKey(droppedFence)), 0);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatIsNotSubmittedReadsLostOnceADeviceLossIsCertified) {
+  const auto pool = makeFakePool("Not submitted recording loss test");
+  // A submission that finished, whose row then takes a recording that is not submitted.
+  const auto earlier = pool->submit(pool->acquire());
+  completeSubmissions(1);
+  ASSERT_EQ(certifyAll(*pool, kTestTimeout), VK_SUCCESS);
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto& closed = pool->acquire();
+  ASSERT_EQ(closed.handle.bufferIndex, earlier.bufferIndex);
+  const auto dropped = pool->submit(closed);
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  const uint64_t droppedAcquisition = acquisitionOf(*pool, dropped.bufferIndex);
+  EXPECT_FALSE(pool->isReady(dropped));
+
+  // The queue reports a device loss: the recording reads as lost, never as finished.
+  certifyQueueIdle(*pool, true);
+  EXPECT_TRUE(isRetired(*pool, dropped));
+  EXPECT_TRUE(pool->isReady(dropped));
+  EXPECT_EQ(pool->wait(dropped, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(pool->wait(earlier, kTestTimeout), VK_SUCCESS);
+
+  // After the loss nothing is submitted: every row ends up holding a recording that was not
+  // submitted, and then they are all reused. The row of the first one is taken by an acquisition
+  // whose submit id wrapped to the same value.
+  for (uint32_t row = 1; row != Commands::kMaxCommandBuffers; ++row) {
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+  }
+  setAcquisitionCounter(*pool, droppedAcquisition + (uint64_t{1} << 32) - 1);
+  const auto& again = pool->acquire();
+  ASSERT_EQ(again.handle, dropped);
+  EXPECT_TRUE(outcomesLost(*pool, dropped.bufferIndex));
+  // The handle of the recording that was not submitted, which the new recording's handle equals,
+  // reads as lost: it never reads as finished, nor gets the fence or the descriptor of the row's
+  // new recording. The finished recording is 2^32 acquisitions older than the row's new one, past
+  // the horizon of 2^32 - 1: its success is no longer proven, and it reads as lost (below the
+  // horizon it keeps its success: see `AProvenSuccess*`).
+  EXPECT_TRUE(pool->isReady(dropped));
+  EXPECT_EQ(pool->wait(dropped, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(pool->wait(earlier, kTestTimeout), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(pool->getVkFenceFromSubmitHandle(dropped), VK_NULL_HANDLE);
+  EXPECT_EQ(exportFenceFd(*pool, dropped), -1);
+  // A value that is not an open descriptor: the pool never closes a stored descriptor here.
+  constexpr int kStoredDescriptor = 1 << 20;
+  pool->storeFDInSubmitHandle(again.handle, kStoredDescriptor);
+  EXPECT_EQ(pool->cachedFDFromSubmitHandle(dropped), -1);
+  pool->storeFDInSubmitHandle(again.handle, -1);
+  pool->discard(again);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AProvenSuccessKeepsItsAnswerWhenItsDroppedRowIsReused) {
+  const auto pool = makeFakePool("Proven success after a drop test");
+  const auto first = pool->submit(pool->acquire());
+  completeSubmissions(1);
+  ASSERT_EQ(certifyAll(*pool, kTestTimeout), VK_SUCCESS);
+  ASSERT_EQ(pool->wait(first, 0), VK_SUCCESS);
+  // The row's next recording cannot run: it is not submitted.
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto& again = pool->acquire();
+  ASSERT_EQ(again.handle.bufferIndex, first.bufferIndex);
+  const auto dropped = pool->submit(again);
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  // A device loss is certified, and the row of the dropped recording is reused.
+  certifyQueueIdle(*pool, true);
+  ASSERT_TRUE(recycleDroppedRows(*pool));
+  ASSERT_TRUE(outcomesLost(*pool, first.bufferIndex));
+  // The success keeps its answer; the dropped recording never reads as finished.
+  EXPECT_TRUE(pool->isReady(first));
+  EXPECT_EQ(pool->wait(first, 0), VK_SUCCESS);
+  EXPECT_EQ(pool->wait(dropped, 0), VK_ERROR_DEVICE_LOST);
+  // That answer is about the work that finished, not about the device: it stays lost, a new
+  // recording is not submitted, and no fence or descriptor is handed out for the old handle.
+  EXPECT_TRUE(pool->isDeviceLost());
+  const size_t submitCalls = gQueue.submitCalls;
+  const auto later = pool->submit(pool->acquire());
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls);
+  EXPECT_EQ(pool->wait(later, 0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(pool->wait(dropped, 0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(pool->wait(first, 0), VK_SUCCESS);
+  EXPECT_EQ(pool->getVkFenceFromSubmitHandle(first), VK_NULL_HANDLE);
+  EXPECT_EQ(exportFenceFd(*pool, first), -1);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatIsNotSubmittedStopsTheQueueAtTheNextSubmissionOfItsPool) {
+  const auto pool = makeFakePool("Queue stop test");
+  const auto other = makeFakePool("Queue stop test, other pool");
+  shareQueueStop(*other, *pool);
+  const auto first = pool->submit(pool->acquire());
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  const auto dropped = pool->submit(pool->acquire());
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  EXPECT_TRUE(chainPoisoned(*pool));
+  EXPECT_FALSE(queueStopped(*pool));
+
+  // Until this pool submits again, the other pool's submissions run.
+  const size_t submitCalls = gQueue.submitCalls;
+  const auto otherRuns = other->submit(other->acquire());
+  EXPECT_FALSE(droppedTheRecording(*other));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls + 1);
+
+  // The next submission of this pool would wait on the chain semaphore of the recording that was
+  // not submitted, which nothing signals: it is not submitted either (even if it would also have
+  // run out of memory), and the queue stops for both pools.
+  const auto trigger = pool->submit(pool->acquire());
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_TRUE(queueStopped(*other));
+  const auto otherStopped = other->submit(other->acquire());
+  EXPECT_TRUE(droppedTheRecording(*other));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls + 1);
+  EXPECT_STREQ(rowState(*other, otherStopped.bufferIndex), "Dropped");
+  completeSubmissions(gQueue.submitted.size());
+  EXPECT_TRUE(pool->isReady(first));
+  EXPECT_TRUE(other->isReady(otherRuns));
+  EXPECT_FALSE(pool->isReady(dropped));
+  EXPECT_FALSE(pool->isReady(trigger));
+  EXPECT_FALSE(other->isReady(otherStopped));
+}
+
+TEST_F(VulkanImmediateCommandsTest, AnUnchainedRecordingThatIsNotSubmittedDoesNotStopTheQueue) {
+  const auto pool = makeFakePool("Unchained queue stop test");
+  chained(*pool) = false;
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  static_cast<void>(pool->submit(pool->acquire()));
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  // Nothing waits on the recording that was not submitted: the next one runs.
+  EXPECT_FALSE(chainPoisoned(*pool));
+  const auto next = pool->submit(pool->acquire());
+  EXPECT_FALSE(droppedTheRecording(*pool));
+  EXPECT_EQ(gQueue.submitted.size(), 1u);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(next));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ARecordingWithAnInjectedWaitThatIsNotSubmittedStopsTheQueue) {
+  // NOLINTNEXTLINE(performance-no-int-to-ptr)
+  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  // Without the chain, an injected wait still orders the next submission after the recording.
+  const auto pool = makeFakePool("Injected wait queue stop test");
+  chained(*pool) = false;
+  ASSERT_TRUE(pool->waitSemaphore(waitSemaphore, 0));
+  gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+  static_cast<void>(pool->submit(pool->acquire()));
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  EXPECT_TRUE(chainPoisoned(*pool));
+  const size_t submitCalls = gQueue.submitCalls;
+  static_cast<void>(pool->submit(pool->acquire()));
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  EXPECT_EQ(gQueue.submitCalls, submitCalls);
+  EXPECT_TRUE(queueStopped(*pool));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ADoubleOutOfMemoryWithAnInjectedWaitStopsTheQueueOfBothPoolsAtOnce) {
+  // NOLINTNEXTLINE(performance-no-int-to-ptr)
+  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  for (const bool isChained : {false, true}) {
+    SCOPED_TRACE(isChained);
+    const auto pool = makeFakePool("Double out of memory queue stop test");
+    const auto other = makeFakePool("Double out of memory queue stop test, other pool");
+    shareQueueStop(*other, *pool);
+    chained(*pool) = isChained;
+    ASSERT_TRUE(pool->waitSemaphore(waitSemaphore, 0));
+    gQueue.submitResults = {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool));
+    // Later work of either pool must not run before what the injected wait orders: the queue stops
+    // before the other pool submits anything.
+    EXPECT_TRUE(queueStopped(*pool));
+    const size_t submitCalls = gQueue.submitCalls;
+    static_cast<void>(other->submit(other->acquire()));
+    EXPECT_TRUE(droppedTheRecording(*other));
+    EXPECT_EQ(gQueue.submitCalls, submitCalls);
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, AFailedEndWithAnInjectedWaitStopsTheQueueAtOnce) {
+  // NOLINTNEXTLINE(performance-no-int-to-ptr)
+  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  for (const bool isChained : {true, false}) {
+    const auto pool = makeFakePool("Failed end queue stop test");
+    const auto other = makeFakePool("Failed end queue stop test, other pool");
+    shareQueueStop(*other, *pool);
+    chained(*pool) = isChained;
+    ASSERT_TRUE(pool->waitSemaphore(waitSemaphore, 0));
+    gQueue.endResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    static_cast<void>(pool->submit(pool->acquire()));
+    ASSERT_TRUE(droppedTheRecording(*pool)) << isChained;
+    // Later work of either pool must not run before what the injected wait orders: the queue stops
+    // before anything else is submitted.
+    EXPECT_TRUE(queueStopped(*pool)) << isChained;
+    static_cast<void>(other->submit(other->acquire()));
+    EXPECT_TRUE(droppedTheRecording(*other)) << isChained;
+    EXPECT_EQ(gQueue.submitCalls, 0u) << isChained;
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, AFailedEndStopsTheQueueAtTheNextSubmissionOfItsPool) {
+  const auto pool = makeFakePool("Failed end chain test");
+  const auto other = makeFakePool("Failed end chain test, other pool");
+  shareQueueStop(*other, *pool);
+  gQueue.endResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+  static_cast<void>(pool->submit(pool->acquire()));
+  ASSERT_TRUE(droppedTheRecording(*pool));
+  EXPECT_FALSE(queueStopped(*pool));
+  static_cast<void>(other->submit(other->acquire()));
+  EXPECT_FALSE(droppedTheRecording(*other));
+  static_cast<void>(pool->submit(pool->acquire()));
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  static_cast<void>(other->submit(other->acquire()));
+  EXPECT_TRUE(droppedTheRecording(*other));
+  EXPECT_EQ(gQueue.submitCalls, 1u);
+  completeSubmissions(1);
+}
+
 TEST_F(VulkanImmediateCommandsTest, ACachedDeviceLossAloneCertifiesNothing) {
   const auto pool = makeFakePool("Device loss latch test");
   const auto pending = pool->submit(pool->acquire());
@@ -3288,6 +5137,224 @@ TEST_F(VulkanImmediateCommandsTest, NothingIsSubmittedBetweenTheContextIdleAndTh
   iglDev_.reset();
   EXPECT_TRUE(gIdleSeen);
   EXPECT_EQ(gSubmitsAfterIdle, 0u);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ADeferredTaskNotProvenAtTeardownRunsBeforeTheDeviceIsDestroyed) {
+  auto& ctx = getVulkanContext();
+  const DebugAborts aborts;
+  // A submission that only a checkpoint can prove finished, and a task queued behind it.
+  const auto handle = ctx.immediate_->submit(ctx.immediate_->acquire());
+  distrustFence(*ctx.immediate_, handle.bufferIndex);
+  int runs = 0;
+  bool ranAfterTheProof = false;
+  bool ranBeforeTheDevice = false;
+  ctx.deferredTask(std::packaged_task<void()>([&runs, &ranAfterTheProof, &ranBeforeTheDevice] {
+                     ++runs;
+                     ranAfterTheProof = gCheckpointFailures == 0;
+                     ranBeforeTheDevice = !gDeviceDestroyed;
+                   }),
+                   handle);
+  // At teardown the queue idle fails and the first checkpoints run out of memory: the task's work
+  // is not proven finished when the context drains its tasks, only later, when the pool's
+  // destructor submits a checkpoint.
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gIdleSeen = false;
+  gIdleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  gRealQueueWaitIdle = table.vkQueueWaitIdle;
+  table.vkQueueWaitIdle = answeringQueueWaitIdle;
+  gRealContextSubmit = table.vkQueueSubmit;
+  table.vkQueueSubmit = failingCheckpointSubmit;
+  gCheckpointFailures = 3;
+  gDeviceDestroyed = false;
+  gRealDestroyDevice = table.vkDestroyDevice;
+  table.vkDestroyDevice = recordingDestroyDevice;
+  iglDev_.reset();
+  EXPECT_TRUE(gDeviceDestroyed);
+  EXPECT_EQ(gCheckpointFailures, 0u);
+  EXPECT_EQ(runs, 1);
+  EXPECT_TRUE(ranAfterTheProof);
+  EXPECT_TRUE(ranBeforeTheDevice);
+  gIdleResult = VK_SUCCESS;
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ATaskThatARetainedTaskQueuesAtTeardownRunsBeforeTheDeviceIsDestroyed) {
+  auto& ctx = getVulkanContext();
+  const DebugAborts aborts;
+  // A submission that only a checkpoint can prove finished, and a task queued behind it that queues
+  // another task, with the default handle, when it runs.
+  const auto handle = ctx.immediate_->submit(ctx.immediate_->acquire());
+  distrustFence(*ctx.immediate_, handle.bufferIndex);
+  vulkan::VulkanContext* const context = &ctx;
+  bool poolExisted = false;
+  int innerRuns = 0;
+  bool innerRanBeforeTheDevice = false;
+  ctx.deferredTask(
+      std::packaged_task<void()>([context, &poolExisted, &innerRuns, &innerRanBeforeTheDevice] {
+        // `deferredTask()` reads the pool's next submit handle: the pool must still exist.
+        poolExisted = context->immediate_ != nullptr;
+        if (poolExisted) {
+          context->deferredTask(std::packaged_task<void()>([&innerRuns, &innerRanBeforeTheDevice] {
+            ++innerRuns;
+            innerRanBeforeTheDevice = !gDeviceDestroyed;
+          }));
+        }
+      }),
+      handle);
+  // As in the test above: the work is proven finished only by a checkpoint of the teardown's drain.
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gIdleSeen = false;
+  gIdleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  gRealQueueWaitIdle = table.vkQueueWaitIdle;
+  table.vkQueueWaitIdle = answeringQueueWaitIdle;
+  gRealContextSubmit = table.vkQueueSubmit;
+  table.vkQueueSubmit = failingCheckpointSubmit;
+  gCheckpointFailures = 3;
+  gDeviceDestroyed = false;
+  gRealDestroyDevice = table.vkDestroyDevice;
+  table.vkDestroyDevice = recordingDestroyDevice;
+  iglDev_.reset();
+  EXPECT_TRUE(gDeviceDestroyed);
+  EXPECT_TRUE(poolExisted);
+  EXPECT_EQ(innerRuns, 1);
+  EXPECT_TRUE(innerRanBeforeTheDevice);
+  gIdleResult = VK_SUCCESS;
+}
+
+TEST_F(VulkanImmediateCommandsTest, ABufferThatARetainedTaskReleasesAtTeardownIsDestroyedFirst) {
+  auto& ctx = getVulkanContext();
+  const DebugAborts aborts;
+  Result ret;
+  std::shared_ptr<vulkan::VulkanBuffer> buffer =
+      ctx.createBuffer(256,
+                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &ret,
+                       "Teardown buffer");
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(buffer, nullptr);
+  // A task queued behind work that only a checkpoint can prove finished holds the last reference to
+  // a buffer. Releasing it queues the buffer's destruction, with the default handle.
+  const auto handle = ctx.immediate_->submit(ctx.immediate_->acquire());
+  distrustFence(*ctx.immediate_, handle.bufferIndex);
+  vulkan::VulkanContext* const context = &ctx;
+  size_t queuedByTheRelease = 0;
+  ctx.deferredTask(std::packaged_task<void()>(
+                       [context, &queuedByTheRelease, held = std::move(buffer)]() mutable {
+                         const size_t before = context->deferredTasks.size();
+                         held.reset();
+                         queuedByTheRelease = context->deferredTasks.size() - before;
+                       }),
+                   handle);
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gIdleSeen = false;
+  gIdleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  gRealQueueWaitIdle = table.vkQueueWaitIdle;
+  table.vkQueueWaitIdle = answeringQueueWaitIdle;
+  gRealContextSubmit = table.vkQueueSubmit;
+  table.vkQueueSubmit = failingCheckpointSubmit;
+  gCheckpointFailures = 3;
+  gDeviceDestroyed = false;
+  gRealDestroyDevice = table.vkDestroyDevice;
+  table.vkDestroyDevice = recordingDestroyDevice;
+  gTeardownContext = &ctx;
+  gTasksLeftAfterTheSweeps = 1;
+  gRealDestroyPipelineCache = table.vkDestroyPipelineCache;
+  table.vkDestroyPipelineCache = recordingDestroyPipelineCache;
+  iglDev_.reset();
+  gTeardownContext = nullptr;
+  EXPECT_TRUE(gDeviceDestroyed);
+  // The buffer's destruction was queued while the pool existed, and ran in the next sweep.
+  EXPECT_EQ(queuedByTheRelease, 1u);
+  EXPECT_EQ(gTasksLeftAfterTheSweeps, 0u);
+  gIdleResult = VK_SUCCESS;
+}
+
+TEST_F(VulkanImmediateCommandsTest, ATaskThatKeepsQueueingTasksAtTeardownIsStopped) {
+  auto& ctx = getVulkanContext();
+  const DebugAborts aborts;
+  const auto handle = ctx.immediate_->submit(ctx.immediate_->acquire());
+  distrustFence(*ctx.immediate_, handle.bufferIndex);
+  int runs = 0;
+  gOwnedDestroyedAfterTheDevice = false;
+  auto owned = std::make_shared<OwnedByTasks>();
+  const std::weak_ptr<OwnedByTasks> watch = owned;
+  ctx.deferredTask(std::packaged_task<void()>(
+                       RequeueingTask{.context = &ctx, .runs = &runs, .owned = std::move(owned)}),
+                   handle);
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gIdleSeen = false;
+  gIdleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  gRealQueueWaitIdle = table.vkQueueWaitIdle;
+  table.vkQueueWaitIdle = answeringQueueWaitIdle;
+  gRealContextSubmit = table.vkQueueSubmit;
+  table.vkQueueSubmit = failingCheckpointSubmit;
+  gCheckpointFailures = 3;
+  gDeviceDestroyed = false;
+  gRealDestroyDevice = table.vkDestroyDevice;
+  table.vkDestroyDevice = recordingDestroyDevice;
+  iglDev_.reset();
+  // The tasks it queued ran in later sweeps, a bounded number of times; the destruction went on.
+  EXPECT_TRUE(gDeviceDestroyed);
+  EXPECT_GT(runs, 2);
+  EXPECT_LT(runs, 100);
+  EXPECT_EQ(aborts.in("~VulkanContext"), kDebugAbortsPerFailure);
+  // The task left is leaked: what it owns is never destroyed, and so never after the device.
+  EXPECT_FALSE(watch.expired());
+  EXPECT_FALSE(gOwnedDestroyedAfterTheDevice);
+  gIdleResult = VK_SUCCESS;
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ATaskThatKeepsQueueingTasksIsStoppedAtTheTeardownOfAHealthyContext) {
+  auto& ctx = getVulkanContext();
+  const DebugAborts aborts;
+  // Queued with the default handle on a context with nothing open and no failure injected: the
+  // queue idles at teardown, and the task's work is retired at once.
+  int runs = 0;
+  gOwnedDestroyedAfterTheDevice = false;
+  auto owned = std::make_shared<OwnedByTasks>();
+  const std::weak_ptr<OwnedByTasks> watch = owned;
+  ctx.deferredTask(std::packaged_task<void()>(
+      RequeueingTask{.context = &ctx, .runs = &runs, .owned = std::move(owned)}));
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gDeviceDestroyed = false;
+  gRealDestroyDevice = table.vkDestroyDevice;
+  table.vkDestroyDevice = recordingDestroyDevice;
+  iglDev_.reset();
+  // It ran a bounded number of times, the destruction went on, and the task left is leaked.
+  EXPECT_TRUE(gDeviceDestroyed);
+  EXPECT_GT(runs, 2);
+  EXPECT_LT(runs, 100);
+  EXPECT_EQ(aborts.in("~VulkanContext"), kDebugAbortsPerFailure);
+  EXPECT_FALSE(watch.expired());
+  EXPECT_FALSE(gOwnedDestroyedAfterTheDevice);
+}
+
+TEST_F(VulkanImmediateCommandsTest, TheStagingPoolUsesTheMainPoolsQueueStateAndIsDestroyedFirst) {
+  auto& ctx = getVulkanContext();
+  const Commands& main = *ctx.immediate_;
+  const Commands& staging = *ctx.stagingDevice_->immediate;
+  // The main pool owns the queue state; the staging pool uses it.
+  EXPECT_EQ(sharedQueueState(main), ownQueueState(main));
+  EXPECT_EQ(sharedQueueState(staging), ownQueueState(main));
+  // The context destroys the staging pool before the main pool, so nothing uses the state after it
+  // is gone (the ASAN suite runs this test too).
+  const VkCommandPool mainPool = commandPoolOf(main);
+  const VkCommandPool stagingPool = commandPoolOf(staging);
+  auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
+  gDestroyedCommandPools.clear();
+  gRealDestroyCommandPool = table.vkDestroyCommandPool;
+  table.vkDestroyCommandPool = recordingDestroyCommandPool;
+  iglDev_.reset();
+  const auto stagingAt =
+      std::find(gDestroyedCommandPools.begin(), gDestroyedCommandPools.end(), stagingPool);
+  const auto mainAt =
+      std::find(gDestroyedCommandPools.begin(), gDestroyedCommandPools.end(), mainPool);
+  ASSERT_NE(stagingAt, gDestroyedCommandPools.end());
+  ASSERT_NE(mainAt, gDestroyedCommandPools.end());
+  EXPECT_LT(stagingAt, mainAt);
 }
 
 TEST_F(VulkanImmediateCommandsTest, AQueueIdleReleasesPendingAndAbandonedCheckpoints) {
@@ -3528,21 +5595,16 @@ TEST_F(VulkanImmediateCommandsTest, ASuccessAfterACertifiedLossDoesNotMakeLostWo
   const auto lost = pool->submit(pool->acquire());
   gQueue.blockingWaitResults = {VK_ERROR_DEVICE_LOST};
   ASSERT_EQ(pool->wait(lost, kTestTimeout), VK_ERROR_DEVICE_LOST);
-  // A lost device may still answer success: later answers from a row fence, from a checkpoint and
-  // from a queue idle change no outcome.
-  const auto fenced = pool->submit(pool->acquire());
-  const auto exported = pool->submit(pool->acquire());
-  ASSERT_GE(exportFenceFd(*pool, exported), 0);
-  completeSubmissions(gQueue.submitted.size());
-  EXPECT_EQ(pool->wait(fenced, kTestTimeout), VK_ERROR_DEVICE_LOST);
-  EXPECT_EQ(pool->wait(exported, kTestTimeout), VK_ERROR_DEVICE_LOST);
-  EXPECT_EQ(checkpointFences(*pool), 1u);
+  // A lost device may still answer success: a queue idle that succeeds changes no outcome, and a
+  // later recording is not submitted.
   certifyQueueIdle(*pool, false);
+  const auto later = pool->submit(pool->acquire());
+  EXPECT_TRUE(droppedTheRecording(*pool));
+  completeSubmissions(gQueue.submitted.size());
   for (int i = 0; i != 2; ++i) {
     EXPECT_EQ(pool->wait(succeeded, 0), VK_SUCCESS);
     EXPECT_EQ(pool->wait(lost, 0), VK_ERROR_DEVICE_LOST);
-    EXPECT_EQ(pool->wait(fenced, 0), VK_ERROR_DEVICE_LOST);
-    EXPECT_EQ(pool->wait(exported, 0), VK_ERROR_DEVICE_LOST);
+    EXPECT_EQ(pool->wait(later, 0), VK_ERROR_DEVICE_LOST);
   }
 }
 
@@ -4158,6 +6220,49 @@ TEST_F(
   recordDispatches(*recordingO, dispatch, kSetsPerPool);
   EXPECT_NE(gProbe.lastStorageBufferPool, firstPool);
   // Once A finished, the next switch reuses the first pool.
+  completeSubmissions(gQueue.submitted.size());
+  recordDispatches(*recordingO, dispatch, kSetsPerPool);
+  EXPECT_EQ(gProbe.lastStorageBufferPool, firstPool);
+  queue->submit(*recordingO);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AnExhaustedDescriptorPoolParkedUnderADroppedRecordingIsReusedOnceTheWorkBeforeItFinished) {
+  auto& ctx = getVulkanContext();
+  const auto dispatch = makeStorageBufferDispatch();
+  ASSERT_NE(dispatch.pipeline, nullptr);
+  const DescriptorPoolProbe probe(ctx.vf_);
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Dropped descriptor pool test");
+  // Without the chain, recordings after the dropped one are submitted.
+  chained(*fakePool) = false;
+  const auto queue = iglDev_->createCommandQueue({}, nullptr);
+  ASSERT_NE(queue, nullptr);
+  constexpr uint32_t kSetsPerPool = 64;
+
+  // O stays open throughout.
+  const auto recordingO = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingO, nullptr);
+  // A uses every set of the first pool and stays in flight.
+  const auto recordingA = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingA, nullptr);
+  recordDispatches(*recordingA, dispatch, kSetsPerPool);
+  const VkDescriptorPool firstPool = gProbe.lastStorageBufferPool;
+  ASSERT_NE(firstPool, VK_NULL_HANDLE);
+  queue->submit(*recordingA);
+  // B's first set moves the arena to a second pool and parks the first one under B's handle. B
+  // cannot be ended: it is not submitted, and never runs.
+  const auto recordingB = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingB, nullptr);
+  recordDispatches(*recordingB, dispatch, 1);
+  ASSERT_NE(gProbe.lastStorageBufferPool, firstPool);
+  gQueue.endResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+  queue->submit(*recordingB);
+  ASSERT_TRUE(droppedTheRecording(*fakePool));
+
+  // O uses up the second pool. A may still read the first pool's sets: a third pool is used.
+  recordDispatches(*recordingO, dispatch, kSetsPerPool);
+  EXPECT_NE(gProbe.lastStorageBufferPool, firstPool);
+  // Once A finished, the next switch reuses the first pool, although B's handle never completes.
   completeSubmissions(gQueue.submitted.size());
   recordDispatches(*recordingO, dispatch, kSetsPerPool);
   EXPECT_EQ(gProbe.lastStorageBufferPool, firstPool);

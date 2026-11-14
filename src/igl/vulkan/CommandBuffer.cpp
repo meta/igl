@@ -59,7 +59,7 @@ CommandBuffer::Reusable::Reusable(VulkanContext& ctx,
 }
 
 CommandBuffer::Reusable::~Reusable() {
-  ctx.destroyRecordings(commandPool, arenas, lastSubmission);
+  ctx.destroyRecordings(commandPool, arenas, lastCarrier);
 }
 
 CommandBuffer::CommandBuffer(VulkanContext& ctx,
@@ -77,7 +77,7 @@ CommandBuffer::~CommandBuffer() {
   // submitted runs nothing: it gives back the slots, its Vulkan command buffer and its count in the
   // queue
   if (executesSlots_ && !isSubmitted_) {
-    releaseExecutedSlots({});
+    releaseExecutedSlots({}, {});
     ctx_.immediate_->release(*wrapper_);
     if (numBuffersLeftToSubmit_) {
       --*numBuffersLeftToSubmit_;
@@ -400,13 +400,15 @@ void CommandBuffer::executeCommands(ICommandBuffer& reusable, Result* IGL_NULLAB
   Result::setOk(outResult);
 }
 
-void CommandBuffer::releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission) {
+void CommandBuffer::releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission,
+                                         VulkanImmediateCommands::SubmitHandle carrier) {
   for (const ExecutedSlot& executed : executedSlots_) {
     ReusableSlot& slot = executed.reusable->slots[executed.slot];
     slot.executor = nullptr;
     if (!submission.empty()) {
-      slot.lastRun = submission;
+      slot.lastRun = carrier;
       executed.reusable->lastSubmission = submission;
+      executed.reusable->lastCarrier = carrier;
     }
   }
   executedSlots_.clear();

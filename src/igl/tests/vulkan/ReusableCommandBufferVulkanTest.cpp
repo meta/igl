@@ -400,6 +400,98 @@ class HostGate {
   bool isClosed_ = false;
 };
 
+#if IGL_PLATFORM_LINUX
+/// Counts the presentations, image acquisitions and submissions of a context, and makes its
+/// submissions run out of memory while asked to.
+struct SwapchainCalls {
+  PFN_vkQueuePresentKHR realPresent = nullptr;
+  PFN_vkAcquireNextImageKHR realAcquire = nullptr;
+  PFN_vkQueueSubmit realSubmit = nullptr;
+  PFN_vkQueueSubmit2KHR realSubmit2 = nullptr;
+  uint32_t presents = 0;
+  uint32_t acquires = 0;
+  uint32_t submits = 0;
+  std::vector<uint32_t> acquiredImages;
+  std::vector<uint32_t> presentedImages;
+  bool submitsRunOutOfMemory = false;
+  /// While set, a presentation fails the test and does not reach the driver, where it would wait
+  /// for a semaphore that nothing signals.
+  bool presentsForbidden = false;
+};
+thread_local SwapchainCalls gSwapchainCalls;
+
+VKAPI_ATTR VkResult VKAPI_CALL countingQueuePresent(VkQueue queue, const VkPresentInfoKHR* info) {
+  ++gSwapchainCalls.presents;
+  gSwapchainCalls.presentedImages.push_back(info->pImageIndices[0]);
+  if (gSwapchainCalls.presentsForbidden) {
+    ADD_FAILURE() << "A frame that was not submitted is presented";
+    return VK_SUCCESS;
+  }
+  return gSwapchainCalls.realPresent(queue, info);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL countingAcquireNextImage(VkDevice device,
+                                                        VkSwapchainKHR swapchain,
+                                                        uint64_t timeout,
+                                                        VkSemaphore semaphore,
+                                                        VkFence fence,
+                                                        uint32_t* imageIndex) {
+  ++gSwapchainCalls.acquires;
+  const VkResult result =
+      gSwapchainCalls.realAcquire(device, swapchain, timeout, semaphore, fence, imageIndex);
+  gSwapchainCalls.acquiredImages.push_back(*imageIndex);
+  return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL faultyQueueSubmit(VkQueue queue,
+                                                 uint32_t count,
+                                                 const VkSubmitInfo* submits,
+                                                 VkFence fence) {
+  ++gSwapchainCalls.submits;
+  return gSwapchainCalls.submitsRunOutOfMemory
+             ? VK_ERROR_OUT_OF_HOST_MEMORY
+             : gSwapchainCalls.realSubmit(queue, count, submits, fence);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL faultyQueueSubmit2(VkQueue queue,
+                                                  uint32_t count,
+                                                  const VkSubmitInfo2* submits,
+                                                  VkFence fence) {
+  ++gSwapchainCalls.submits;
+  return gSwapchainCalls.submitsRunOutOfMemory
+             ? VK_ERROR_OUT_OF_HOST_MEMORY
+             : gSwapchainCalls.realSubmit2(queue, count, submits, fence);
+}
+
+/// Routes a context's presentations, image acquisitions and submissions through the functions
+/// above until destroyed.
+class ScopedSwapchainCalls {
+ public:
+  explicit ScopedSwapchainCalls(vulkan::VulkanContext& ctx) :
+    table_(const_cast<VulkanFunctionTable&>(ctx.vf_)), saved_(table_) {
+    gSwapchainCalls = {
+        .realPresent = table_.vkQueuePresentKHR,
+        .realAcquire = table_.vkAcquireNextImageKHR,
+        .realSubmit = table_.vkQueueSubmit,
+        .realSubmit2 = table_.vkQueueSubmit2KHR,
+    };
+    table_.vkQueuePresentKHR = countingQueuePresent;
+    table_.vkAcquireNextImageKHR = countingAcquireNextImage;
+    table_.vkQueueSubmit = faultyQueueSubmit;
+    table_.vkQueueSubmit2KHR = faultyQueueSubmit2;
+  }
+  ScopedSwapchainCalls(const ScopedSwapchainCalls&) = delete;
+  ScopedSwapchainCalls& operator=(const ScopedSwapchainCalls&) = delete;
+  ~ScopedSwapchainCalls() {
+    table_ = saved_;
+  }
+
+ private:
+  VulkanFunctionTable& table_;
+  const VulkanFunctionTable saved_;
+};
+#endif // IGL_PLATFORM_LINUX
+
 } // namespace
 
 class ReusableCommandBufferVulkanTest : public ::testing::Test {
@@ -1472,6 +1564,21 @@ class ReusableCommandBufferSwapchainVulkanTest : public ReusableCommandBufferVul
   }
 };
 
+// The same, without the semaphore chain
+class ReusableCommandBufferUnchainedSwapchainVulkanTest : public ReusableCommandBufferVulkanTest {
+ protected:
+  [[nodiscard]] std::shared_ptr<IDevice> createDevice() const override {
+#if IGL_PLATFORM_LINUX
+    vulkan::VulkanContextConfig config = util::device::vulkan::getContextConfig();
+    config.headless = true;
+    config.chainSubmitsWithSemaphores = false;
+    return util::device::vulkan::createTestDevice(config);
+#else
+    return ReusableCommandBufferVulkanTest::createDevice();
+#endif // IGL_PLATFORM_LINUX
+  }
+};
+
 TEST_F(ReusableCommandBufferVulkanTest, SubmitReplaysRecordedPasses) {
   renderFrames(false);
 }
@@ -2071,6 +2178,112 @@ TEST_F(ReusableCommandBufferSwapchainVulkanTest,
 TEST_F(ReusableCommandBufferSwapchainVulkanTest,
        ExecuteCommandsGivesBackAnOlderCommandBufferThatFailsToPresentWithBinarySemaphores) {
   failPresentOfAnOlderCommandBuffer(true, false);
+}
+
+TEST_F(ReusableCommandBufferUnchainedSwapchainVulkanTest, AFrameThatIsNotSubmittedIsNotPresented) {
+#if IGL_PLATFORM_LINUX
+  vulkan::VulkanContext& ctx = getVulkanContext();
+  ASSERT_TRUE(ctx.initSwapchain(kSize, kSize).isOk());
+  if (!ctx.timelineSemaphore_) {
+    GTEST_SKIP() << "Timeline semaphores are not supported";
+  }
+  const ScopedSwapchainCalls calls(ctx);
+  Result ret;
+  const std::shared_ptr<ITexture> drawable =
+      getPlatformDevice().createTextureFromNativeDrawable(&ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_EQ(gSwapchainCalls.acquires, 1u);
+  // The next submission waits for the acquired image, so the frame carries no injected wait.
+  const std::shared_ptr<ICommandBuffer> first = createCommandBuffer();
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(cmdQueue_->submit(*first), 0u);
+
+  // Both tries to submit the frame run out of memory: it is not submitted, and it is not
+  // presented, as nothing signals its presentation semaphore. The image stays acquired.
+  const std::shared_ptr<ICommandBuffer> dropped = createCommandBuffer();
+  ASSERT_NE(dropped, nullptr);
+  dropped->present(drawable);
+  gSwapchainCalls.submitsRunOutOfMemory = true;
+  gSwapchainCalls.presentsForbidden = true;
+#if IGL_DEBUG_ABORT_ENABLED
+  // Each failed submission asserts, as it always did.
+  expectedDebugAborts() = {.func = "VulkanImmediateCommands::submit", .count = 2u};
+#endif
+  EXPECT_NE(cmdQueue_->submit(*dropped), 0u);
+#if IGL_DEBUG_ABORT_ENABLED
+  EXPECT_EQ(expectedDebugAborts().count, 0u);
+#endif
+  gSwapchainCalls.submitsRunOutOfMemory = false;
+  gSwapchainCalls.presentsForbidden = false;
+  // Acquiring another image would wait for the dropped frame's timeline signal.
+  ASSERT_EQ(gSwapchainCalls.presents, 0u);
+
+  // Without the chain or an injected wait, nothing waits on the dropped frame: the next frame is
+  // submitted and presents the same image, which is not acquired again.
+  const std::shared_ptr<ITexture> sameDrawable =
+      getPlatformDevice().createTextureFromNativeDrawable(&ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  EXPECT_EQ(gSwapchainCalls.acquires, 1u);
+  const std::shared_ptr<ICommandBuffer> next = createCommandBuffer();
+  ASSERT_NE(next, nullptr);
+  next->present(sameDrawable);
+  const uint32_t submits = gSwapchainCalls.submits;
+  EXPECT_NE(cmdQueue_->submit(*next), 0u);
+  EXPECT_EQ(gSwapchainCalls.submits, submits + 1);
+  EXPECT_EQ(gSwapchainCalls.presentedImages, gSwapchainCalls.acquiredImages);
+  next->waitUntilCompleted();
+#else
+  GTEST_SKIP() << "Headless swapchains are tested on Linux";
+#endif // IGL_PLATFORM_LINUX
+}
+
+TEST_F(ReusableCommandBufferSwapchainVulkanTest,
+       AFrameThatIsNotSubmittedStopsTheQueueAndNothingIsPresented) {
+#if IGL_PLATFORM_LINUX
+  vulkan::VulkanContext& ctx = getVulkanContext();
+  ASSERT_TRUE(ctx.initSwapchain(kSize, kSize).isOk());
+  const ScopedSwapchainCalls calls(ctx);
+  Result ret;
+  const std::shared_ptr<ITexture> drawable =
+      getPlatformDevice().createTextureFromNativeDrawable(&ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_EQ(gSwapchainCalls.acquires, 1u);
+
+  // The frame waits for the acquired image, and the next submission would wait for the frame: when
+  // both tries to submit it run out of memory, nothing is presented, and the queue stops.
+  const std::shared_ptr<ICommandBuffer> dropped = createCommandBuffer();
+  ASSERT_NE(dropped, nullptr);
+  dropped->present(drawable);
+  gSwapchainCalls.submitsRunOutOfMemory = true;
+  gSwapchainCalls.presentsForbidden = true;
+#if IGL_DEBUG_ABORT_ENABLED
+  // Each failed submission asserts, as it always did.
+  expectedDebugAborts() = {.func = "VulkanImmediateCommands::submit", .count = 2u};
+#endif
+  EXPECT_NE(cmdQueue_->submit(*dropped), 0u);
+#if IGL_DEBUG_ABORT_ENABLED
+  EXPECT_EQ(expectedDebugAborts().count, 0u);
+#endif
+  gSwapchainCalls.submitsRunOutOfMemory = false;
+  // Acquiring another image would wait for the dropped frame's timeline signal.
+  ASSERT_EQ(gSwapchainCalls.presents, 0u);
+  const uint32_t submits = gSwapchainCalls.submits;
+  for (uint32_t frame = 0; frame != 3; ++frame) {
+    const std::shared_ptr<ITexture> sameDrawable =
+        getPlatformDevice().createTextureFromNativeDrawable(&ret);
+    ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+    const std::shared_ptr<ICommandBuffer> later = createCommandBuffer();
+    ASSERT_NE(later, nullptr);
+    later->present(sameDrawable);
+    EXPECT_NE(cmdQueue_->submit(*later), 0u) << frame;
+    ASSERT_EQ(gSwapchainCalls.presents, 0u) << frame;
+  }
+  gSwapchainCalls.presentsForbidden = false;
+  EXPECT_EQ(gSwapchainCalls.submits, submits);
+  EXPECT_EQ(gSwapchainCalls.acquires, 1u);
+#else
+  GTEST_SKIP() << "Headless swapchains are tested on Linux";
+#endif // IGL_PLATFORM_LINUX
 }
 
 TEST_F(ReusableCommandBufferVulkanTest, SubmitFailsARecordingThatGeneratesSrgbMipmaps) {

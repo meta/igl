@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -51,6 +52,29 @@
 #endif
 
 namespace {
+
+/// At teardown, the deferred tasks that tasks queue run in later sweeps, at most this many. In-tree
+/// tasks destroy handles, and may release an object whose destructor queues such a task: two
+/// sweeps suffice for them.
+constexpr uint32_t kMaxTeardownSweeps = 16;
+
+/// @brief Deferred tasks given up at teardown. They are never run and never destroyed: destroying
+/// one can destroy what it owns, such as a semaphore, or queue another task, and the device is
+/// destroyed next. Every list stays reachable, so leak checkers do not report it.
+struct AbandonedTasks {
+  std::deque<igl::vulkan::VulkanContext::DeferredTask> tasks;
+  AbandonedTasks* IGL_NULLABLE next = nullptr;
+};
+
+void abandonDeferredTasks(std::deque<igl::vulkan::VulkanContext::DeferredTask>&& tasks) {
+  static std::atomic<AbandonedTasks*> abandoned{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto* list = new AbandonedTasks{.tasks = std::move(tasks)};
+  AbandonedTasks* head = abandoned.load();
+  do {
+    list->next = head;
+  } while (!abandoned.compare_exchange_weak(head, list));
+}
 
 [[maybe_unused]] const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 const char* kGfxReconstructLayerName = "VK_LAYER_LUNARG_gfxreconstruct";
@@ -331,7 +355,9 @@ class DescriptorPoolsArena final {
     // same SubmitHandle because they have not yet been submitted)
     if (extinct_.size() > 1 && extinct_.front().handle != nextSubmitHandle) {
       ExtinctDescriptorPool& p = extinct_.front();
-      if (ic.isReady(p.handle)) {
+      // Retired: the work up to its recording finished, or the recording was not submitted and the
+      // work before it finished.
+      if (ic.isRetired(p.handle)) {
         pool_ = p.pool;
         allocatedDSet_ = std::move(p.allocatedDSet);
         dsetCursor_ = 0;
@@ -408,6 +434,8 @@ uint32_t queryTimestampValidBits(const VulkanFunctionTable& vf,
 
 class DescriptorBuffersArena final {
  public:
+  using IsRetired = bool (VulkanImmediateCommands::*)(VulkanImmediateCommands::SubmitHandle) const;
+
   explicit DescriptorBuffersArena(const VulkanContext& ctx) : ctx_(ctx) {
     buffer_ = createNewBuffer();
   }
@@ -419,10 +447,12 @@ class DescriptorBuffersArena final {
 
   /// Returns null when a new descriptor buffer is needed and cannot be created. The arena is then
   /// untouched (the replacement is obtained before anything changes), so a later call retries.
+  /// `(ic.*isRetired)(handle)` tells whether the work submitted up to `handle` retired.
   // @fb-only
   DescriptorBuffer* getDescriptorBuffer(size_t requireSize,
                                         size_t alignment,
                                         VulkanImmediateCommands& ic,
+                                        IsRetired isRetired,
                                         VulkanImmediateCommands::SubmitHandle nextSubmitHandle) {
     IGL_DEBUG_ASSERT(requireSize && alignment);
     IGL_DEBUG_ASSERT(requireSize <= kBufferSize);
@@ -435,8 +465,10 @@ class DescriptorBuffersArena final {
     // An earlier buffer whose submission has finished can be reused; otherwise a new one is made.
     bool canReuse = false;
     DescriptorBuffer replacement;
+    // `VulkanContext`, a friend of the pool, passes the pool's private `isRetired()`, so this
+    // arena, local to this file, needs no access of its own.
     if (!extinct_.empty() && extinct_.front().handle != nextSubmitHandle &&
-        ic.isReady(extinct_.front().handle)) {
+        (ic.*isRetired)(extinct_.front().handle)) {
       replacement = extinct_.front();
       canReuse = true;
     } else {
@@ -795,7 +827,8 @@ VulkanContext::~VulkanContext() {
   textures_.clear();
   samplers_.clear();
 
-  // This will free an internal buffer that was allocated by VMA
+  // This will free an internal buffer that was allocated by VMA, and must precede
+  // `immediate_.reset()`: its pool shares the main pool's queue state.
   stagingDevice_.reset(nullptr);
 
   if (vkDevice_) {
@@ -824,8 +857,33 @@ VulkanContext::~VulkanContext() {
   }
   pimpl_->dslCache.clear();
 
-  waitDeferredTasks();
-
+  // The deferred tasks run once everything submitted retired, or no longer runs after a device
+  // loss (a recording still open is never submitted), and while the pool still exists, in sweeps:
+  // a task may queue another one, with the default handle, which runs in the next sweep. Not
+  // through `waitDeferredTasks()`, which runs such a task at once and never ends for a task that
+  // keeps queueing tasks.
+  if (immediate_) {
+    immediate_->drainSubmitted();
+  }
+  for (uint32_t sweep = 0; !deferredTasks.empty(); ++sweep) {
+    if (sweep == kMaxTeardownSweeps) {
+      // Only a task that keeps queueing tasks gets here. The tasks left are leaked: neither run nor
+      // destroyed (see `abandonDeferredTasks()`).
+      IGL_LOG_ERROR(
+          "VulkanContext: deferred tasks keep queueing tasks at teardown; %zu are leaked\n",
+          deferredTasks.size());
+      IGL_DEBUG_ABORT("Deferred tasks keep queueing tasks at teardown");
+      abandonDeferredTasks(std::move(deferredTasks));
+      deferredTasks.clear();
+      break;
+    }
+    std::deque<DeferredTask> tasks;
+    tasks.swap(deferredTasks);
+    for (DeferredTask& task : tasks) {
+      task.task();
+    }
+  }
+  IGL_DEBUG_ASSERT(deferredTasks.empty());
   immediate_.reset(nullptr);
   timelineSemaphore_.reset(nullptr);
 
@@ -1432,6 +1490,9 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                   IGL_FORMAT("Cannot create the staging command buffer pool (VkResult {})",
                              static_cast<int>(poolResult)));
   }
+  // Both pools submit to the graphics queue: once a submission of either cannot follow a recording
+  // that was not submitted, neither submits any more. The main pool outlives the staging device.
+  stagingDevice_->immediate->queueState_ = immediate_->queueState_;
 
   // Unextended Vulkan 1.1 does not allow sparse (VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT)
   // bindings. Our descriptor set layout emulates OpenGL binding slots but we cannot put
@@ -2002,8 +2063,9 @@ VkResult VulkanContext::checkAndUpdateDescriptorSets() {
   // safe on its own because it destroys image views through deferred tasks that already wait on
   // the submit handle. Waiting on that path would only let a timeout stop reclaiming textures.
   if (config_.enableDescriptorIndexing) {
+    // The last submission that reached the queue: a recording that was not submitted never runs.
     const VkResult waitResult = immediate_->wait(
-        immediate_->getLastSubmitHandle(),
+        immediate_->lastAcceptedSubmitHandle(),
         descriptorSetWaitTimeout(config_.fenceTimeoutNanoseconds, descriptorSetWaitDegraded_));
     if (waitResult != VK_SUCCESS) {
       descriptorSetWaitDegraded_ = true;
@@ -2602,7 +2664,7 @@ bool VulkanContext::updateBindingsTexturesByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -2691,7 +2753,7 @@ bool VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -2771,7 +2833,7 @@ bool VulkanContext::updateBindingsBuffersByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -2922,24 +2984,38 @@ void VulkanContext::processDeferredTasks() const {
   const uint64_t frameId = getFrameNumber();
   constexpr uint64_t kNumWaitFrames = 3u;
 
-  while (!deferredTasks.empty() && immediate_->isReady(deferredTasks.front().handle)) {
+  while (!deferredTasks.empty() && immediate_->isRetired(deferredTasks.front().handle)) {
     if (frameId && frameId <= deferredTasks.front().frameId + kNumWaitFrames) {
       // do not check anything if it is not yet older than kNumWaitFrames
       break;
     }
-    deferredTasks.front().task();
+    // A task can queue another one: take it off the queue before it runs.
+    DeferredTask task = std::move(deferredTasks.front());
     deferredTasks.pop_front();
+    task.task();
   }
 }
 
 void VulkanContext::waitDeferredTasks() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
-  for (auto& task : deferredTasks) {
-    immediate_->wait(task.handle, config_.fenceTimeoutNanoseconds);
+  // A task runs only once the work submitted up to its handle finished or was lost with the device.
+  // When that is not proven within the fence timeout, it stays queued with every later task. A task
+  // can queue another one: it is taken off the queue before it runs.
+  while (!deferredTasks.empty()) {
+    const VkResult result =
+        immediate_->waitRetired(deferredTasks.front().handle, config_.fenceTimeoutNanoseconds);
+    if (result != VK_SUCCESS) {
+      IGL_LOG_ERROR_ONCE(
+          "VulkanContext::waitDeferredTasks(): the work of a deferred task is not proven finished "
+          "(VkResult %d); it stays queued\n",
+          static_cast<int>(result));
+      return;
+    }
+    DeferredTask task = std::move(deferredTasks.front());
+    deferredTasks.pop_front();
     task.task();
   }
-  deferredTasks.clear();
 }
 
 // @fb-only

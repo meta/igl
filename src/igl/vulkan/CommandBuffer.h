@@ -198,7 +198,8 @@ class CommandBuffer final : public ICommandBuffer,
     // Why the recording failed: a command buffer of the recording could not be allocated, begun or
     // ended, or another slot was the current one when the recording was encoded into or run
     Result recordingFailure;
-    // the last submission that ran the slot
+    // the last submission that ran the slot, or the last one the queue accepted before a run of the
+    // slot that was not submitted
     VulkanImmediateCommands::SubmitHandle lastRun = {};
     // the command buffer that executes the slot and has not been submitted yet
     const CommandBuffer* IGL_NULLABLE executor = nullptr;
@@ -230,8 +231,12 @@ class CommandBuffer final : public ICommandBuffer,
     ImageLayoutJournal journal;
     // set while a render pass of the recording of `recordingSlot` is being encoded
     bool isInRenderPass = false;
-    // the last submission that runs one of the recordings
+    // the last submission that runs one of the recordings, which `waitUntilCompleted()` waits for:
+    // it never completes when that run was not submitted
     VulkanImmediateCommands::SubmitHandle lastSubmission = {};
+    // the last submission that the queue accepted when one of the recordings was run, which bounds
+    // every run: what destroying the recordings waits for
+    VulkanImmediateCommands::SubmitHandle lastCarrier = {};
   };
 
   // A slot of a reusable command buffer that this command buffer executes
@@ -277,7 +282,8 @@ class CommandBuffer final : public ICommandBuffer,
   /// @brief Hands the slots that this command buffer executes over to `submission`, which runs
   /// them, or, if it is empty, gives them back without running them. Then releases their
   /// recordings.
-  void releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission);
+  void releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission,
+                            VulkanImmediateCommands::SubmitHandle carrier);
 
   VulkanContext& ctx_;
   // null for a reusable command buffer

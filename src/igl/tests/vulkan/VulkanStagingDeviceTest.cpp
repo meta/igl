@@ -734,6 +734,41 @@ TEST_F(VulkanStagingDeviceTest, ABlockReusedAfterItsSubmissionRetiredCountsAsFre
 namespace {
 
 constexpr VkDeviceSize kMiB = 1024u * 1024u;
+constexpr uint64_t kWaitTimeout = 10'000'000'000ull;
+
+VKAPI_ATTR VkResult VKAPI_CALL timedOutWaitForFences(VkDevice /*device*/,
+                                                     uint32_t /*count*/,
+                                                     const VkFence* /*fences*/,
+                                                     VkBool32 /*waitAll*/,
+                                                     uint64_t /*timeout*/) {
+  return VK_TIMEOUT;
+}
+
+/// Until destroyed, every fence wait and poll of the context times out, and the context's fence
+/// timeout is finite.
+class ScopedFenceTimeouts {
+ public:
+  explicit ScopedFenceTimeouts(igl::vulkan::VulkanContext& ctx) :
+    ctx_(ctx),
+    table_(const_cast<VulkanFunctionTable&>(ctx.vf_)),
+    realWait_(table_.vkWaitForFences),
+    realTimeout_(ctx.config_.fenceTimeoutNanoseconds) {
+    table_.vkWaitForFences = timedOutWaitForFences;
+    ctx_.config_.fenceTimeoutNanoseconds = 1'000'000'000ull;
+  }
+  ScopedFenceTimeouts(const ScopedFenceTimeouts&) = delete;
+  ScopedFenceTimeouts& operator=(const ScopedFenceTimeouts&) = delete;
+  ~ScopedFenceTimeouts() {
+    table_.vkWaitForFences = realWait_;
+    ctx_.config_.fenceTimeoutNanoseconds = realTimeout_;
+  }
+
+ private:
+  igl::vulkan::VulkanContext& ctx_;
+  VulkanFunctionTable& table_;
+  PFN_vkWaitForFences realWait_;
+  uint64_t realTimeout_;
+};
 
 } // namespace
 
@@ -834,6 +869,74 @@ TEST_F(VulkanStagingFaultTest, RepeatedStagingFailureNeverLoopsWithoutProgress) 
   EXPECT_LE(fd_->reached(Call::CreateBuffer), 4u * kCalls);
   EXPECT_GE(fd_->reached(Call::CreateBuffer), kCalls);
   EXPECT_EQ(staging().getFreeStagingBufferSize(), 0u);
+}
+
+TEST_F(VulkanStagingFaultTest, AResetKeepsTheBlockOfACopyThatHasNotRetired) {
+  drainStaging();
+  const auto target = makeTarget(kMiB);
+  ASSERT_NE(target, nullptr);
+  std::vector<uint8_t> data(kMiB);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<uint8_t>(i * 7u + 3u);
+  }
+  ASSERT_TRUE(staging().bufferSubData(*target, 0, data.size(), data.data()));
+  drainStaging();
+
+  std::vector<uint8_t> readBack(data.size(), 0xa5);
+  {
+    const ScopedFenceTimeouts timeouts(ctx());
+    // The readback's copy is not known to have finished: its block, a whole staging buffer, is
+    // kept with its submission.
+    EXPECT_FALSE(staging().getBufferSubData(*target, 0, readBack.size(), readBack.data()));
+    // The next readback finds no usable block and cannot allocate one: the staging device waits,
+    // and keeps that block and its buffer instead of resetting.
+    fd_->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+    EXPECT_FALSE(staging().getBufferSubData(*target, 0, readBack.size(), readBack.data()));
+  }
+  EXPECT_EQ(std::count(readBack.begin(), readBack.end(), 0xa5),
+            static_cast<ptrdiff_t>(readBack.size()));
+
+  // Once the copy is known to have retired, the kept block serves a readback while allocations
+  // still fail. (Before that, the readback would wait for every block and, all retired, reset and
+  // need a new staging buffer.)
+  ASSERT_EQ(staging().immediate->wait(staging().immediate->getLastSubmitHandle(), kWaitTimeout),
+            VK_SUCCESS);
+  ASSERT_TRUE(staging().getBufferSubData(*target, 0, readBack.size(), readBack.data()));
+  EXPECT_EQ(readBack, data);
+  // The reused block is free again, counted once, and a merge releases its buffer.
+  EXPECT_EQ(staging().getFreeStagingBufferSize(), kMiB);
+  fd_->disarm(Call::CreateBuffer);
+  drainStaging();
+}
+
+TEST_F(VulkanStagingFaultTest, ABlockReusedAfterItsSubmissionRetiredCountsAsFreeOnce) {
+  const auto target = makeTarget(kMiB);
+  ASSERT_NE(target, nullptr);
+  std::vector<uint8_t> data(kMiB);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<uint8_t>(i * 7u + 3u);
+  }
+  constexpr VkDeviceSize kPart = 256 * 1024;
+
+  // A readback whose copy is not known to have finished keeps its block, a whole staging buffer,
+  // with its submission. Once the copy retired, a smaller readback that cannot allocate splits the
+  // block.
+  drainStaging();
+  ASSERT_TRUE(staging().bufferSubData(*target, 0, data.size(), data.data()));
+  drainStaging();
+  std::vector<uint8_t> readBack(data.size(), 0xa5);
+  {
+    const ScopedFenceTimeouts timeouts(ctx());
+    EXPECT_FALSE(staging().getBufferSubData(*target, 0, readBack.size(), readBack.data()));
+  }
+  ASSERT_EQ(staging().immediate->wait(staging().immediate->getLastSubmitHandle(), kWaitTimeout),
+            VK_SUCCESS);
+  fd_->arm(Call::CreateBuffer, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, /*count=*/UINT32_MAX);
+  ASSERT_TRUE(staging().getBufferSubData(*target, 0, kPart, readBack.data()));
+  EXPECT_TRUE(std::equal(data.begin(), data.begin() + kPart, readBack.begin()));
+  EXPECT_EQ(staging().getFreeStagingBufferSize(), kMiB);
+  fd_->disarm(Call::CreateBuffer);
+  drainStaging();
 }
 
 } // namespace igl::tests

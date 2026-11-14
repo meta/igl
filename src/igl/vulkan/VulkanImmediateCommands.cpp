@@ -137,7 +137,8 @@ VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
 }
 
 VulkanImmediateCommands::~VulkanImmediateCommands() {
-  waitAll();
+  // A recording that was not submitted uses nothing on the GPU: only submitted work is waited for.
+  drainSubmitted();
 
   // A checkpoint fence cannot be destroyed while its signal is pending.
   for (Checkpoint& checkpoint : checkpoints_) {
@@ -271,6 +272,36 @@ bool VulkanImmediateCommands::recycleOldest() {
   return numAvailableCommandBuffers_ > availableBefore;
 }
 
+bool VulkanImmediateCommands::recycleDroppedRows() {
+  if (!lossCertified_) {
+    return false;
+  }
+  bool freed = false;
+  for (auto& buf : buffers_) {
+    if (buf.state != RowState::Dropped) {
+      continue;
+    }
+    // Nothing of it was submitted. After a device loss even a fence that was never submitted can
+    // answer as signaled, so it is reset too.
+    const VkResult commandBufferResult =
+        vf_.vkResetCommandBuffer(buf.cmdBuf, VkCommandBufferResetFlags{0});
+    VK_ASSERT(commandBufferResult);
+    if (commandBufferResult != VK_SUCCESS) {
+      continue;
+    }
+    const VkResult fenceResult = vf_.vkResetFences(device_, 1, &buf.fence.vkFence_);
+    VK_ASSERT(fenceResult);
+    if (fenceResult != VK_SUCCESS) {
+      continue;
+    }
+    buf.outcomesLost_ = true;
+    setRowState(buf, RowState::Free);
+    numAvailableCommandBuffers_++;
+    freed = true;
+  }
+  return freed;
+}
+
 bool VulkanImmediateCommands::recoverQuarantinedRow() {
   for (auto& buf : buffers_) {
     if (buf.state != RowState::Submitted || !buf.retirement_.quarantined) {
@@ -304,7 +335,7 @@ bool VulkanImmediateCommands::recoverQuarantinedRow() {
 }
 
 bool VulkanImmediateCommands::freeRow() {
-  return recoverQuarantinedRow() || recycleOldest();
+  return recoverQuarantinedRow() || recycleDroppedRows() || recycleOldest();
 }
 
 VkResult VulkanImmediateCommands::backoff(uint32_t& attempt) {
@@ -318,19 +349,10 @@ VkResult VulkanImmediateCommands::backoff(uint32_t& attempt) {
   if (result == VK_SUCCESS && backoffFence_) {
     result = vf_.vkWaitForFences(device_, 1, &backoffFence_->vkFence_, VK_TRUE, delay);
   }
-  if (result == VK_TIMEOUT) {
+  if (result == VK_TIMEOUT || certifyLossFromUnsignaledFence(result)) {
     return result;
   }
-  // Nothing on a working device signals this fence. An answer that the device is lost proves that
-  // nothing submitted runs any more; so does a success once a loss was already reported.
-  if (result == VK_ERROR_DEVICE_LOST || (result == VK_SUCCESS && isDeviceLost())) {
-    certifyLoss();
-    return result;
-  }
-  if (result == VK_SUCCESS) {
-    IGL_LOG_ERROR_ONCE("VulkanImmediateCommands (%s): the back-off fence answered as signaled\n",
-                       debugName_.c_str());
-  } else {
+  if (result != VK_SUCCESS) {
     IGL_LOG_ERROR_ONCE(
         "VulkanImmediateCommands (%s): the back-off fence wait failed (VkResult %d)\n",
         debugName_.c_str(),
@@ -340,6 +362,22 @@ VkResult VulkanImmediateCommands::backoff(uint32_t& attempt) {
   // nothing: wait on the host, so that this does not spin.
   hostBackoffDelay(delay);
   return result;
+}
+
+bool VulkanImmediateCommands::certifyLossFromUnsignaledFence(VkResult result) const noexcept {
+  // Nothing on a working device signals such a fence. An answer that the device is lost proves that
+  // nothing submitted runs any more; so does a success once a loss was already reported.
+  if (result == VK_ERROR_DEVICE_LOST || (result == VK_SUCCESS && isDeviceLost())) {
+    certifyLoss();
+    return true;
+  }
+  if (result == VK_SUCCESS) {
+    IGL_LOG_ERROR_ONCE(
+        "VulkanImmediateCommands (%s): a fence that nothing signals answered as signaled, with no "
+        "device loss reported\n",
+        debugName_.c_str());
+  }
+  return false;
 }
 
 void VulkanImmediateCommands::hostBackoffDelay(uint64_t nanoseconds) {
@@ -462,6 +500,13 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
   if (ticket.kind == Ticket::Kind::Settled) {
     return VK_SUCCESS;
   }
+  if (ticket.kind == Ticket::Kind::Lost) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+  if (ticket.kind == Ticket::Kind::Dropped) {
+    // A dropped ticket names the current recording of the handle's row.
+    return waitDropped(buffers_[handle.bufferIndex], timeoutNanoseconds);
+  }
   if (ticket.kind == Ticket::Kind::Prefix) {
     // The zero-time query first, as `isReady()` does.
     pollFor(ticket);
@@ -506,6 +551,43 @@ VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeo
 
 void VulkanImmediateCommands::waitAll() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+  drainSubmitted();
+
+  // A recording that was not submitted is waited for on its fence, which nothing signals, as the
+  // fence of a submission that never reached the queue: only a device loss ends the wait.
+  VkFence fences[kMaxCommandBuffers] = {};
+  uint32_t numFences = 0;
+  for (const auto& buf : buffers_) {
+    if (buf.state == RowState::Dropped) {
+      fences[numFences++] = buf.fence.vkFence_;
+    }
+  }
+  if (numFences == 0 || lossCertified_) {
+    return;
+  }
+  IGL_LOG_ERROR_ONCE(
+      "VulkanImmediateCommands (%s): waitAll() waits for recordings that were not submitted\n",
+      debugName_.c_str());
+  uint32_t attempt = 0;
+  for (;;) {
+    const VkResult result = vf_.vkWaitForFences(device_, numFences, fences, VK_TRUE, UINT64_MAX);
+    if (certifyLossFromUnsignaledFence(result)) {
+      return;
+    }
+    if (result != VK_SUCCESS) {
+      VK_ASSERT(result);
+      return;
+    }
+    // A success with no device loss reported proves nothing: keep waiting, as master does on such a
+    // fence, backing off so that a fence that answers at once does not spin.
+    static_cast<void>(backoff(attempt));
+    if (lossCertified_) {
+      return;
+    }
+  }
+}
+
+void VulkanImmediateCommands::drainSubmitted() {
   uint32_t attempt = 0;
   for (;;) {
     uint64_t unbounded = UINT64_MAX;
@@ -614,6 +696,9 @@ VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOfRow(
   if (wrapper.state == RowState::Encoding) {
     return {.kind = Ticket::Kind::Open};
   }
+  if (wrapper.state == RowState::Dropped) {
+    return {.kind = Ticket::Kind::Dropped, .prefix = wrapper.retirement_.prefix, .own = &wrapper};
+  }
   return {.kind = Ticket::Kind::Prefix, .prefix = wrapper.retirement_.prefix, .own = &wrapper};
 }
 
@@ -629,10 +714,20 @@ VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOf(
   const CommandBufferWrapper& buf = buffers_[handle.bufferIndex];
   IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
   if (buf.handle.submitId == handle.submitId || answersAsCurrentRecording(handle)) {
+    if (buf.outcomesLost_) {
+      // The row's current recording came after a device loss, or the handle also names a recording
+      // that was not submitted (submit ids wrap): it never reads as finished.
+      return {.kind = Ticket::Kind::Lost};
+    }
     return ticketOfRow(buf);
   }
   if (succeededBefore(buf, handle)) {
     return {.kind = Ticket::Kind::Settled};
+  }
+  if (buf.outcomesLost_) {
+    // Any other older recording of this row was lost with the device or never submitted (see
+    // `recycleDroppedRows()`).
+    return {.kind = Ticket::Kind::Lost};
   }
   // An older recording of this row: it closed before the row was acquired again, so its prefix is
   // at most the previous recording's.
@@ -896,8 +991,52 @@ bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
     // a recording that is still open has not finished; its fence is not polled
     return false;
   }
+  if (ticket.kind == Ticket::Kind::Lost) {
+    return true;
+  }
+  if (ticket.kind == Ticket::Kind::Dropped) {
+    // As a fence that nothing signals: only a certified device loss ends it.
+    return lossCertified_;
+  }
   pollFor(ticket);
   return retiredThrough_ >= ticket.prefix;
+}
+
+bool VulkanImmediateCommands::isRetired(SubmitHandle handle) const {
+  const Ticket ticket = ticketOf(handle);
+  if (ticket.kind == Ticket::Kind::Settled || ticket.kind == Ticket::Kind::Lost) {
+    return true;
+  }
+  if (ticket.kind == Ticket::Kind::Open) {
+    return false;
+  }
+  if (ticket.kind == Ticket::Kind::Dropped && lossCertified_) {
+    return true;
+  }
+  // A recording that was not submitted never runs: it retires with the work submitted before it,
+  // and its own fence is never a source.
+  pollFor({.kind = Ticket::Kind::Prefix,
+           .prefix = ticket.prefix,
+           .own = ticket.kind == Ticket::Kind::Prefix ? ticket.own : nullptr});
+  return retiredThrough_ >= ticket.prefix;
+}
+
+VkResult VulkanImmediateCommands::waitRetired(SubmitHandle handle, uint64_t timeoutNanoseconds) {
+  if (isRetired(handle)) {
+    return VK_SUCCESS;
+  }
+  const Ticket ticket = ticketOf(handle);
+  if (!IGL_DEBUG_VERIFY(ticket.kind != Ticket::Kind::Open)) {
+    // As `wait()`: the recording was not submitted yet, a logic error of the caller.
+    return VK_ERROR_UNKNOWN;
+  }
+  if (timeoutNanoseconds == 0) {
+    return VK_TIMEOUT;
+  }
+  uint64_t remaining = timeoutNanoseconds;
+  const VkResult result = certifyThrough(
+      ticket.prefix, remaining, ticket.kind == Ticket::Kind::Prefix ? ticket.own : nullptr);
+  return retiredThrough_ >= ticket.prefix ? VK_SUCCESS : result;
 }
 
 void VulkanImmediateCommands::setRowState(CommandBufferWrapper& wrapper, RowState state) noexcept {
@@ -919,6 +1058,7 @@ void VulkanImmediateCommands::setRowState(CommandBufferWrapper& wrapper, RowStat
     wrapper.isEncoding = true;
     break;
   case RowState::Submitted:
+  case RowState::Dropped:
     wrapper.isEncoding = false;
     break;
   }
@@ -952,50 +1092,179 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
 
   ++submitAttempts_;
   IGL_DEBUG_ASSERT(wrapper.isEncoding);
-  // A stale wrapper (its row was freed) is a misuse that takes no submission ordinal.
+  auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
+  // A stale wrapper (its row was freed) is a misuse that leaves the row as it is.
   const bool staleWrapper = wrapper.state == RowState::Free;
-  VK_ASSERT(vf_.vkEndCommandBuffer(wrapper.cmdBuf));
+  lastSubmitDroppedTheRecording_ = false;
+  lastSubmitOutcomeUnknown_ = false;
 
-  const std::array<VkCommandBuffer, 2> cmdBufs = {wrapper.cmdBuf, nextCmdBuf};
-  const uint32_t numCmdBufs = nextCmdBuf != VK_NULL_HANDLE ? 2u : 1u;
+  if (!staleWrapper && (chainPoisoned_ || queueState_->stopped || isDeviceLost())) {
+    // This submission would wait on a chain semaphore that a recording that was not submitted never
+    // signals, or follows one that did: on the queue it would never run, and nor would anything
+    // submitted after it. Nothing is queued any more. After a device loss nothing runs either.
+    if (chainPoisoned_) {
+      queueState_->stopped = true;
+    }
+    VK_ASSERT(vf_.vkEndCommandBuffer(wrapper.cmdBuf));
+    return dropRecording(mutableWrapper, false);
+  }
 
-  // The submission chain and presentation signals have capacity separate from injected signals.
-  constexpr size_t kSubmitSemaphoreCapacity = kMaxInjectedSemaphores + 2;
+  const VkResult endResult = vf_.vkEndCommandBuffer(wrapper.cmdBuf);
+  VK_ASSERT(endResult);
+
   // Without the full chain, a submission that waits on injected semaphores still signals its chain
   // semaphore so that the next submission is ordered after those waits.
   const bool signalChainSemaphore = chainSubmitsWithSemaphores_ || numWaitSemaphores_ != 0;
-  VkResult result = VK_SUCCESS;
-  if (useTimelineSemaphoreAndSynchronization2_) {
-    // @lint-ignore CLANGTIDY
-    VkSemaphoreSubmitInfo waitSemaphores[kSubmitSemaphoreCapacity] = {};
-    for (uint32_t i = 0; i < numWaitSemaphores_; ++i) {
-      waitSemaphores[i] = waitSemaphores_[i];
+  if (endResult != VK_SUCCESS && !staleWrapper) {
+    // A recording that could not be ended is not submitted. One that carries injected waits stops
+    // the queue at once: later work, of either pool, must not run before what those waits order.
+    if (numWaitSemaphores_ != 0) {
+      queueState_->stopped = true;
     }
-    uint32_t numWaitSemaphores = numWaitSemaphores_;
-    if (lastSubmitSemaphore_.semaphore) {
-      waitSemaphores[numWaitSemaphores++] = lastSubmitSemaphore_;
-    }
-    // @lint-ignore CLANGTIDY
-    VkSemaphoreSubmitInfo signalSemaphores[kSubmitSemaphoreCapacity] = {};
-    for (uint32_t i = 0; i < numSignalSemaphores_; ++i) {
-      signalSemaphores[i] = signalSemaphores_[i];
-    }
-    uint32_t numSignalSemaphores = numSignalSemaphores_;
-    if (signalChainSemaphore) {
-      signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
-          .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-          .semaphore = wrapper.semaphore.getVkSemaphore(),
-          .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-      };
-    }
-    if (presentationSemaphore != VK_NULL_HANDLE) {
-      signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
-          .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-          .semaphore = presentationSemaphore,
-          .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-      };
-    }
+    return dropRecording(mutableWrapper, signalChainSemaphore);
+  }
 
+  // The submission chain and presentation signals have capacity separate from injected signals.
+  constexpr size_t kSubmitSemaphoreCapacity = kMaxInjectedSemaphores + 2;
+  // @lint-ignore CLANGTIDY
+  VkSemaphoreSubmitInfo waitSemaphores[kSubmitSemaphoreCapacity] = {};
+  uint32_t numWaitSemaphores = 0;
+  for (uint32_t i = 0; i < numWaitSemaphores_; ++i) {
+    waitSemaphores[numWaitSemaphores++] = waitSemaphores_[i];
+  }
+  if (lastSubmitSemaphore_.semaphore) {
+    waitSemaphores[numWaitSemaphores++] = lastSubmitSemaphore_;
+  }
+  // @lint-ignore CLANGTIDY
+  VkSemaphoreSubmitInfo signalSemaphores[kSubmitSemaphoreCapacity] = {};
+  uint32_t numSignalSemaphores = 0;
+  for (uint32_t i = 0; i < numSignalSemaphores_; ++i) {
+    signalSemaphores[numSignalSemaphores++] = signalSemaphores_[i];
+  }
+  if (signalChainSemaphore) {
+    signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = wrapper.semaphore.getVkSemaphore(),
+        .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    };
+  }
+  if (presentationSemaphore != VK_NULL_HANDLE) {
+    signalSemaphores[numSignalSemaphores++] = VkSemaphoreSubmitInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = presentationSemaphore,
+        .stageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    };
+  }
+
+  VkResult result = queueSubmit(wrapper,
+                                nextCmdBuf,
+                                waitSemaphores,
+                                numWaitSemaphores,
+                                signalSemaphores,
+                                numSignalSemaphores);
+  if (!checkDeviceLost(result)) {
+    VK_ASSERT(result);
+  }
+  if (isOutOfMemory(result) && !staleWrapper) {
+    // Out of memory left the queue, the semaphores and the fence untouched: try once more.
+    result = queueSubmit(wrapper,
+                         nextCmdBuf,
+                         waitSemaphores,
+                         numWaitSemaphores,
+                         signalSemaphores,
+                         numSignalSemaphores);
+    if (!checkDeviceLost(result)) {
+      VK_ASSERT(result);
+    }
+  }
+
+  if (isOutOfMemory(result) && !staleWrapper) {
+    // Nothing was submitted. A recording that carries injected waits stops the queue at once, as a
+    // failed end does: later work, of either pool, must not run before what those waits order.
+    if (numWaitSemaphores_ != 0) {
+      queueState_->stopped = true;
+    }
+    return dropRecording(mutableWrapper, signalChainSemaphore);
+  }
+
+  lastSubmitHandle_ = wrapper.handle;
+  lastAcceptedSubmitHandle_ = wrapper.handle;
+  lastSubmitOutcomeUnknown_ = result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST;
+
+  lastSubmitSemaphore_.semaphore = signalChainSemaphore ? wrapper.semaphore.vkSemaphore_
+                                                        : VK_NULL_HANDLE;
+  numWaitSemaphores_ = 0;
+  numSignalSemaphores_ = 0;
+
+  if (!staleWrapper) {
+    // A submission that reached the queue, or may have, takes the next submission ordinal. Its
+    // fence is trusted after a success or a device loss (which certifies), but not after any other
+    // error: then only a later fence or a checkpoint proves the submission finished.
+    RowRetirement& row = mutableWrapper.retirement_;
+    row.prefix = ++submissionCounter_;
+    row.fenceTrusted = row.fenceTrusted && (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST);
+  }
+
+  // reset
+  setRowState(mutableWrapper, RowState::Submitted);
+
+  nextSubmitHandle_ = {};
+
+  return lastSubmitHandle_;
+}
+
+VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::dropRecording(
+    CommandBufferWrapper& wrapper,
+    bool poisonChain) {
+  IGL_LOG_ERROR_ONCE(
+      "VulkanImmediateCommands (%s): a recording that cannot run was not submitted; its handle "
+      "never "
+      "completes\n",
+      debugName_.c_str());
+  lastSubmitDroppedTheRecording_ = true;
+  chainPoisoned_ = chainPoisoned_ || poisonChain;
+  // It retires with the work submitted before it, and is never an alias of a later recording.
+  RowRetirement& row = wrapper.retirement_;
+  row.prefix = submissionCounter_;
+  row.closedUnsubmitted = false;
+  numWaitSemaphores_ = 0;
+  numSignalSemaphores_ = 0;
+  lastSubmitHandle_ = wrapper.handle;
+  setRowState(wrapper, RowState::Dropped);
+  nextSubmitHandle_ = {};
+  return wrapper.handle;
+}
+
+VkResult VulkanImmediateCommands::waitDropped(const CommandBufferWrapper& wrapper,
+                                              uint64_t timeoutNanoseconds) const {
+  if (lossCertified_) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+  if (timeoutNanoseconds == 0) {
+    return VK_TIMEOUT;
+  }
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+  // The recording's fence was never submitted and nothing signals it, as the fence of a submission
+  // that never reached the queue: only a lost device answers before the time is up.
+  const VkResult result =
+      vf_.vkWaitForFences(device_, 1, &wrapper.fence.vkFence_, VK_TRUE, timeoutNanoseconds);
+  if (certifyLossFromUnsignaledFence(result)) {
+    return VK_ERROR_DEVICE_LOST;
+  }
+  // A success that proves nothing is not an answer for the recording.
+  return result == VK_SUCCESS ? VK_ERROR_UNKNOWN : result;
+}
+
+VkResult VulkanImmediateCommands::queueSubmit(const CommandBufferWrapper& wrapper,
+                                              VkCommandBuffer nextCmdBuf,
+                                              const VkSemaphoreSubmitInfo* waitSemaphores,
+                                              uint32_t numWaitSemaphores,
+                                              const VkSemaphoreSubmitInfo* signalSemaphores,
+                                              uint32_t numSignalSemaphores) const {
+  constexpr size_t kSubmitSemaphoreCapacity = kMaxInjectedSemaphores + 2;
+  const std::array<VkCommandBuffer, 2> cmdBufs = {wrapper.cmdBuf, nextCmdBuf};
+  const uint32_t numCmdBufs = nextCmdBuf != VK_NULL_HANDLE ? 2u : 1u;
+  if (useTimelineSemaphoreAndSynchronization2_) {
     const std::array<VkCommandBufferSubmitInfo, 2> bufferSIs = {{
         {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmdBufs[0]},
         {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmdBufs[1]},
@@ -1010,100 +1279,62 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
         .pSignalSemaphoreInfos = signalSemaphores,
     };
 
+    VkResult result = VK_SUCCESS;
     IGL_PROFILER_ZONE("vkQueueSubmit2KHR()", IGL_PROFILER_COLOR_SUBMIT);
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkQueueSubmit2KHR()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
     result = vf_.vkQueueSubmit2KHR(queue_, 1u, &si, wrapper.fence.vkFence_);
-    if (!checkDeviceLost(result)) {
-      VK_ASSERT(result);
-    }
     IGL_PROFILER_ZONE_END();
-  } else {
-    // @lint-ignore CLANGTIDY
-    VkPipelineStageFlags waitStageMasks[kSubmitSemaphoreCapacity] = {};
-    // @lint-ignore CLANGTIDY
-    VkSemaphore waitSemaphores[kSubmitSemaphoreCapacity] = {};
-    std::array<uint64_t, kSubmitSemaphoreCapacity> waitValues = {};
-    std::array<uint64_t, kSubmitSemaphoreCapacity> signalValues = {};
-    uint32_t numWaitSemaphores = numWaitSemaphores_;
-    for (uint32_t i = 0; i < numWaitSemaphores_; ++i) {
-      waitStageMasks[i] = static_cast<VkPipelineStageFlags>(waitSemaphores_[i].stageMask);
-      waitSemaphores[i] = waitSemaphores_[i].semaphore;
-      waitValues[i] = waitSemaphores_[i].value;
-    }
-    if (lastSubmitSemaphore_.semaphore) {
-      waitStageMasks[numWaitSemaphores] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-      waitSemaphores[numWaitSemaphores++] = lastSubmitSemaphore_.semaphore;
-    }
+    return result;
+  }
 
-    // @lint-ignore CLANGTIDY
-    VkSemaphore signalSemaphores[kSubmitSemaphoreCapacity] = {};
-    for (uint32_t i = 0; i < numSignalSemaphores_; ++i) {
-      signalSemaphores[i] = signalSemaphores_[i].semaphore;
-      signalValues[i] = signalSemaphores_[i].value;
-    }
-    uint32_t numSignalSemaphores = numSignalSemaphores_;
-    if (signalChainSemaphore) {
-      signalSemaphores[numSignalSemaphores++] = wrapper.semaphore.vkSemaphore_;
-    }
-    if (presentationSemaphore != VK_NULL_HANDLE) {
-      signalSemaphores[numSignalSemaphores++] = presentationSemaphore;
-    }
-    // Values align with all semaphore entries, including zero-valued binary chain/presentation.
-    const VkTimelineSemaphoreSubmitInfo timelineInfo = {
-        .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-        .waitSemaphoreValueCount = numWaitSemaphores,
-        .pWaitSemaphoreValues = waitValues.data(),
-        .signalSemaphoreValueCount = numSignalSemaphores,
-        .pSignalSemaphoreValues = signalValues.data(),
-    };
-    const VkSubmitInfo si = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = useTimelineSemaphore_ ? &timelineInfo : nullptr,
-        .waitSemaphoreCount = numWaitSemaphores,
-        .pWaitSemaphores = numWaitSemaphores ? waitSemaphores : nullptr,
-        .pWaitDstStageMask = waitStageMasks,
-        .commandBufferCount = numCmdBufs,
-        .pCommandBuffers = cmdBufs.data(),
-        .signalSemaphoreCount = numSignalSemaphores,
-        .pSignalSemaphores = signalSemaphores,
-    };
-    // @lint-ignore CLANGTIDY
-    const VkFence vkFence = wrapper.fence.vkFence_;
-    IGL_PROFILER_ZONE("vkQueueSubmit()", IGL_PROFILER_COLOR_SUBMIT);
+  // @lint-ignore CLANGTIDY
+  VkPipelineStageFlags waitStageMasks[kSubmitSemaphoreCapacity] = {};
+  // @lint-ignore CLANGTIDY
+  VkSemaphore waits[kSubmitSemaphoreCapacity] = {};
+  std::array<uint64_t, kSubmitSemaphoreCapacity> waitValues = {};
+  for (uint32_t i = 0; i < numWaitSemaphores; ++i) {
+    waitStageMasks[i] = static_cast<VkPipelineStageFlags>(waitSemaphores[i].stageMask);
+    waits[i] = waitSemaphores[i].semaphore;
+    waitValues[i] = waitSemaphores[i].value;
+  }
+  // @lint-ignore CLANGTIDY
+  VkSemaphore signals[kSubmitSemaphoreCapacity] = {};
+  std::array<uint64_t, kSubmitSemaphoreCapacity> signalValues = {};
+  for (uint32_t i = 0; i < numSignalSemaphores; ++i) {
+    signals[i] = signalSemaphores[i].semaphore;
+    signalValues[i] = signalSemaphores[i].value;
+  }
+  // Values align with all semaphore entries, including zero-valued binary chain/presentation.
+  const VkTimelineSemaphoreSubmitInfo timelineInfo = {
+      .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+      .waitSemaphoreValueCount = numWaitSemaphores,
+      .pWaitSemaphoreValues = waitValues.data(),
+      .signalSemaphoreValueCount = numSignalSemaphores,
+      .pSignalSemaphoreValues = signalValues.data(),
+  };
+  const VkSubmitInfo si = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .pNext = useTimelineSemaphore_ ? &timelineInfo : nullptr,
+      .waitSemaphoreCount = numWaitSemaphores,
+      .pWaitSemaphores = numWaitSemaphores ? waits : nullptr,
+      .pWaitDstStageMask = waitStageMasks,
+      .commandBufferCount = numCmdBufs,
+      .pCommandBuffers = cmdBufs.data(),
+      .signalSemaphoreCount = numSignalSemaphores,
+      .pSignalSemaphores = signals,
+  };
+  // @lint-ignore CLANGTIDY
+  const VkFence vkFence = wrapper.fence.vkFence_;
+  VkResult result = VK_SUCCESS;
+  IGL_PROFILER_ZONE("vkQueueSubmit()", IGL_PROFILER_COLOR_SUBMIT);
 #if IGL_VULKAN_PRINT_COMMANDS
-    IGL_LOG_INFO("%p vkQueueSubmit()\n\n", wrapper.cmdBuf);
+  IGL_LOG_INFO("%p vkQueueSubmit()\n\n", wrapper.cmdBuf);
 #endif // IGL_VULKAN_PRINT_COMMANDS
-    result = vf_.vkQueueSubmit(queue_, 1u, &si, vkFence);
-    if (!checkDeviceLost(result)) {
-      VK_ASSERT(result);
-    }
-    IGL_PROFILER_ZONE_END();
-  }
-
-  lastSubmitSemaphore_.semaphore = signalChainSemaphore ? wrapper.semaphore.vkSemaphore_
-                                                        : VK_NULL_HANDLE;
-  lastSubmitHandle_ = wrapper.handle;
-  numWaitSemaphores_ = 0;
-  numSignalSemaphores_ = 0;
-
-  if (!staleWrapper) {
-    // A submission that reached the queue, or may have, takes the next submission ordinal. Its
-    // fence is trusted after a success or a device loss (which certifies), but not after any other
-    // error, out of memory included: then only a later fence or a checkpoint proves the submission
-    // finished.
-    RowRetirement& row = const_cast<CommandBufferWrapper&>(wrapper).retirement_;
-    row.prefix = ++submissionCounter_;
-    row.fenceTrusted = row.fenceTrusted && (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST);
-  }
-
-  // reset
-  setRowState(const_cast<CommandBufferWrapper&>(wrapper), RowState::Submitted);
-
-  nextSubmitHandle_ = {};
-
-  return lastSubmitHandle_;
+  result = vf_.vkQueueSubmit(queue_, 1u, &si, vkFence);
+  IGL_PROFILER_ZONE_END();
+  return result;
 }
 
 void VulkanImmediateCommands::discard(const CommandBufferWrapper& wrapper) {
@@ -1213,7 +1444,7 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::getNextSubmitHand
 VkFence VulkanImmediateCommands::getVkFenceFromSubmitHandle(SubmitHandle handle) {
   IGL_DEBUG_ASSERT(handle.bufferIndex < buffers_.size());
 
-  if (isRecycled(handle)) {
+  if (isRecycled(handle) || buffers_[handle.bufferIndex].outcomesLost_) {
     return VK_NULL_HANDLE;
   }
 
@@ -1226,10 +1457,18 @@ int VulkanImmediateCommands::exportFenceFd(SubmitHandle handle) {
   if (!vf_.vkGetFenceFdKHR) {
     return -1;
   }
+  if (handle.bufferIndex < buffers_.size() && buffers_[handle.bufferIndex].outcomesLost_) {
+    // Whichever recording of the row the handle names, it was lost or never submitted.
+    return -1;
+  }
   const VkFence vkFence = getVkFenceFromSubmitHandle(handle);
   IGL_DEBUG_ASSERT(vkFence != VK_NULL_HANDLE);
   if (vkFence == VK_NULL_HANDLE) {
     // The handle no longer has a fence: its row was acquired again.
+    return -1;
+  }
+  if (buffers_[handle.bufferIndex].state == RowState::Dropped) {
+    // A recording that was not submitted: nothing signals its fence, which cannot be exported.
     return -1;
   }
   bool& fenceTrusted = buffers_[handle.bufferIndex].retirement_.fenceTrusted;
@@ -1262,6 +1501,9 @@ void VulkanImmediateCommands::storeFDInSubmitHandle(SubmitHandle handle, int fd)
 
 int VulkanImmediateCommands::cachedFDFromSubmitHandle(SubmitHandle handle) const noexcept {
   IGL_DEBUG_ASSERT(handle.bufferIndex < buffers_.size());
+  if (buffers_[handle.bufferIndex].outcomesLost_) {
+    return -1;
+  }
   return buffers_[handle.bufferIndex].fd;
 }
 

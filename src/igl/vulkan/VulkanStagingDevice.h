@@ -44,7 +44,8 @@ class VulkanStagingDevice final {
   /** @brief Uploads the data at location `data` with the provided size (in bytes) to the
    * VulkanBuffer object on the device at offset `dstOffset`. The upload operation is asynchronous
    * and the data may or may not be available to the GPU when the function returns. Returns false
-   * when no staging block could be obtained: nothing, or only part of the data, was submitted.
+   * when no staging block could be obtained, or a recording that copies the data did not run:
+   * nothing, or only part of the data, was copied.
    */
   bool bufferSubData(VulkanBuffer& buffer, size_t dstOffset, size_t size, const void* data);
 
@@ -52,14 +53,17 @@ class VulkanStagingDevice final {
    * the device, and at the offset provided, to the location referenced by the pointer `data`. The
    * function is synchronous and the data donwloaded from the device is expected to be available in
    * the location pointed by `data` upon return. Returns false, leaving the rest of `data` as it
-   * was, when no staging block could be obtained.
+   * was, when no staging block could be obtained or a copy is not known to have run and finished:
+   * its recording did not run, its submission failed with an unknown result, it did not retire
+   * within the context's fence timeout, or the device was lost.
    */
   bool getBufferSubData(const VulkanBuffer& buffer, size_t srcOffset, size_t size, void* data);
 
   /// @brief Uploads the texture data pointed by `data` to the VulkanImage object on the device. The
   /// data may span the entire texture or just part of it. The upload operation is asynchronous and
   /// the data may or may not be available to the GPU when the function returns. Returns false when
-  /// no staging block could be obtained; nothing was uploaded.
+  /// no staging block could be obtained, or the recording that copies the data did not run; nothing
+  /// was uploaded, and the image's tracked layout is unchanged.
   bool imageData(const VulkanImage& image,
                  TextureType type,
                  const TextureRangeDesc& range,
@@ -71,8 +75,12 @@ class VulkanStagingDevice final {
   /** @brief Downloads the texture data from the VulkanImage object on the device to the location
    * pointed by `data`. The data requested may span the entire texture or just part of it. The
    * download operation is synchronous and the data is expected to be available at location `data`
-   * upon return. Returns false, leaving `data` as it was, when no staging block could be obtained
-   * or the staging memory cannot be read.
+   * upon return. The copy and the transitions to and from VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL are
+   * one recording, so the image is back in `layout` whether or not it runs. Returns false, leaving
+   * `data` as it was, when no staging block could be obtained, the staging memory cannot be read,
+   * or that recording is not known to have run and finished: it did not run, its submission failed
+   * with an unknown result, it did not retire within the context's fence timeout, or the device was
+   * lost.
    */
   bool getImageData2D(VkImage srcImage,
                       uint32_t level,
@@ -129,8 +137,23 @@ class VulkanStagingDevice final {
   [[nodiscard]] VkDeviceSize getAlignedSize(VkDeviceSize size) const;
 
   /// @brief Waits for all memory blocks to become available and resets the staging device's
-  /// internal state
+  /// internal state. When a block's copy has not retired after its wait, nothing is reset: that
+  /// copy may still use its staging buffer.
   void waitAndReset();
+
+  /// @brief Returns `block`, whose copy was submitted as `handle`, to the blocks: it is reused once
+  /// that submission retired. When the copy's recording was not submitted (it never runs), the
+  /// block is free at once. Call it right after the submission.
+  void returnBlock(MemoryRegion block, VulkanImmediateCommands::SubmitHandle handle);
+
+  /// @brief Waits for the submission `handle` of a readback whose staging block is `block`, and
+  /// returns the block to the free blocks: usable again once the submission retired, otherwise
+  /// with `handle`, so that it is reused only after the submission retires. Returns whether the
+  /// copied bytes can be read: the recording was submitted, the submission's outcome is known, it
+  /// retired, and no device loss was reported. A recording that was not submitted returns the block
+  /// at once, without a wait. Call it right after the submission.
+  [[nodiscard]] bool finishReadback(MemoryRegion block,
+                                    VulkanImmediateCommands::SubmitHandle handle);
 
   /**
    * @brief Returns true if the staging buffer cannot store the size requested

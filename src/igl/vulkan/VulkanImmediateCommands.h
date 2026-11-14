@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -120,8 +121,10 @@ class VulkanImmediateCommands final {
 
  private:
   /// @brief Where a command buffer row is in its life. `acquire()` takes a `Free` row and makes it
-  /// `Encoding`; `submit()` makes it `Submitted`; `discard()` and a completed `purge()` free it.
-  enum class RowState : uint8_t { Free, Encoding, Submitted };
+  /// `Encoding`; `submit()` makes it `Submitted`, or `Dropped` when it does not submit a recording
+  /// that cannot run; `discard()` and a completed `purge()` free it. A `Dropped` row stays out of
+  /// circulation until a device loss is certified.
+  enum class RowState : uint8_t { Free, Encoding, Submitted, Dropped };
   /// @brief Retirement bookkeeping of a row: the identity of its current (or last) recording and
   /// what proves that recording's work finished.
   struct RowRetirement {
@@ -191,6 +194,11 @@ class VulkanImmediateCommands final {
     /// when such a row is recycled, read only for a handle of an older recording of the row (see
     /// `ticketOf()`).
     uint64_t succeededAcquisition_ = 0;
+    /// @brief Set when the row of a recording that was not submitted is reused after a device loss
+    /// (see `recycleDroppedRows()`): from then on every handle of this row reads as lost, except a
+    /// handle certified successful before (see `succeededAcquisition_`), so such a recording never
+    /// reads as finished.
+    bool outcomesLost_ = false;
   };
 
   /// @brief Returns a `CommandBufferWrapper` object with the current command buffer (creates one if
@@ -203,7 +211,9 @@ class VulkanImmediateCommands final {
    * (`lastSubmitSemaphore_`). Caches the SubmitHandle associated with the command buffer being
    * submitted for execution in `lastSubmitHandle_`. Submitting a command buffer also marks the
    * `CommandBufferWrapper::isEncoding` variable to false and clears the injected wait- and
-   * signal-semaphore queues.
+   * signal-semaphore queues. A recording that cannot run is not submitted (see the private
+   * overload): its handle is returned and never completes, as the fence of a submission that never
+   * reached the queue.
    */
   SubmitHandle submit(const CommandBufferWrapper& wrapper);
   void discard(const CommandBufferWrapper& wrapper);
@@ -248,7 +258,9 @@ class VulkanImmediateCommands final {
    * submitted to this pool up to the handle's recording. For a submitted recording that is all
    * submissions up to and including its own. For a recording that was discarded or not submitted,
    * it is all submissions made before it was closed; recycling its command buffer does not make
-   * it ready. A recording that is still open is not ready. An empty handle is ready.
+   * it ready. A recording that is still open is not ready. An empty handle is ready. A recording
+   * that was not submitted because it could not run (see `submit()`) is not ready until a device
+   * loss is certified.
    * This function never waits and never resets anything: it polls at most one fence, the lowest
    * one whose signal covers the work.
    */
@@ -264,18 +276,20 @@ class VulkanImmediateCommands final {
   /// submitted, or `VK_ERROR_UNKNOWN` (the handle's recording is still open, or a checkpoint
   /// submission failed otherwise). The result is the handle's own: a finished row whose command
   /// buffer or fence cannot be reset while rows are freed stays out of circulation (see
-  /// `recycleCertifiedRow()`).
+  /// `recycleCertifiedRow()`). For a recording that was not submitted because it could not run, it
+  /// waits on that recording's fence, which nothing signals: `VK_TIMEOUT` once the time is up, or
+  /// `VK_ERROR_DEVICE_LOST` after a device loss.
   ///
   /// A handle whose submission was certified successful keeps answering `VK_SUCCESS` once its row
   /// is reused, also after a later device loss. That reports the completion of its work, not that
-  /// the device or its resources are usable: `isDeviceLost()` stays true, and work not certified
-  /// successful stays lost. Exact for handles fewer than 2^32 - 1 pool acquisitions older than
-  /// their row's current acquisition (ids wrapping through 0 included). Submit ids skip 0, so a
-  /// handle exactly that many acquisitions older has the current recording's id and answers as it,
-  /// and an older one may answer for a later acquisition: a proven success may then be reported as
-  /// lost. Work not certified finished before the first loss is never reported as success; a
-  /// submission whose result was unknown counts as certified once a later fence or checkpoint
-  /// retires it before the loss.
+  /// the device or its resources are usable: `isDeviceLost()` stays true, work not certified
+  /// successful stays lost, and nothing more is submitted. Exact for handles fewer than 2^32 - 1
+  /// pool acquisitions older than their row's current acquisition (ids wrapping through 0
+  /// included). Submit ids skip 0, so a handle exactly that many acquisitions older has the current
+  /// recording's id and answers as it, and an older one may answer for a later acquisition: a
+  /// proven success may then be reported as lost. Work not certified finished before the first
+  /// loss is never reported as success; a submission whose result was unknown counts as certified
+  /// once a later fence or checkpoint retires it before the loss.
   VkResult wait(SubmitHandle handle, uint64_t timeoutNanoseconds = UINT64_MAX);
 
   /// @brief Waits until the GPU has finished every submission made to this pool, with no time
@@ -283,6 +297,10 @@ class VulkanImmediateCommands final {
   /// wait fails), it keeps trying, waiting a little longer each time (see `backoff()`), so it
   /// blocks as long as that lasts; after a device loss that a fence, a checkpoint or that wait
   /// reported, it returns. A recording that is still open is not waited for.
+  /// A recording that was not submitted because it could not run is waited for on its fence, which
+  /// nothing signals: then it returns only once a device loss is certified (a success with no loss
+  /// reported proves nothing, and it keeps backing off), or when that wait fails, which debug
+  /// builds assert, as on master.
   void waitAll();
 
   /// @brief Returns the fence associated with the handle until its command buffer is acquired
@@ -307,10 +325,27 @@ class VulkanImmediateCommands final {
 
  private:
   friend class CommandQueue;
+  friend class DescriptorPoolsArena;
   friend class VulkanContext;
+  friend class VulkanStagingDevice;
   friend class igl::tests::VulkanImmediateCommandsTest;
+  /// @brief What the pools of a context share: they submit to the same queue. A context's staging
+  /// pool uses its main pool's, which outlives it; any other pool uses its own (`ownQueueState_`).
+  /// This relies on `VulkanContext::initContext()` running once per context and on the context's
+  /// main pool never being replaced: either would leave the staging pool using a destroyed state.
+  struct QueueState {
+    /// @brief Once set, every submission of every pool sharing it is dropped (see `submit()`): as
+    /// on a queue where a submission waits on a semaphore that nothing signals, nothing submitted
+    /// after it can run.
+    bool stopped = false;
+  };
   /// @brief If `nextCmdBuf` is not null, it is a primary command buffer that the submission runs
-  /// after the one of `wrapper`, such as the recording of a reusable command buffer.
+  /// after the one of `wrapper`, such as the recording of a reusable command buffer. A recording
+  /// that cannot run is not submitted, and its row becomes `Dropped`: its command buffer could not
+  /// be ended, two tries to submit it ran out of memory, the queue stopped (see `QueueState`),
+  /// or this pool saw a device loss. Its injected semaphores are dropped, the semaphore chain stays
+  /// at the last submission and no submission ordinal is taken; its handle is returned, and
+  /// `lastSubmitDroppedTheRecording()` is true. As before, a failed end or submit asserts.
   SubmitHandle submit(const CommandBufferWrapper& wrapper,
                       VkSemaphore presentationSemaphore,
                       VkCommandBuffer nextCmdBuf = VK_NULL_HANDLE);
@@ -359,7 +394,8 @@ class VulkanImmediateCommands final {
   /// is free, right before a row is acquired. Returns whether a row was freed.
   [[nodiscard]] bool recoverQuarantinedRow();
   /// @brief One try of an exhausted `acquire()` to free a row, after `purge()` freed none: first,
-  /// without waiting, a quarantined row that can now be reset, else the oldest submission's row,
+  /// without waiting, a quarantined row that can now be reset, else, once a device loss is
+  /// certified, the rows of recordings that were not submitted, else the oldest submission's row,
   /// waiting for it without a time limit. Returns whether a row was freed.
   [[nodiscard]] bool freeRow();
   /// @brief Waits a little before `acquire()`, `waitAll()` or the destructor tries again, when no
@@ -376,6 +412,12 @@ class VulkanImmediateCommands final {
   /// @brief A bounded host back-off delay, used only when the back-off fence wait itself fails or
   /// answers at once what proves nothing: a sleep of `nanoseconds`.
   void hostBackoffDelay(uint64_t nanoseconds);
+  /// @brief Takes `result`, the answer of a wait on fences that nothing signals on a working device
+  /// (`backoffFence_`, the fence of a recording that was not submitted): VK_ERROR_DEVICE_LOST, or
+  /// VK_SUCCESS once a device loss was already reported (`isDeviceLost()`), ends every submission
+  /// of the pool, as lost (`certifyLoss()`). Without such a report VK_SUCCESS proves nothing and is
+  /// logged once. Returns whether the loss was certified.
+  bool certifyLossFromUnsignaledFence(VkResult result) const noexcept;
   /// @brief Moves `wrapper` to `state` and updates its `cmdBuf` and `isEncoding` fields that mirror
   /// it, so they cannot drift. The only writer of the three.
   void setRowState(CommandBufferWrapper& wrapper, RowState state) noexcept;
@@ -384,7 +426,9 @@ class VulkanImmediateCommands final {
   /// its row whose submission was certified successful), the close of a recording that is still
   /// open, or a submission ordinal that `retiredThrough_` must reach.
   struct Ticket {
-    enum class Kind : uint8_t { Settled, Open, Prefix } kind = Kind::Settled;
+    /// @brief `Dropped`: a recording that was not submitted, which never finishes and retires with
+    /// its prefix. `Lost`: a handle of a row whose outcomes were lost with the device.
+    enum class Kind : uint8_t { Settled, Open, Prefix, Dropped, Lost } kind = Kind::Settled;
     uint64_t prefix = 0;
     /// @brief The row whose current recording the handle names, when it does.
     const CommandBufferWrapper* IGL_NULLABLE own = nullptr;
@@ -457,6 +501,63 @@ class VulkanImmediateCommands final {
   /// @brief Closes the recording of `wrapper` without a submission and frees its row.
   void closeUnsubmitted(CommandBufferWrapper& wrapper);
 
+  /// @brief Submits one batch with the given semaphores and the row's fence: the row's command
+  /// buffer, and `nextCmdBuf` (if not null) after it.
+  VkResult queueSubmit(const CommandBufferWrapper& wrapper,
+                       VkCommandBuffer nextCmdBuf,
+                       const VkSemaphoreSubmitInfo* waitSemaphores,
+                       uint32_t numWaitSemaphores,
+                       const VkSemaphoreSubmitInfo* signalSemaphores,
+                       uint32_t numSignalSemaphores) const;
+
+  /// @brief Whether the last `submit()` did not submit its recording, which never runs (see
+  /// `submit()`). Its timestamps are never written, and its handle never completes.
+  [[nodiscard]] bool lastSubmitDroppedTheRecording() const noexcept {
+    return lastSubmitDroppedTheRecording_;
+  }
+
+  /// @brief The last submission the queue accepted, or may have: what internal bookkeeping (slots
+  /// of reusable command buffers, ring buffers, staging blocks) waits for after a recording that
+  /// was not submitted, whose own handle never completes. It bounds every earlier submission.
+  [[nodiscard]] SubmitHandle lastAcceptedSubmitHandle() const noexcept {
+    return lastAcceptedSubmitHandle_;
+  }
+
+  /// @brief Whether the objects the work of a handle uses can be destroyed: everything submitted up
+  /// to its recording finished or was lost with the device. Unlike `isReady()`, it is true for a
+  /// recording that was not submitted once the work submitted before it retired, as it never runs.
+  /// For deferred destruction only.
+  [[nodiscard]] bool isRetired(SubmitHandle handle) const;
+
+  /// @brief Waits, for at most `timeoutNanoseconds` of fence waiting, until `isRetired(handle)`.
+  /// Returns `VK_SUCCESS` once it is, or why that could not be proven: `VK_TIMEOUT`, or the error
+  /// of a checkpoint or a fence wait (`VK_ERROR_UNKNOWN` for a recording that is still open).
+  VkResult waitRetired(SubmitHandle handle, uint64_t timeoutNanoseconds);
+
+  /// @brief Closes the recording of `wrapper` without submitting it (see `submit()`): its row
+  /// becomes `Dropped`. `poisonChain`: the batch would have signaled the chain semaphore, which the
+  /// next submission of this pool waits on, so that next submission stops the queue.
+  SubmitHandle dropRecording(CommandBufferWrapper& wrapper, bool poisonChain);
+
+  /// @brief Answers `wait()` for a recording that was not submitted.
+  VkResult waitDropped(const CommandBufferWrapper& wrapper, uint64_t timeoutNanoseconds) const;
+
+  /// @brief Once a device loss is certified, frees the rows of recordings that were not submitted,
+  /// and marks them so that every handle of these rows reads as lost. Returns whether a row was
+  /// freed.
+  [[nodiscard]] bool recycleDroppedRows();
+
+  /// @brief Waits, retrying, until everything submitted is proven finished or lost (see
+  /// `waitAll()`), without waiting for recordings that were not submitted.
+  void drainSubmitted();
+
+  /// @brief Whether the last `submit()` failed with a result that leaves its batch's fate unknown:
+  /// its recording may or may not have run, even once a later fence or a checkpoint proves that the
+  /// submission retired.
+  [[nodiscard]] bool lastSubmitOutcomeUnknown() const noexcept {
+    return lastSubmitOutcomeUnknown_;
+  }
+
   /// @brief Records that the queue was idle: everything submitted so far finished, or no longer
   /// runs after a device loss (`lost`).
   void certifyQueueIdle(bool lost) const noexcept;
@@ -513,9 +614,21 @@ class VulkanImmediateCommands final {
   /// @brief The part of `retiredThrough_` certified by fences that signaled, not by device loss. It
   /// no longer grows once a loss is certified (see `certify()`).
   mutable uint64_t succeededThrough_ = 0;
-  /// @brief Set once a fence, a checkpoint, the back-off fence or a queue idle reported a device
-  /// loss: nothing submitted runs any more.
+  /// @brief Set once a fence, a checkpoint, the back-off fence, a queue idle, or the fence of a
+  /// recording that was not submitted reported a device loss: nothing submitted runs any more.
   mutable bool lossCertified_ = false;
+  /// @brief See `lastSubmitDroppedTheRecording()`.
+  bool lastSubmitDroppedTheRecording_ = false;
+  /// @brief See `lastAcceptedSubmitHandle()`.
+  SubmitHandle lastAcceptedSubmitHandle_ = {};
+  /// @brief A recording that was not submitted would have signaled the chain semaphore: the next
+  /// submission of this pool stops the queue, where it would have waited on that semaphore forever.
+  bool chainPoisoned_ = false;
+  QueueState ownQueueState_;
+  /// @brief The state this pool shares with the other pool of its context, else `ownQueueState_`.
+  QueueState* queueState_ = &ownQueueState_;
+  /// @brief See `lastSubmitOutcomeUnknown()`.
+  bool lastSubmitOutcomeUnknown_ = false;
 
   /// @brief A checkpoint: an empty batch whose fence certifies every submission made before it.
   struct Checkpoint {
