@@ -285,6 +285,15 @@ using namespace igl;
     metalView.colorPixelFormat =
         metal::Texture::textureFormatToMTLPixelFormat(_config.swapchainColorTextureFormat);
     metalView.colorspace = metal::colorSpaceToCGColorSpace(_config.swapchainColorSpace);
+    if (_config.swapchainColorSpace == igl::ColorSpace::ExtendedSRGBLinear) {
+      CAMetalLayer* metalLayer = (CAMetalLayer*)metalView.layer;
+      metalLayer.wantsExtendedDynamicRangeContent = YES;
+      [[maybe_unused]] const char* colorSpaceName =
+          [(__bridge NSString*)CGColorSpaceGetName(metalLayer.colorspace) UTF8String];
+      IGL_LOG_INFO("Metal layer: wantsExtendedDynamicRangeContent=%s colorspace=%s\n",
+                   metalLayer.wantsExtendedDynamicRangeContent ? "YES" : "NO",
+                   colorSpaceName ? colorSpaceName : "none");
+    }
 
     metalView.framebufferOnly = NO;
     [metalView setViewController:self];

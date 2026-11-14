@@ -245,6 +245,22 @@
     metalView.colorPixelFormat =
         igl::metal::Texture::textureFormatToMTLPixelFormat(_config.swapchainColorTextureFormat);
     metalView.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    if (_config.swapchainColorSpace == igl::ColorSpace::ExtendedSRGBLinear) {
+      if (@available(iOS 16.0, *)) {
+        CAMetalLayer* metalLayer = (CAMetalLayer*)metalView.layer;
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);
+        metalLayer.colorspace = colorSpace;
+        CGColorSpaceRelease(colorSpace);
+        metalLayer.wantsExtendedDynamicRangeContent = YES;
+        [[maybe_unused]] const char* colorSpaceName =
+            [(__bridge NSString*)CGColorSpaceGetName(metalLayer.colorspace) UTF8String];
+        IGL_LOG_INFO("Metal layer: wantsExtendedDynamicRangeContent=%s colorspace=%s\n",
+                     metalLayer.wantsExtendedDynamicRangeContent ? "YES" : "NO",
+                     colorSpaceName ? colorSpaceName : "none");
+      } else {
+        IGL_LOG_INFO("Metal layer: EDR unsupported before iOS 16, layer unchanged\n");
+      }
+    }
 
     metalView.delegate = self;
     [metalView setTouchDelegate:self];
