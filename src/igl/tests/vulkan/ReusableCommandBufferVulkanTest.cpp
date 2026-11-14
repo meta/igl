@@ -1191,7 +1191,13 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
 #if IGL_DEBUG_ABORT_ENABLED
       EXPECT_EQ(expectedDebugAborts().count, 0u) << "frame " << frame;
 #endif
-      EXPECT_EQ(ctx.immediate_->isReady(handle), executeInCommandBuffer) << "frame " << frame;
+      if (executeInCommandBuffer) {
+        // a released handle is ready once the work submitted before it finished
+        EXPECT_EQ(ctx.immediate_->wait(handle, 10'000'000'000ull), VK_SUCCESS) << "frame " << frame;
+        EXPECT_TRUE(ctx.immediate_->isReady(handle)) << "frame " << frame;
+      } else {
+        EXPECT_FALSE(ctx.immediate_->isReady(handle)) << "frame " << frame;
+      }
       cmdQueue_->submit(*later);
     }
 
@@ -1212,6 +1218,8 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     current->present(drawable);
     ASSERT_TRUE(injectSemaphores(4));
     EXPECT_EQ(cmdQueue_->submit(*current), 0u);
+    // a discarded handle is ready once the work submitted before it finished
+    EXPECT_EQ(ctx.immediate_->wait(handle, 10'000'000'000ull), VK_SUCCESS);
     EXPECT_TRUE(ctx.immediate_->isReady(handle));
     EXPECT_TRUE(injectSemaphores(5));
     cmdBuf = createCommandBuffer();

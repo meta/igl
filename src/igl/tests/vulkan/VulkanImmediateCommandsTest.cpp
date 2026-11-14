@@ -11,13 +11,26 @@
 
 #include "../util/TestDevice.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
+#include <future>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
+#include <igl/Buffer.h>
+#include <igl/CommandBuffer.h>
+#include <igl/ComputeCommandEncoder.h>
+#include <igl/ComputePipelineState.h>
+#include <igl/ShaderCreator.h>
+#include <igl/Timer.h>
+#include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/VulkanContext.h>
 
@@ -35,6 +48,8 @@ struct CallTrace {
   VulkanFunctionTable real = {};
   /// What every traced `vkWaitForFences()` answers.
   VkResult waitResult = VK_SUCCESS;
+  /// When set, what a traced zero-timeout `vkWaitForFences()` (a poll) answers instead.
+  std::optional<VkResult> pollResult;
   std::vector<std::string> lines;
   std::map<uint64_t, size_t> commandBuffers;
   std::map<uint64_t, size_t> fences;
@@ -152,7 +167,7 @@ VKAPI_ATTR VkResult VKAPI_CALL traceWaitForFences(VkDevice /*device*/,
     line += " " + handleName(gTrace.fences, "fence", fences[i]);
   }
   record(std::move(line));
-  return gTrace.waitResult;
+  return (timeout == 0 && gTrace.pollResult) ? *gTrace.pollResult : gTrace.waitResult;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL traceQueueSubmit(VkQueue /*queue*/,
@@ -259,6 +274,151 @@ struct TracedWaitsSucceedAtScopeEnd {
     gTrace.waitResult = VK_SUCCESS;
   }
 };
+/// A queue that runs nothing: submissions complete only when a test says so, in submission order.
+/// Fences are signaled when the submission that carries them completes. The pool under test owns
+/// real fences and command buffers; only the queue, the fence waits, the fence resets and the fence
+/// export go through this fake.
+struct FakeQueue {
+  /// Fences of the submissions, in submission order.
+  std::vector<VkFence> submitted;
+  /// The submissions before this index have completed.
+  size_t completed = 0;
+  /// The submission index that each fence's pending or completed signal belongs to.
+  std::map<uint64_t, size_t> fenceSubmission;
+  /// When set, a blocking wait completes every submission up to the one it waits for.
+  bool blockingWaitsComplete = true;
+  /// What the next submissions answer, front first (then success).
+  std::vector<VkResult> submitResults;
+  /// When set, what every fence wait answers instead (e.g. device loss).
+  std::optional<VkResult> waitOverride;
+  size_t polls = 0;
+  size_t blockingWaits = 0;
+  std::vector<uint64_t> polledFences;
+};
+thread_local FakeQueue gQueue;
+
+bool fenceSignaled(VkFence fence) {
+  const auto it = gQueue.fenceSubmission.find(handleKey(fence));
+  return it != gQueue.fenceSubmission.end() && it->second < gQueue.completed;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL fakeQueueSubmit(VkQueue /*queue*/,
+                                               uint32_t count,
+                                               const VkSubmitInfo* /*submits*/,
+                                               VkFence fence) {
+  VkResult result = VK_SUCCESS;
+  if (!gQueue.submitResults.empty()) {
+    result = gQueue.submitResults.front();
+    gQueue.submitResults.erase(gQueue.submitResults.begin());
+  }
+  if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST || result == VK_ERROR_UNKNOWN) {
+    // An unknown result is modeled as a submission that did reach the queue.
+    gQueue.fenceSubmission[handleKey(fence)] = gQueue.submitted.size();
+    gQueue.submitted.push_back(fence);
+  }
+  return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL fakeQueueSubmit2(VkQueue queue,
+                                                uint32_t count,
+                                                const VkSubmitInfo2* /*submits*/,
+                                                VkFence fence) {
+  return fakeQueueSubmit(queue, count, nullptr, fence);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL fakeWaitForFences(VkDevice /*device*/,
+                                                 uint32_t count,
+                                                 const VkFence* fences,
+                                                 VkBool32 /*waitAll*/,
+                                                 uint64_t timeout) {
+  if (timeout == 0) {
+    ++gQueue.polls;
+    gQueue.polledFences.push_back(handleKey(fences[0]));
+  } else {
+    ++gQueue.blockingWaits;
+  }
+  if (gQueue.waitOverride) {
+    return *gQueue.waitOverride;
+  }
+  bool all = true;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (!fenceSignaled(fences[i])) {
+      const auto it = gQueue.fenceSubmission.find(handleKey(fences[i]));
+      if (timeout == UINT64_MAX && it == gQueue.fenceSubmission.end()) {
+        // A real driver would block forever: fail the test, and answer as if the fence were
+        // signaled so that the pool cannot spin on it.
+        ADD_FAILURE() << "Unbounded wait on a fence that has no pending signal";
+        continue;
+      }
+      if (timeout != 0 && gQueue.blockingWaitsComplete && it != gQueue.fenceSubmission.end()) {
+        gQueue.completed = std::max(gQueue.completed, it->second + 1);
+      } else {
+        all = false;
+      }
+    }
+  }
+  return all ? VK_SUCCESS : VK_TIMEOUT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL fakeResetFences(VkDevice /*device*/,
+                                               uint32_t count,
+                                               const VkFence* fences) {
+  for (uint32_t i = 0; i < count; ++i) {
+    gQueue.fenceSubmission.erase(handleKey(fences[i]));
+  }
+  return VK_SUCCESS;
+}
+
+[[nodiscard]] VulkanFunctionTable fakeQueueTable(const VulkanFunctionTable& real) {
+  gQueue = {};
+  VulkanFunctionTable vf = real;
+  vf.vkQueueSubmit = fakeQueueSubmit;
+  vf.vkQueueSubmit2KHR = fakeQueueSubmit2;
+  vf.vkWaitForFences = fakeWaitForFences;
+  vf.vkResetFences = fakeResetFences;
+  return vf;
+}
+
+/// Completes the first `n` submissions made to the fake queue.
+void completeSubmissions(size_t n) {
+  gQueue.completed = std::max(gQueue.completed, n);
+}
+
+/// Which descriptor pool each descriptor set came from, and the pool of the last set written with
+/// a storage buffer.
+struct DescriptorPoolProbeState {
+  PFN_vkAllocateDescriptorSets realAllocate = nullptr;
+  PFN_vkUpdateDescriptorSets realUpdate = nullptr;
+  std::map<uint64_t, VkDescriptorPool> poolOfSet;
+  VkDescriptorPool lastStorageBufferPool = VK_NULL_HANDLE;
+};
+thread_local DescriptorPoolProbeState gProbe;
+
+VKAPI_ATTR VkResult VKAPI_CALL probeAllocateDescriptorSets(VkDevice device,
+                                                           const VkDescriptorSetAllocateInfo* info,
+                                                           VkDescriptorSet* sets) {
+  const VkResult result = gProbe.realAllocate(device, info, sets);
+  if (result == VK_SUCCESS) {
+    for (uint32_t i = 0; i < info->descriptorSetCount; ++i) {
+      gProbe.poolOfSet[handleKey(sets[i])] = info->descriptorPool;
+    }
+  }
+  return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL probeUpdateDescriptorSets(VkDevice device,
+                                                     uint32_t writeCount,
+                                                     const VkWriteDescriptorSet* writes,
+                                                     uint32_t copyCount,
+                                                     const VkCopyDescriptorSet* copies) {
+  for (uint32_t i = 0; i < writeCount; ++i) {
+    if (writes[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
+      const auto it = gProbe.poolOfSet.find(handleKey(writes[i].dstSet));
+      gProbe.lastStorageBufferPool = it == gProbe.poolOfSet.end() ? VK_NULL_HANDLE : it->second;
+    }
+  }
+  gProbe.realUpdate(device, writeCount, writes, copyCount, copies);
+}
 
 } // namespace
 
@@ -427,6 +587,173 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
 
   static bool rowAgrees(const Commands& commands, uint32_t row) {
     return Commands::rowAgreesWithWrapper(commands.buffers_[row]);
+  }
+
+  static uint64_t retiredThrough(const Commands& commands) {
+    return commands.retiredThrough_;
+  }
+  static uint64_t submissions(const Commands& commands) {
+    return commands.submissionCounter_;
+  }
+  static void setAcquisitionCounter(Commands& commands, uint64_t value) {
+    commands.acquisitionCounter_ = value;
+  }
+  static uint64_t acquisitionOf(const Commands& commands, uint32_t row) {
+    return commands.buffers_[row].retirement_.acquisition;
+  }
+
+  /// A pool on a fresh fake queue (`gQueue`). The pool keeps a reference to its function table,
+  /// which the fixture owns.
+  std::unique_ptr<Commands> makeFakePool(const char* name) {
+    auto& ctx = getVulkanContext();
+    fakeTable_ = fakeQueueTable(ctx.vf_);
+    return std::make_unique<Commands>(fakeTable_,
+                                      ctx.getVkDevice(),
+                                      ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                      false,
+                                      false,
+                                      false,
+                                      name);
+  }
+  VulkanFunctionTable fakeTable_ = {};
+
+  /// Replaces a pool of the context (`slot`) with a pool on the fake queue until destroyed. Then it
+  /// completes everything submitted to the fake queue, runs the deferred tasks and puts the real
+  /// pool back, also after a failed assertion.
+  class FakeContextPool {
+   public:
+    FakeContextPool(VulkanImmediateCommandsTest& test,
+                    std::unique_ptr<Commands>& slot,
+                    const char* name) :
+      ctx_(test.getVulkanContext()), slot_(slot), realPool_(std::move(slot)) {
+      slot_ = test.makeFakePool(name);
+    }
+    FakeContextPool(const FakeContextPool&) = delete;
+    FakeContextPool& operator=(const FakeContextPool&) = delete;
+    ~FakeContextPool() {
+      gQueue.waitOverride.reset();
+      gQueue.submitResults.clear();
+      gQueue.blockingWaitsComplete = true;
+      completeSubmissions(gQueue.submitted.size());
+      ctx_.waitDeferredTasks();
+      slot_ = std::move(realPool_);
+    }
+    Commands& operator*() const {
+      return *slot_;
+    }
+    Commands* operator->() const {
+      return slot_.get();
+    }
+
+   private:
+    igl::vulkan::VulkanContext& ctx_;
+    std::unique_ptr<Commands>& slot_;
+    std::unique_ptr<Commands> realPool_;
+  };
+
+  /// Replaces one entry of the context's function table until destroyed.
+  template<typename Fn>
+  class ScopedTableEntry {
+   public:
+    ScopedTableEntry(const VulkanFunctionTable& table, Fn VulkanFunctionTable::* entry, Fn fn) :
+      table_(const_cast<VulkanFunctionTable&>(table)), entry_(entry), saved_(table_.*entry) {
+      table_.*entry_ = fn;
+    }
+    ScopedTableEntry(const ScopedTableEntry&) = delete;
+    ScopedTableEntry& operator=(const ScopedTableEntry&) = delete;
+    ~ScopedTableEntry() {
+      table_.*entry_ = saved_;
+    }
+    [[nodiscard]] Fn saved() const {
+      return saved_;
+    }
+
+   private:
+    VulkanFunctionTable& table_;
+    Fn VulkanFunctionTable::* entry_;
+    Fn saved_;
+  };
+
+  /// Records, through the context's function table, which pool each descriptor set comes from
+  /// (`gProbe`), until destroyed.
+  class DescriptorPoolProbe {
+   public:
+    explicit DescriptorPoolProbe(const VulkanFunctionTable& table) :
+      allocate_(table, &VulkanFunctionTable::vkAllocateDescriptorSets, probeAllocateDescriptorSets),
+      update_(table, &VulkanFunctionTable::vkUpdateDescriptorSets, probeUpdateDescriptorSets) {
+      gProbe = {};
+      gProbe.realAllocate = allocate_.saved();
+      gProbe.realUpdate = update_.saved();
+    }
+
+   private:
+    ScopedTableEntry<PFN_vkAllocateDescriptorSets> allocate_;
+    ScopedTableEntry<PFN_vkUpdateDescriptorSets> update_;
+  };
+
+  /// A compute pipeline with one storage buffer binding, and two buffers to alternate so that every
+  /// dispatch writes a new descriptor set.
+  struct StorageBufferDispatch {
+    std::shared_ptr<IComputePipelineState> pipeline;
+    std::array<std::shared_ptr<IBuffer>, 2> buffers;
+  };
+
+  StorageBufferDispatch makeStorageBufferDispatch() {
+    static constexpr std::string_view kShader =
+        "layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;\n"
+        "layout (std430, binding = 0, set = 1) writeonly buffer outBuf {\n"
+        "  uint values[];\n"
+        "};\n"
+        "void main() {\n"
+        "  values[0] = 1u;\n"
+        "}\n";
+    StorageBufferDispatch dispatch;
+    Result ret;
+    auto stages = ShaderStagesCreator::fromModuleStringInput(
+        *iglDev_,
+        kShader.data(), // NOLINT(bugprone-suspicious-stringview-data-usage)
+        "main",
+        "",
+        &ret);
+    if (!ret.isOk() || !stages) {
+      return dispatch;
+    }
+    const ComputePipelineDesc desc{.buffersMap = {{0, IGL_NAMEHANDLE("outBuf")}},
+                                   .shaderStages = std::move(stages)};
+    dispatch.pipeline = iglDev_->createComputePipeline(desc, &ret);
+    for (auto& buffer : dispatch.buffers) {
+      const BufferDesc bufferDesc{
+          .type = BufferDesc::BufferTypeBits::Storage,
+          .length = sizeof(uint32_t) * 4,
+          .storage = ResourceStorage::Private,
+      };
+      buffer = iglDev_->createBuffer(bufferDesc, &ret);
+      if (!buffer) {
+        dispatch.pipeline = nullptr;
+      }
+    }
+    return dispatch;
+  }
+
+  /// Records `count` dispatches into `cmdBuf`; each one takes a new storage buffer descriptor set.
+  static void recordDispatches(ICommandBuffer& cmdBuf,
+                               const StorageBufferDispatch& dispatch,
+                               uint32_t count) {
+    auto encoder = cmdBuf.createComputeCommandEncoder();
+    ASSERT_NE(encoder, nullptr);
+    encoder->bindComputePipelineState(dispatch.pipeline);
+    for (uint32_t i = 0; i != count; ++i) {
+      encoder->bindBuffer(0, dispatch.buffers[i % 2].get());
+      encoder->dispatchThreadGroups(Dimensions(1, 1, 1), Dimensions(1, 1, 1));
+    }
+    encoder->endEncoding();
+  }
+
+  /// Discards the recording of a command buffer that was not submitted.
+  void discardRecording(ICommandBuffer& cmdBuf) {
+    auto& ctx = getVulkanContext();
+    const auto handle = static_cast<igl::vulkan::CommandBuffer&>(cmdBuf).getNextSubmitHandle();
+    ctx.immediate_->discard(wrapperOf(*ctx.immediate_, handle.bufferIndex));
   }
 
   igl::vulkan::VulkanImmediateCommands::SubmitHandle submitForPresentation(
@@ -1216,15 +1543,16 @@ TEST_F(VulkanImmediateCommandsTest, DiscardedHandleAnswersAsItAlwaysDid) {
   const auto& second = commands.acquire();
   ASSERT_EQ(second.handle.bufferIndex, first.handle.bufferIndex);
 
-  // The discarded recording and the one that took its row have the same handle, so the stale
-  // handle names the open recording: not ready, not waitable, and its fence is the row's.
-  EXPECT_EQ(second.handle, stale);
+  // Every acquisition now has its own handle, so the discarded recording and the one that took its
+  // row no longer share one. The stale handle still answers as the open recording, as it did when
+  // they shared it: not ready, not waitable, and its fence is the row's.
+  EXPECT_NE(second.handle, stale);
   EXPECT_FALSE(commands.isReady(stale));
   EXPECT_EQ(commands.wait(stale, 0), VK_ERROR_UNKNOWN);
   EXPECT_EQ(commands.getVkFenceFromSubmitHandle(stale), second.fence.vkFence_);
 
   const auto handle = commands.submit(second);
-  EXPECT_EQ(handle, stale);
+  EXPECT_NE(handle, stale);
   gTrace.waitResult = VK_SUCCESS;
   EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
   EXPECT_TRUE(commands.isReady(stale));
@@ -1294,9 +1622,9 @@ TEST_F(VulkanImmediateCommandsTest, TimedOutWaitKeepsTheRowSubmittedAndResetsNot
   gTrace.waitResult = VK_TIMEOUT;
   EXPECT_EQ(commands.wait(handle, 0), VK_TIMEOUT);
   EXPECT_FALSE(commands.isReady(handle));
-  // Only polls: no reset of the command buffer or of the fence.
+  // Only polls: no reset of the command buffer or of the fence. A zero-time `wait()` polls at
+  // most once (see `wait()`; it used to poll twice), and so does `isReady()`.
   const std::vector<std::string> expected = {
-      "vkWaitForFences all=1 timeout=0 fence0",
       "vkWaitForFences all=1 timeout=0 fence0",
       "vkWaitForFences all=1 timeout=0 fence0",
   };
@@ -1385,6 +1713,631 @@ TEST_F(VulkanImmediateCommandsTest, InjectedSemaphoreSubmitCallTraceIsUnchanged)
       "vkWaitForFences all=1 timeout=0 fence0",
   };
   EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+}
+
+// The call traces below were recorded on the pool before submissions were ordered. Where a
+// scenario's calls or answers differ now, the test says why.
+
+TEST_F(VulkanImmediateCommandsTest, SteadyStateOnePoolCallTrace) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Steady state trace test");
+  gTrace.lines.clear();
+  // Each frame submits once and asks whether the frame before last finished, as deferred tasks do.
+  std::vector<vulkan::VulkanImmediateCommands::SubmitHandle> handles;
+  for (uint32_t frame = 0; frame != 3; ++frame) {
+    handles.push_back(commands.submit(commands.acquire()));
+    if (frame >= 2) {
+      EXPECT_TRUE(commands.isReady(handles[frame - 2]));
+    }
+  }
+  EXPECT_EQ(commands.wait(handles.back()), VK_SUCCESS);
+  commands.waitAll();
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkEndCommandBuffer cb1",
+      "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+      "vkBeginCommandBuffer cb2 flags=1",
+      "vkEndCommandBuffer cb2",
+      "vkQueueSubmit cb2 fence2 waits=1 signals=1 wait:sem1 signal:sem2",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkWaitForFences all=1 timeout=0 fence2",
+      "vkWaitForFences all=1 timeout=max fence0 fence1 fence2",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkResetCommandBuffer cb0 flags=0",
+      "vkResetFences fence0",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkResetFences fence1",
+      "vkWaitForFences all=1 timeout=0 fence2",
+      "vkResetCommandBuffer cb2 flags=0",
+      "vkResetFences fence2",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+}
+
+TEST_F(VulkanImmediateCommandsTest, SteadyStateTwoPoolsCallTrace) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands main(vf,
+                                       ctx.getVkDevice(),
+                                       ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                       false,
+                                       false,
+                                       false,
+                                       "Main trace test");
+  vulkan::VulkanImmediateCommands staging(vf,
+                                          ctx.getVkDevice(),
+                                          ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                          false,
+                                          false,
+                                          false,
+                                          "Staging trace test");
+  gTrace.lines.clear();
+  // A staging upload nested in an open frame recording, then the frame, twice.
+  for (uint32_t frame = 0; frame != 2; ++frame) {
+    const auto& frameRecording = main.acquire();
+    const auto upload = staging.submit(staging.acquire());
+    EXPECT_TRUE(staging.isReady(upload));
+    const auto frameHandle = main.submit(frameRecording);
+    EXPECT_TRUE(main.isReady(frameHandle));
+  }
+  main.waitAll();
+  staging.waitAll();
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkBeginCommandBuffer cb32 flags=1",
+      "vkEndCommandBuffer cb32",
+      "vkQueueSubmit cb32 fence32 waits=0 signals=1 signal:sem32",
+      "vkWaitForFences all=1 timeout=0 fence32",
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkBeginCommandBuffer cb33 flags=1",
+      "vkEndCommandBuffer cb33",
+      "vkQueueSubmit cb33 fence33 waits=1 signals=1 wait:sem32 signal:sem33",
+      "vkWaitForFences all=1 timeout=0 fence33",
+      "vkEndCommandBuffer cb1",
+      "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkWaitForFences all=1 timeout=max fence0 fence1",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkResetCommandBuffer cb0 flags=0",
+      "vkResetFences fence0",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkResetFences fence1",
+      "vkWaitForFences all=1 timeout=max fence32 fence33",
+      "vkWaitForFences all=1 timeout=0 fence32",
+      "vkResetCommandBuffer cb32 flags=0",
+      "vkResetFences fence32",
+      "vkWaitForFences all=1 timeout=0 fence33",
+      "vkResetCommandBuffer cb33 flags=0",
+      "vkResetFences fence33",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+}
+
+TEST_F(VulkanImmediateCommandsTest, PendingWaitWithATimeoutCallTrace) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Timeout trace test");
+  const auto handle = commands.submit(commands.acquire());
+  gTrace.lines.clear();
+  gTrace.waitResult = VK_TIMEOUT;
+  EXPECT_EQ(commands.wait(handle, 5'000'000), VK_TIMEOUT);
+  EXPECT_STREQ(rowState(commands, handle.bufferIndex), "Submitted");
+  const std::vector<std::string> expected = {
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkWaitForFences all=1 timeout=5000000 fence0",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+  gTrace.waitResult = VK_SUCCESS;
+  commands.waitAll();
+}
+
+TEST_F(VulkanImmediateCommandsTest, DiscardAndReacquireBehindAnInFlightSubmissionCallTrace) {
+  auto& ctx = getVulkanContext();
+  const VulkanFunctionTable vf = tracedTable(ctx.vf_);
+  vulkan::VulkanImmediateCommands commands(vf,
+                                           ctx.getVkDevice(),
+                                           ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                           false,
+                                           false,
+                                           false,
+                                           "Discard trace test");
+  gTrace.lines.clear();
+  // A is in flight; B is discarded and its row is taken by C before anything else is submitted.
+  gTrace.pollResult = VK_TIMEOUT;
+  const auto handleA = commands.submit(commands.acquire());
+  const auto& recordingB = commands.acquire();
+  const auto handleB = commands.getNextSubmitHandle();
+  commands.discard(recordingB);
+  const auto& recordingC = commands.acquire();
+  ASSERT_EQ(recordingC.handle.bufferIndex, handleB.bufferIndex);
+  std::vector<std::string> answers;
+  answers.push_back(std::string("B while C is open: ") + (commands.isReady(handleB) ? "1" : "0"));
+  const auto handleC = commands.submit(recordingC);
+  answers.push_back(std::string("B after C is submitted: ") +
+                    (commands.isReady(handleB) ? "1" : "0"));
+  gTrace.pollResult.reset();
+  answers.push_back(std::string("B once A and C retire: ") +
+                    (commands.isReady(handleB) ? "1" : "0"));
+  EXPECT_EQ(commands.wait(handleA), VK_SUCCESS);
+  EXPECT_EQ(commands.wait(handleC), VK_SUCCESS);
+  commands.waitAll();
+  const std::vector<std::string> expectedAnswers = {
+      "B while C is open: 0",
+      "B after C is submitted: 0",
+      "B once A and C retire: 1",
+  };
+  EXPECT_EQ(answers, expectedAnswers) << joinLines(answers);
+  // The answers are unchanged. The calls differ in two places: an open recording (C) is not polled,
+  // and A's and C's waits make no call, because the poll that saw C's fence signal certified both.
+  const std::vector<std::string> expected = {
+      "vkBeginCommandBuffer cb0 flags=1",
+      "vkEndCommandBuffer cb0",
+      "vkQueueSubmit cb0 fence0 waits=0 signals=1 signal:sem0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkBeginCommandBuffer cb1 flags=1",
+      "vkEndCommandBuffer cb1",
+      "vkQueueSubmit cb1 fence1 waits=1 signals=1 wait:sem0 signal:sem1",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkWaitForFences all=1 timeout=max fence0 fence1",
+      "vkWaitForFences all=1 timeout=0 fence0",
+      "vkResetCommandBuffer cb0 flags=0",
+      "vkResetFences fence0",
+      "vkWaitForFences all=1 timeout=0 fence1",
+      "vkResetCommandBuffer cb1 flags=0",
+      "vkResetFences fence1",
+  };
+  EXPECT_EQ(gTrace.lines, expected) << joinLines(gTrace.lines);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AReleasedRecordingWaitsForEverythingSubmittedBeforeIt) {
+  const auto pool = makeFakePool("Released prefix test");
+  const auto handleA = pool->submit(pool->acquire());
+  // B is released after a later recording was acquired: it is not the current one.
+  const auto& recordingB = pool->acquire();
+  const auto handleB = pool->getNextSubmitHandle();
+  const auto& recordingC = pool->acquire();
+  const auto handleC = pool->getNextSubmitHandle();
+  pool->release(recordingB);
+  EXPECT_EQ(pool->getNextSubmitHandle(), handleC);
+
+  // B never ran, but A, submitted before B was released, is still running: B's handle is not
+  // ready although its row is free.
+  EXPECT_FALSE(pool->isReady(handleB));
+  EXPECT_EQ(pool->wait(handleB, 0), VK_TIMEOUT);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(handleA));
+  EXPECT_TRUE(pool->isReady(handleB));
+
+  // The current recording is released and its row taken again before anything is submitted: its
+  // handle also waits for the recording that took the row, as a discarded one does.
+  pool->release(recordingC);
+  const auto& recordingD = pool->acquire();
+  const auto& recordingE = pool->acquire();
+  ASSERT_EQ(recordingE.handle.bufferIndex, handleC.bufferIndex);
+  EXPECT_FALSE(pool->isReady(handleC));
+  static_cast<void>(pool->submit(recordingD));
+  static_cast<void>(pool->submit(recordingE));
+  completeSubmissions(2);
+  EXPECT_FALSE(pool->isReady(handleC));
+  completeSubmissions(3);
+  EXPECT_TRUE(pool->isReady(handleC));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AReleasedRecordingThatIsNotCurrentAnswersForTheRecordingThatTakesItsRow) {
+  const auto pool = makeFakePool("Released non-current row reuse test");
+  // B is released while a later recording, C, is the current one. Nothing was submitted before.
+  const auto& recordingB = pool->acquire();
+  const auto handleB = pool->getNextSubmitHandle();
+  const auto& recordingC = pool->acquire();
+  pool->release(recordingB);
+
+  // Before the next submission, D takes B's row: B's handle answers for D, as a discarded handle
+  // answers for the recording that takes its row, although B never ran and nothing ran before it.
+  const auto& recordingD = pool->acquire();
+  ASSERT_EQ(recordingD.handle.bufferIndex, handleB.bufferIndex);
+  EXPECT_FALSE(pool->isReady(handleB));
+  static_cast<void>(pool->submit(recordingC));
+  static_cast<void>(pool->submit(recordingD));
+  completeSubmissions(1);
+  EXPECT_FALSE(pool->isReady(handleB));
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(handleB));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       ARecordingThatSawASubmissionWhileOpenDoesNotAnswerForTheRecordingThatTakesItsRow) {
+  const auto pool = makeFakePool("Submission while open test");
+  // H is acquired; G, acquired after it, is submitted while H is open; then H is released and C
+  // takes its row before anything else is submitted. H and C never shared a submit id (a
+  // submission came between their acquisitions), so H answers for its own prefix, G, not for C.
+  const auto& recordingH = pool->acquire();
+  const auto handleH = pool->getNextSubmitHandle();
+  const auto handleG = pool->submit(pool->acquire());
+  pool->release(recordingH);
+  const auto& recordingC = pool->acquire();
+  ASSERT_EQ(recordingC.handle.bufferIndex, handleH.bufferIndex);
+
+  // While G runs, H is not ready, and a bounded wait times out on G instead of failing on the open
+  // recording C; no fence of C answers for H.
+  EXPECT_FALSE(pool->isReady(handleH));
+  gQueue.blockingWaitsComplete = false;
+  EXPECT_EQ(pool->wait(handleH, 10'000'000), VK_TIMEOUT);
+  gQueue.blockingWaitsComplete = true;
+  EXPECT_EQ(pool->getVkFenceFromSubmitHandle(handleH), VK_NULL_HANDLE);
+  // Once G finished, H is ready, while C is still open.
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(handleG));
+  EXPECT_TRUE(pool->isReady(handleH));
+  EXPECT_EQ(pool->wait(handleH, 10'000'000), VK_SUCCESS);
+  pool->discard(recordingC);
+}
+
+TEST_F(VulkanImmediateCommandsTest, ADiscardedRecordingWaitsForEverythingSubmittedBeforeIt) {
+  const auto pool = makeFakePool("Discarded prefix test");
+  const auto handleA = pool->submit(pool->acquire());
+  const auto& recordingB = pool->acquire();
+  const auto handleB = pool->getNextSubmitHandle();
+  pool->discard(recordingB);
+
+  // B never ran, but A, submitted before B was closed, is still running: B's handle is not ready
+  // although its row is free (the row used to make it ready at once).
+  EXPECT_FALSE(pool->isReady(handleB));
+  EXPECT_EQ(pool->wait(handleB, 0), VK_TIMEOUT);
+
+  // B's row is taken again before anything is submitted: B also waits for the recording that took
+  // the row, as its handle used to be that recording's.
+  const auto& recordingC = pool->acquire();
+  ASSERT_EQ(recordingC.handle.bufferIndex, handleB.bufferIndex);
+  EXPECT_FALSE(pool->isReady(handleB));
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(handleA));
+  EXPECT_FALSE(pool->isReady(handleB));
+  static_cast<void>(pool->submit(recordingC));
+  EXPECT_FALSE(pool->isReady(handleB));
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(handleB));
+
+  // A recording discarded and reacquired after a submission waits only for its own prefix.
+  const auto handleD = pool->submit(pool->acquire());
+  const auto& recordingX = pool->acquire();
+  const auto& recordingE = pool->acquire();
+  const auto handleE = pool->getNextSubmitHandle();
+  pool->discard(recordingE);
+  static_cast<void>(pool->submit(recordingX));
+  const auto& reuse = pool->acquire();
+  EXPECT_EQ(reuse.handle.bufferIndex, handleE.bufferIndex);
+  EXPECT_FALSE(pool->isReady(handleE));
+  completeSubmissions(3);
+  EXPECT_TRUE(pool->isReady(handleD));
+  EXPECT_TRUE(pool->isReady(handleE));
+  pool->discard(reuse);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       HandlelessDeferredTaskOfADiscardedRecordingWaitsForEarlierWork) {
+  auto& ctx = getVulkanContext();
+  // The context's command buffers come from a pool on the fake queue for the duration of the test,
+  // so that A stays in flight until the test completes it.
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Deferred task test");
+  const auto queue = iglDev_->createCommandQueue({}, nullptr);
+  ASSERT_NE(queue, nullptr);
+  bool ran = false;
+  {
+    const auto handleA = ctx.immediate_->submit(ctx.immediate_->acquire());
+    const auto& recordingB = ctx.immediate_->acquire();
+    ctx.deferredTask(std::packaged_task<void()>([&ran] { ran = true; }));
+    ctx.immediate_->discard(recordingB);
+
+    // A frame submitted through the command queue runs the deferred tasks that are ready.
+    const auto frame = queue->createCommandBuffer({}, nullptr);
+    ASSERT_NE(frame, nullptr);
+    queue->submit(*frame);
+    EXPECT_FALSE(ran);
+
+    completeSubmissions(1);
+    EXPECT_TRUE(ctx.immediate_->isReady(handleA));
+    const auto nextFrame = queue->createCommandBuffer({}, nullptr);
+    ASSERT_NE(nextFrame, nullptr);
+    queue->submit(*nextFrame);
+    // The first frame took B's row before anything else was submitted, so B also waits for it.
+    EXPECT_FALSE(ran);
+
+    completeSubmissions(gQueue.submitted.size());
+    const auto lastFrame = queue->createCommandBuffer({}, nullptr);
+    ASSERT_NE(lastFrame, nullptr);
+    queue->submit(*lastFrame);
+    EXPECT_TRUE(ran);
+  }
+}
+
+TEST_F(VulkanImmediateCommandsTest, ReadinessFollowsSubmissionsWhileARecordingStaysOpen) {
+  const auto pool = makeFakePool("Held recording test");
+
+  // An independent model: the submission count each submitted handle waits for, by row, checked
+  // against what the fake queue has completed.
+  std::map<uint32_t, std::pair<Commands::SubmitHandle, size_t>> submittedByRow;
+  size_t numSubmitted = 0;
+  const auto submit = [&](const Commands::CommandBufferWrapper& wrapper) {
+    const auto handle = pool->submit(wrapper);
+    submittedByRow[handle.bufferIndex] = {handle, ++numSubmitted};
+  };
+  const auto expectModel = [&](uint32_t cycle) {
+    for (const auto& [row, entry] : submittedByRow) {
+      if (wrapperOf(*pool, row).handle != entry.first) {
+        continue; // the row was acquired again
+      }
+      EXPECT_EQ(pool->isReady(entry.first), gQueue.completed >= entry.second)
+          << "cycle " << cycle << " row " << row;
+    }
+  };
+
+  const auto& held = pool->acquire();
+  const auto heldHandle = pool->getNextSubmitHandle();
+  const Commands::CommandBufferWrapper* outer = nullptr;
+  const Commands::CommandBufferWrapper* inner = nullptr;
+  for (uint32_t cycle = 0; cycle != 3 * Commands::kMaxCommandBuffers + 5; ++cycle) {
+    if (cycle % 11 == 3) {
+      // Two more recordings stay open for a while; the later one is submitted first.
+      outer = &pool->acquire();
+      inner = &pool->acquire();
+    } else if (cycle % 11 == 6 && inner) {
+      submit(*inner);
+      inner = nullptr;
+    } else if (cycle % 11 == 8 && outer) {
+      submit(*outer);
+      outer = nullptr;
+    } else if (cycle % 7 == 5) {
+      pool->discard(pool->acquire());
+    } else {
+      submit(pool->acquire());
+    }
+    if (cycle % 5 == 4) {
+      // Everything but the newest submission completes.
+      completeSubmissions(numSubmitted - 1);
+    }
+    expectModel(cycle);
+    EXPECT_FALSE(pool->isReady(heldHandle)) << "cycle " << cycle;
+  }
+  EXPECT_GT(numSubmitted, 2 * Commands::kMaxCommandBuffers);
+
+  if (inner) {
+    submit(*inner);
+  }
+  if (outer) {
+    submit(*outer);
+  }
+  submit(held);
+  expectModel(1000);
+  EXPECT_FALSE(pool->isReady(heldHandle));
+  completeSubmissions(numSubmitted);
+  expectModel(1001);
+  EXPECT_TRUE(pool->isReady(heldHandle));
+}
+
+TEST_F(VulkanImmediateCommandsTest, OverlappingRecordingsRetireInSubmissionOrder) {
+  const auto pool = makeFakePool("Overlap test");
+  const auto& first = pool->acquire();
+  const auto& second = pool->acquire();
+  // The recording acquired second submits first: its handle carries the higher submit id, but it
+  // is the first submission.
+  const auto secondHandle = pool->submit(second);
+  const auto firstHandle = pool->submit(first);
+  EXPECT_GT(secondHandle.submitId, firstHandle.submitId);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(secondHandle));
+  EXPECT_FALSE(pool->isReady(firstHandle));
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(firstHandle));
+}
+
+TEST_F(VulkanImmediateCommandsTest, SubmitIdIsTheLowBitsOfTheAcquisitionOrdinalAndSkipsZero) {
+  const auto pool = makeFakePool("Ordinal wrap test");
+  setAcquisitionCounter(*pool, 0xfffffffeull);
+  const auto& beforeWrap = pool->acquire();
+  EXPECT_EQ(beforeWrap.handle.submitId, 0xffffffffu);
+  const auto& afterWrap = pool->acquire();
+  EXPECT_EQ(afterWrap.handle.submitId, 1u);
+  EXPECT_EQ(acquisitionOf(*pool, afterWrap.handle.bufferIndex), 0x100000001ull);
+  // Readiness follows the submissions across the wrap, whichever recording submits first.
+  const auto afterHandle = pool->submit(afterWrap);
+  const auto beforeHandle = pool->submit(beforeWrap);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(afterHandle));
+  EXPECT_FALSE(pool->isReady(beforeHandle));
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(beforeHandle));
+
+  // A recording discarded just before the wrap answers as the recording that took its row after
+  // the wrap.
+  setAcquisitionCounter(*pool, 0x1fffffffeull);
+  const auto& discarded = pool->acquire();
+  const auto discardedHandle = pool->getNextSubmitHandle();
+  EXPECT_EQ(discardedHandle.submitId, 0xffffffffu);
+  pool->discard(discarded);
+  const auto& taker = pool->acquire();
+  ASSERT_EQ(taker.handle.bufferIndex, discardedHandle.bufferIndex);
+  EXPECT_EQ(taker.handle.submitId, 1u);
+  EXPECT_FALSE(pool->isReady(discardedHandle));
+  const auto takerHandle = pool->submit(taker);
+  EXPECT_FALSE(pool->isReady(discardedHandle));
+  completeSubmissions(3);
+  EXPECT_TRUE(pool->isReady(takerHandle));
+  EXPECT_TRUE(pool->isReady(discardedHandle));
+}
+
+TEST_F(VulkanImmediateCommandsTest, ZeroTimeQueriesOnlyPoll) {
+  const auto pool = makeFakePool("Zero-time query test");
+  const auto handle = pool->submit(pool->acquire());
+  EXPECT_FALSE(pool->isReady(handle));
+  EXPECT_EQ(pool->wait(handle, 0), VK_TIMEOUT);
+  EXPECT_EQ(gQueue.polls, 2u);
+  EXPECT_EQ(gQueue.blockingWaits, 0u);
+  EXPECT_STREQ(rowState(*pool, handle.bufferIndex), "Submitted");
+  // An open recording is not ready, and nothing is polled for it.
+  const auto& open = pool->acquire();
+  EXPECT_FALSE(pool->isReady(pool->getNextSubmitHandle()));
+  EXPECT_EQ(gQueue.polls, 2u);
+  pool->discard(open);
+  completeSubmissions(1);
+  EXPECT_TRUE(pool->isReady(handle));
+  EXPECT_EQ(retiredThrough(*pool), 1u);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AZeroTimeQueryThatSeesDeviceLossCertifies) {
+  const auto pool = makeFakePool("Zero-time device loss test");
+  const auto handle = pool->submit(pool->acquire());
+  gQueue.waitOverride = VK_ERROR_DEVICE_LOST;
+  EXPECT_TRUE(pool->isReady(handle));
+  EXPECT_TRUE(pool->isDeviceLost());
+  EXPECT_EQ(gQueue.polls, 1u);
+  EXPECT_EQ(pool->wait(handle, 0), VK_ERROR_DEVICE_LOST);
+  EXPECT_EQ(gQueue.polls, 1u);
+  gQueue.waitOverride.reset();
+  completeSubmissions(1);
+}
+
+TEST_F(VulkanImmediateCommandsTest, AWaitThatTimesOutKeepsTheSubmissionAndResetsNothing) {
+  const auto pool = makeFakePool("Timeout property test");
+  const auto handle = pool->submit(pool->acquire());
+  gQueue.blockingWaitsComplete = false;
+  EXPECT_EQ(pool->wait(handle, 1'000'000), VK_TIMEOUT);
+  EXPECT_STREQ(rowState(*pool, handle.bufferIndex), "Submitted");
+  EXPECT_EQ(retiredThrough(*pool), 0u);
+  EXPECT_NE(pool->getVkFenceFromSubmitHandle(handle), VK_NULL_HANDLE);
+  gQueue.blockingWaitsComplete = true;
+  pool->waitAll();
+  EXPECT_STREQ(rowState(*pool, handle.bufferIndex), "Free");
+}
+
+TEST_F(VulkanImmediateCommandsTest, ACachedDeviceLossAloneCertifiesNothing) {
+  const auto pool = makeFakePool("Device loss latch test");
+  const auto pending = pool->submit(pool->acquire());
+  gQueue.submitResults = {VK_ERROR_DEVICE_LOST};
+  const auto lostSubmit = pool->submit(pool->acquire());
+  ASSERT_TRUE(pool->isDeviceLost());
+  // No fence answered device loss: the cached loss proves nothing.
+  EXPECT_FALSE(pool->isReady(pending));
+  EXPECT_FALSE(pool->isReady(lostSubmit));
+  gQueue.blockingWaitsComplete = false;
+  EXPECT_EQ(pool->wait(pending, 1'000'000), VK_TIMEOUT);
+  EXPECT_EQ(retiredThrough(*pool), 0u);
+  gQueue.blockingWaitsComplete = true;
+  completeSubmissions(2);
+  EXPECT_TRUE(pool->isReady(pending));
+  EXPECT_TRUE(pool->isReady(lostSubmit));
+}
+
+TEST_F(
+    VulkanImmediateCommandsTest,
+    AnExhaustedDescriptorPoolIsNotReusedBeforeTheWorkSubmittedBeforeADiscardedRecordingFinishes) {
+  auto& ctx = getVulkanContext();
+  const auto dispatch = makeStorageBufferDispatch();
+  ASSERT_NE(dispatch.pipeline, nullptr);
+  const DescriptorPoolProbe probe(ctx.vf_);
+  // The context's command buffers are submitted to the fake queue, so that A stays in flight until
+  // the test completes it.
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Descriptor pool test");
+  const auto queue = iglDev_->createCommandQueue({}, nullptr);
+  ASSERT_NE(queue, nullptr);
+  // A descriptor pool of the arena holds this many sets.
+  constexpr uint32_t kSetsPerPool = 64;
+
+  // O stays open throughout.
+  const auto recordingO = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingO, nullptr);
+  // A uses every set of the first pool and stays in flight.
+  const auto recordingA = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingA, nullptr);
+  recordDispatches(*recordingA, dispatch, kSetsPerPool);
+  const VkDescriptorPool firstPool = gProbe.lastStorageBufferPool;
+  ASSERT_NE(firstPool, VK_NULL_HANDLE);
+  queue->submit(*recordingA);
+  // B's first set moves the arena to a second pool and parks the first one under B's handle. Then
+  // B is discarded.
+  const auto recordingB = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingB, nullptr);
+  recordDispatches(*recordingB, dispatch, 1);
+  ASSERT_NE(gProbe.lastStorageBufferPool, firstPool);
+  discardRecording(*recordingB);
+
+  // O uses up the second pool. A may still read the first pool's sets: a third pool is used.
+  recordDispatches(*recordingO, dispatch, kSetsPerPool);
+  EXPECT_NE(gProbe.lastStorageBufferPool, firstPool);
+  // Once A finished, the next switch reuses the first pool.
+  completeSubmissions(gQueue.submitted.size());
+  recordDispatches(*recordingO, dispatch, kSetsPerPool);
+  EXPECT_EQ(gProbe.lastStorageBufferPool, firstPool);
+  queue->submit(*recordingO);
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       AnExhaustedDescriptorPoolParkedUnderADiscardedHandleWaitsForTheRecordingThatTookItsRow) {
+  auto& ctx = getVulkanContext();
+  const auto dispatch = makeStorageBufferDispatch();
+  ASSERT_NE(dispatch.pipeline, nullptr);
+  const DescriptorPoolProbe probe(ctx.vf_);
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Descriptor pool alias test");
+  const auto queue = iglDev_->createCommandQueue({}, nullptr);
+  ASSERT_NE(queue, nullptr);
+  constexpr uint32_t kSetsPerPool = 64;
+
+  const auto recordingA = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingA, nullptr);
+  recordDispatches(*recordingA, dispatch, kSetsPerPool);
+  const VkDescriptorPool firstPool = gProbe.lastStorageBufferPool;
+  ASSERT_NE(firstPool, VK_NULL_HANDLE);
+  queue->submit(*recordingA);
+  const auto recordingB = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingB, nullptr);
+  recordDispatches(*recordingB, dispatch, 1);
+  ASSERT_NE(gProbe.lastStorageBufferPool, firstPool);
+  const auto handleB = static_cast<vulkan::CommandBuffer&>(*recordingB).getNextSubmitHandle();
+  discardRecording(*recordingB);
+
+  // C takes B's row before anything else is submitted, so B's handle answers as C, as it did when
+  // the two shared one handle.
+  const auto recordingC = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingC, nullptr);
+  ASSERT_EQ(static_cast<vulkan::CommandBuffer&>(*recordingC).getNextSubmitHandle().bufferIndex,
+            handleB.bufferIndex);
+  recordDispatches(*recordingC, dispatch, kSetsPerPool);
+  EXPECT_NE(gProbe.lastStorageBufferPool, firstPool);
+  // A finished, but C is still open.
+  completeSubmissions(gQueue.submitted.size());
+  recordDispatches(*recordingC, dispatch, kSetsPerPool);
+  EXPECT_NE(gProbe.lastStorageBufferPool, firstPool);
+  // Once C finished, the first pool is reused.
+  queue->submit(*recordingC);
+  completeSubmissions(gQueue.submitted.size());
+  const auto recordingD = queue->createCommandBuffer({}, nullptr);
+  ASSERT_NE(recordingD, nullptr);
+  recordDispatches(*recordingD, dispatch, kSetsPerPool);
+  EXPECT_EQ(gProbe.lastStorageBufferPool, firstPool);
+  queue->submit(*recordingD);
 }
 
 } // namespace igl::tests

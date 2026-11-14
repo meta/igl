@@ -16,6 +16,15 @@ namespace igl::vulkan {
 
 static_assert(std::is_trivially_copyable_v<VulkanImmediateCommands::SubmitHandle>);
 
+namespace {
+
+/// The submit id of an acquisition ordinal.
+[[nodiscard]] uint32_t lowBits(uint64_t ordinal) noexcept {
+  return static_cast<uint32_t>(ordinal & 0xffffffffu);
+}
+
+} // namespace
+
 VulkanImmediateCommands::VulkanImmediateCommands(const VulkanFunctionTable& vf,
                                                  VkDevice device,
                                                  uint32_t queueFamilyIndex,
@@ -120,11 +129,15 @@ void VulkanImmediateCommands::purge() {
     const VkResult result = vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0);
 
     if (result == VK_SUCCESS) {
+      certify(buf.retirement_.prefix);
       VK_ASSERT(vf_.vkResetCommandBuffer(buf.cmdBuf, VkCommandBufferResetFlags{0}));
       VK_ASSERT(vf_.vkResetFences(device_, 1, &buf.fence.vkFence_));
       setRowState(buf, RowState::Free);
       numAvailableCommandBuffers_++;
-    } else if (result != VK_TIMEOUT && !checkDeviceLost(result)) {
+    } else if (checkDeviceLost(result)) {
+      // A lost device runs nothing any more: the submission is finished, and the row is kept.
+      certify(buf.retirement_.prefix, true);
+    } else if (result != VK_TIMEOUT) {
       VK_ASSERT(result);
     }
   }
@@ -161,7 +174,26 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
   IGL_DEBUG_ASSERT(current, "No available command buffers");
   IGL_DEBUG_ASSERT(current->cmdBufAllocated != VK_NULL_HANDLE);
 
-  current->handle.submitId = submitCounter_;
+  ++acquisitionCounter_;
+  if (lowBits(acquisitionCounter_) == 0) {
+    // skip the ordinals whose submit id would be 0 (a null SubmitHandle)
+    ++acquisitionCounter_;
+  }
+  RowRetirement& row = current->retirement_;
+  // A recording closed without a submission, with no `submit()` call from its acquisition until the
+  // row is taken again, had the same handle as the recording that takes the row: keep answering for
+  // it as that one. One that saw a `submit()` call while it was open had another handle, and
+  // answers for its own prefix only.
+  const bool aliasesPrevious = row.acquisition != 0 && row.closedUnsubmitted &&
+                               row.submitAttemptsAtAcquisition == submitAttempts_;
+  row = RowRetirement{
+      .acquisition = acquisitionCounter_,
+      .submitAttemptsAtAcquisition = submitAttempts_,
+      .prefix = 0,
+      .previousPrefix = row.acquisition != 0 ? row.prefix : 0,
+      .aliasFloor = aliasesPrevious ? row.aliasFloor : acquisitionCounter_,
+  };
+  current->handle.submitId = lowBits(acquisitionCounter_);
   numAvailableCommandBuffers_--;
 
   setRowState(*current, RowState::Encoding);
@@ -198,36 +230,55 @@ const VulkanImmediateCommands::CommandBufferWrapper& VulkanImmediateCommands::ac
 }
 
 VkResult VulkanImmediateCommands::wait(const SubmitHandle handle, uint64_t timeoutNanoseconds) {
-  if (isReady(handle)) {
+  const Ticket ticket = ticketOf(handle);
+  if (ticket.kind == Ticket::Kind::Settled) {
     return VK_SUCCESS;
   }
+  if (ticket.kind == Ticket::Kind::Prefix) {
+    // The zero-time query first, as `isReady()` does.
+    pollFor(ticket);
+    if (retiredThrough_ >= ticket.prefix) {
+      return certifiedResult(ticket.prefix);
+    }
+  }
 
-  if (!IGL_DEBUG_VERIFY(buffers_[handle.bufferIndex].state != RowState::Encoding)) {
+  if (!IGL_DEBUG_VERIFY(ticket.kind != Ticket::Kind::Open)) {
     // we are waiting for a buffer which has not been submitted - this is probably a logic error
     // somewhere in the calling code
     return VK_ERROR_UNKNOWN;
   }
 
-  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
-
-  const VkResult fenceResult = vf_.vkWaitForFences(
-      device_, 1, &buffers_[handle.bufferIndex].fence.vkFence_, VK_TRUE, timeoutNanoseconds);
-
-  if (fenceResult == VK_TIMEOUT) {
+  if (timeoutNanoseconds == 0) {
+    // A zero-time wait only polls, which `isReady()` did.
     return VK_TIMEOUT;
   }
 
-  if (fenceResult != VK_SUCCESS) {
-    checkDeviceLost(fenceResult);
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
+
+  // The submission that the ticket waits for is still in its row (a row is freed only once its
+  // fence signaled), so some row fence covers it.
+  uint64_t ordinal = 0;
+  const VkFence* fence = lowestSourceFor(ticket.prefix, ticket.own, ordinal);
+  if (fence == nullptr) {
+    IGL_DEBUG_ABORT("No fence covers a submission that has not finished");
+    return VK_ERROR_UNKNOWN;
+  }
+  const VkResult result = waitFence(fence, ordinal, timeoutNanoseconds);
+
+  if (result == VK_TIMEOUT) {
+    return VK_TIMEOUT;
+  }
+
+  if (result != VK_SUCCESS) {
     IGL_LOG_ERROR_ONCE(
         "VulkanImmediateCommands::wait - Waiting for command buffer fence failed with error %i",
-        static_cast<int>(fenceResult));
+        static_cast<int>(result));
     // Intentional fallthrough: we must purge so that we can release command buffers.
   }
 
   purge();
 
-  return fenceResult;
+  return result;
 }
 
 void VulkanImmediateCommands::waitAll() {
@@ -263,33 +314,115 @@ bool VulkanImmediateCommands::isRecycled(SubmitHandle handle) const {
   }
 
   // already recycled and reused by another command buffer
-  return buffers_[handle.bufferIndex].handle.submitId != handle.submitId;
+  return buffers_[handle.bufferIndex].handle.submitId != handle.submitId &&
+         !answersAsCurrentRecording(handle);
 }
 
-bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
+bool VulkanImmediateCommands::answersAsCurrentRecording(SubmitHandle handle) const noexcept {
+  const uint32_t currentId = buffers_[handle.bufferIndex].handle.submitId;
+  const uint32_t floorId = lowBits(buffers_[handle.bufferIndex].retirement_.aliasFloor);
+  // Submit ids skip 0 and order acquisitions modulo 2^32, so `handle` lies in
+  // [aliasFloor, current) exactly when its distance from the floor is the smaller.
+  return handle.submitId != 0 && floorId != currentId &&
+         static_cast<uint32_t>(handle.submitId - floorId) <
+             static_cast<uint32_t>(currentId - floorId);
+}
+
+VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOfRow(
+    const CommandBufferWrapper& wrapper) const noexcept {
+  if (wrapper.state == RowState::Encoding) {
+    return {.kind = Ticket::Kind::Open};
+  }
+  return {.kind = Ticket::Kind::Prefix, .prefix = wrapper.retirement_.prefix, .own = &wrapper};
+}
+
+VulkanImmediateCommands::Ticket VulkanImmediateCommands::ticketOf(
+    SubmitHandle handle) const noexcept {
   IGL_DEBUG_ASSERT(handle.bufferIndex < kMaxCommandBuffers);
 
   if (handle.empty()) {
     // a null handle
-    return true;
+    return {.kind = Ticket::Kind::Settled};
   }
 
   const CommandBufferWrapper& buf = buffers_[handle.bufferIndex];
   IGL_DEBUG_ASSERT(rowAgreesWithWrapper(buf));
+  if (buf.handle.submitId == handle.submitId || answersAsCurrentRecording(handle)) {
+    return ticketOfRow(buf);
+  }
+  // An older recording of this row: it closed before the row was acquired again, so its prefix is
+  // at most the previous recording's.
+  return {.kind = Ticket::Kind::Prefix, .prefix = buf.retirement_.previousPrefix};
+}
 
-  if (buf.state == RowState::Free) {
-    // already recycled and not yet reused
+const VkFence* IGL_NULLABLE
+VulkanImmediateCommands::lowestSourceFor(uint64_t target,
+                                         const CommandBufferWrapper* IGL_NULLABLE own,
+                                         uint64_t& ordinal) const noexcept {
+  if (own && own->state == RowState::Submitted && own->retirement_.prefix == target) {
+    // The common case: the handle's own submission, whose fence no other source precedes.
+    ordinal = target;
+    return &own->fence.vkFence_;
+  }
+  const VkFence* fence = nullptr;
+  ordinal = UINT64_MAX;
+  for (const auto& buf : buffers_) {
+    if (buf.state == RowState::Submitted && buf.retirement_.prefix >= target &&
+        buf.retirement_.prefix < ordinal) {
+      ordinal = buf.retirement_.prefix;
+      fence = &buf.fence.vkFence_;
+    }
+  }
+  return fence;
+}
+
+void VulkanImmediateCommands::certify(uint64_t ordinal, bool lost) const noexcept {
+  retiredThrough_ = std::max(retiredThrough_, ordinal);
+  if (!lost) {
+    succeededThrough_ = std::max(succeededThrough_, ordinal);
+  }
+}
+
+VkResult VulkanImmediateCommands::certifiedResult(uint64_t target) const noexcept {
+  return target <= succeededThrough_ ? VK_SUCCESS : VK_ERROR_DEVICE_LOST;
+}
+
+void VulkanImmediateCommands::pollFor(const Ticket& ticket) const {
+  if (retiredThrough_ >= ticket.prefix) {
+    return;
+  }
+  uint64_t ordinal = 0;
+  const VkFence* fence = lowestSourceFor(ticket.prefix, ticket.own, ordinal);
+  if (!fence) {
+    return;
+  }
+  const VkResult result = vf_.vkWaitForFences(device_, 1, fence, VK_TRUE, 0);
+  if (result == VK_SUCCESS || checkDeviceLost(result)) {
+    certify(ordinal, result != VK_SUCCESS);
+  }
+}
+
+VkResult VulkanImmediateCommands::waitFence(const VkFence* fence,
+                                            uint64_t ordinal,
+                                            uint64_t timeoutNanoseconds) const {
+  const VkResult result = vf_.vkWaitForFences(device_, 1, fence, VK_TRUE, timeoutNanoseconds);
+  if (result == VK_SUCCESS || checkDeviceLost(result)) {
+    certify(ordinal, result != VK_SUCCESS);
+  }
+  return result;
+}
+
+bool VulkanImmediateCommands::isReady(const SubmitHandle handle) const {
+  const Ticket ticket = ticketOf(handle);
+  if (ticket.kind == Ticket::Kind::Settled) {
     return true;
   }
-
-  if (buf.handle.submitId != handle.submitId) {
-    // already recycled and reused by another command buffer
-    return true;
+  if (ticket.kind == Ticket::Kind::Open) {
+    // a recording that is still open has not finished; its fence is not polled
+    return false;
   }
-
-  const VkResult result = vf_.vkWaitForFences(device_, 1, &buf.fence.vkFence_, VK_TRUE, 0);
-  checkDeviceLost(result);
-  return result == VK_SUCCESS;
+  pollFor(ticket);
+  return retiredThrough_ >= ticket.prefix;
 }
 
 void VulkanImmediateCommands::setRowState(CommandBufferWrapper& wrapper, RowState state) noexcept {
@@ -342,7 +475,10 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
     VkCommandBuffer nextCmdBuf) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_SUBMIT);
 
+  ++submitAttempts_;
   IGL_DEBUG_ASSERT(wrapper.isEncoding);
+  // A stale wrapper (its row was freed) is a misuse that takes no submission ordinal.
+  const bool staleWrapper = wrapper.state == RowState::Free;
   VK_ASSERT(vf_.vkEndCommandBuffer(wrapper.cmdBuf));
 
   const std::array<VkCommandBuffer, 2> cmdBufs = {wrapper.cmdBuf, nextCmdBuf};
@@ -476,14 +612,12 @@ VulkanImmediateCommands::SubmitHandle VulkanImmediateCommands::submit(
   numWaitSemaphores_ = 0;
   numSignalSemaphores_ = 0;
 
+  if (!staleWrapper) {
+    const_cast<CommandBufferWrapper&>(wrapper).retirement_.prefix = ++submissionCounter_;
+  }
+
   // reset
   setRowState(const_cast<CommandBufferWrapper&>(wrapper), RowState::Submitted);
-  submitCounter_++;
-
-  if (!submitCounter_) {
-    // skip the 0 value - when uint32_t wraps around (null SubmitHandle)
-    submitCounter_++;
-  }
 
   nextSubmitHandle_ = {};
 
@@ -497,10 +631,20 @@ void VulkanImmediateCommands::discard(const CommandBufferWrapper& wrapper) {
                         "Only the current command buffer can be discarded")) {
     return;
   }
-  auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
-  VK_ASSERT(vf_.vkResetCommandBuffer(mutableWrapper.cmdBuf, VkCommandBufferResetFlags{0}));
-  setRowState(mutableWrapper, RowState::Free);
+  closeUnsubmitted(const_cast<CommandBufferWrapper&>(wrapper));
+}
+
+void VulkanImmediateCommands::freeUnsubmittedRow(CommandBufferWrapper& wrapper) {
+  VK_ASSERT(vf_.vkResetCommandBuffer(wrapper.cmdBuf, VkCommandBufferResetFlags{0}));
+  RowRetirement& row = wrapper.retirement_;
+  row.prefix = submissionCounter_;
+  row.closedUnsubmitted = true;
+  setRowState(wrapper, RowState::Free);
   numAvailableCommandBuffers_++;
+}
+
+void VulkanImmediateCommands::closeUnsubmitted(CommandBufferWrapper& wrapper) {
+  freeUnsubmittedRow(wrapper);
   numWaitSemaphores_ = 0;
   numSignalSemaphores_ = 0;
   nextSubmitHandle_ = {};
@@ -511,10 +655,8 @@ void VulkanImmediateCommands::release(const CommandBufferWrapper& wrapper) {
   if (!IGL_DEBUG_VERIFY(wrapper.isEncoding)) {
     return;
   }
-  auto& mutableWrapper = const_cast<CommandBufferWrapper&>(wrapper);
-  VK_ASSERT(vf_.vkResetCommandBuffer(mutableWrapper.cmdBuf, VkCommandBufferResetFlags{0}));
-  setRowState(mutableWrapper, RowState::Free);
-  numAvailableCommandBuffers_++;
+  // As a discarded recording, it waits for everything submitted before it.
+  freeUnsubmittedRow(const_cast<CommandBufferWrapper&>(wrapper));
   if (nextSubmitHandle_ == wrapper.handle) {
     nextSubmitHandle_ = {};
   }
