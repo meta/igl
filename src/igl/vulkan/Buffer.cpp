@@ -177,6 +177,17 @@ Result Buffer::upload(const void* data, const BufferRange& range) {
   // local data to the device below
   const VulkanContext& ctx = device_.getVulkanContext();
   if (isRingBuffer_) {
+    if (ctx.hasReusableCommandBuffers_ && ctx.isSyncCopyReserved()) {
+      return Result(Result::Code::InvalidOperation,
+                    "A command buffer that executes a slot of a reusable command buffer in an "
+                    "earlier frame reads the copy of the Ring buffer for the current frame, and "
+                    "has not been submitted");
+    }
+    if (ctx.hasReusableCommandBuffers_ && !ctx.syncAcquireCurrent()) {
+      return Result(Result::Code::RuntimeError,
+                    "A submission that read the copy of the Ring buffer for the current frame did "
+                    "not complete within VulkanContextConfig::fenceTimeoutNanoseconds");
+    }
     // get the current ring buffer index
     const uint32_t currentBufferIndex = device_.getVulkanContext().currentSyncIndex();
     uint8_t* prevDataPtr = nullptr; // pointer to the previous local copy of the data

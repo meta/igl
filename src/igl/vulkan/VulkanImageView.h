@@ -96,6 +96,13 @@ class VulkanImageView final {
   const VulkanContext* ctx = nullptr;
   VkImageView vkImageView = VK_NULL_HANDLE;
   VkImageAspectFlags aspectMask = 0;
+  // what the image view views, from its create info
+  VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+  VkFormat format = VK_FORMAT_UNDEFINED;
+  VkImageSubresourceRange subresourceRange = {};
+  // the sampler YCbCr conversion that the image view was created with, from the caller's create
+  // info or from the context
+  VkSamplerYcbcrConversion ycbcrConversion = VK_NULL_HANDLE;
 
  private:
   VkResult initResult_ = VK_SUCCESS;

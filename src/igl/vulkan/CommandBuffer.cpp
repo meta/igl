@@ -8,6 +8,8 @@
 #include <igl/vulkan/CommandBuffer.h>
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
 #include <igl/Framebuffer.h>
 #include <igl/RenderPass.h>
 #include <igl/vulkan/Buffer.h>
@@ -18,6 +20,7 @@
 #include <igl/vulkan/Timer.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanImage.h>
+#include <igl/vulkan/VulkanImageView.h>
 #include <igl/vulkan/VulkanTexture.h>
 
 namespace igl::vulkan {
@@ -59,7 +62,11 @@ CommandBuffer::Reusable::Reusable(VulkanContext& ctx,
 }
 
 CommandBuffer::Reusable::~Reusable() {
-  ctx.destroyRecordings(commandPool, arenas, lastCarrier);
+  std::vector<std::shared_ptr<ITexture>> textures;
+  for (ReusableSlot& slot : slots) {
+    std::move(slot.textures.begin(), slot.textures.end(), std::back_inserter(textures));
+  }
+  ctx.destroyRecordings(commandPool, arenas, lastCarrier, std::move(textures));
 }
 
 CommandBuffer::CommandBuffer(VulkanContext& ctx,
@@ -70,6 +77,7 @@ CommandBuffer::CommandBuffer(VulkanContext& ctx,
   handle_(uint64_t{1} << 32),
   reusable_(std::make_shared<Reusable>(ctx, commandPool, desc.executeInCommandBuffer)) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+  ctx.hasReusableCommandBuffers_ = true;
 }
 
 CommandBuffer::~CommandBuffer() {
@@ -117,7 +125,7 @@ VkCommandBuffer IGL_NULLABLE CommandBuffer::getReusableVkCommandBuffer() const {
   } else {
     reusable_->slots[slot].commands.push_back(cmdBuf_);
     reusable_->journal.cmdBuf = cmdBuf_;
-    ctx_.imageLayoutJournals_.push_back(&reusable_->journal);
+    ctx_.recordingJournals_.push_back(&reusable_->journal);
   }
   return cmdBuf_;
 }
@@ -190,17 +198,17 @@ void CommandBuffer::failRecording(Result failure) const {
   }
   recordingFailure = std::move(failure);
   // the layout transitions of the recording never run
-  for (const ImageLayoutJournal::Layout& layout : reusable_->journal.layouts) {
+  for (const RecordingJournal::Layout& layout : reusable_->journal.layouts) {
     if (!layout.isChangedElsewhere) {
       layout.image->imageLayout_ = layout.layout;
     }
   }
-  stopImageLayoutJournal();
+  stopJournal();
   cmdBuf_ = VK_NULL_HANDLE;
 }
 
-void CommandBuffer::stopImageLayoutJournal() const {
-  std::vector<ImageLayoutJournal*>& journals = ctx_.imageLayoutJournals_;
+void CommandBuffer::stopJournal() const {
+  std::vector<RecordingJournal*>& journals = ctx_.recordingJournals_;
   journals.erase(std::remove(journals.begin(), journals.end(), &reusable_->journal),
                  journals.end());
   reusable_->journal = {};
@@ -219,7 +227,8 @@ void CommandBuffer::discardSlot(uint32_t slotIndex) const {
                                   cmdBufs.data());
   }
   // no submission ran the freed command buffers, the only ones that used the descriptor sets
-  ctx_.destroyRecordings(VK_NULL_HANDLE, {reusable_->arenas[slotIndex]}, {});
+  ctx_.destroyRecordings(
+      VK_NULL_HANDLE, {reusable_->arenas[slotIndex]}, {}, std::move(slot.textures));
   slot = ReusableSlot();
 }
 
@@ -243,13 +252,23 @@ CommandBuffer::ReusableSlot* IGL_NULLABLE CommandBuffer::prepareRun(Result& outR
     ReusableSlot& slot = reusable_->slots[slotIndex];
     const VkCommandBuffer cmdBuf = getVkCommandBuffer();
     if (cmdBuf != VK_NULL_HANDLE) {
-      const VkResult result = ctx_.vf_.vkEndCommandBuffer(cmdBuf);
-      VK_ASSERT(result);
-      if (result != VK_SUCCESS) {
-        failRecording(Result(Result::Code::RuntimeError, kRecordingFailedMessage));
+      // the image layouts that the recording changed hold only once it runs, so a texture that
+      // replaces a recorded one but cannot run in it fails the recording, which puts them back
+      Result replacements =
+          checkReplacements(reusable_->journal.imageDescriptors, reusable_->journal.imageUses);
+      if (!replacements.isOk()) {
+        failRecording(std::move(replacements));
+      } else {
+        const VkResult result = ctx_.vf_.vkEndCommandBuffer(cmdBuf);
+        VK_ASSERT(result);
+        if (result != VK_SUCCESS) {
+          failRecording(Result(Result::Code::RuntimeError, kRecordingFailedMessage));
+        }
       }
     }
-    stopImageLayoutJournal();
+    slot.imageDescriptors = std::move(reusable_->journal.imageDescriptors);
+    slot.imageUses = std::move(reusable_->journal.imageUses);
+    stopJournal();
     slot.numDraws = getCurrentDrawCount() - reusable_->recordingDrawCount;
     reusable_->recordingSlot = kNoSlot;
     cmdBuf_ = VK_NULL_HANDLE;
@@ -283,7 +302,284 @@ CommandBuffer::ReusableSlot* IGL_NULLABLE CommandBuffer::prepareRun(Result& outR
                                   ivkGetVulkanResultString(result)));
     return nullptr;
   }
-  return &slot;
+  // nothing reads the descriptors of a slot that is not pending
+  outResult = replaceTextures(slot);
+  return outResult.isOk() ? &slot : nullptr;
+}
+
+Result CommandBuffer::replaceTextures(ReusableSlot& slot) const {
+  IGL_PROFILER_FUNCTION();
+
+  if (slot.replacementVersion == reusable_->replacementVersion) {
+    for (const auto& [image, layout] : slot.replacementLayouts) {
+      Result result = checkReplacementLayout(*image, layout);
+      if (!result.isOk()) {
+        return result;
+      }
+    }
+    return Result();
+  }
+  Result result = checkReplacements(slot.imageDescriptors, slot.imageUses);
+  if (!result.isOk()) {
+    return result;
+  }
+
+  std::vector<VkWriteDescriptorSet>& writes = reusable_->descriptorWrites;
+  writes.clear();
+  slot.textures.clear();
+  slot.replacementLayouts.clear();
+  for (ImageDescriptor& descriptor : slot.imageDescriptors) {
+    VkImageView imageView = descriptor.recordedImageView;
+    if (const ReplacedTexture* replaced = findReplacement(descriptor.recordedImageView)) {
+      imageView = static_cast<const Texture&>(*replaced->texture).getVkImageView();
+      if (std::find(slot.textures.begin(), slot.textures.end(), replaced->texture) ==
+          slot.textures.end()) {
+        slot.textures.push_back(replaced->texture);
+      }
+      const std::pair<const VulkanImage*, VkImageLayout> expectedLayout = {
+          &static_cast<const Texture&>(*replaced->texture).getVulkanTexture().image,
+          descriptor.info.imageLayout};
+      if (std::find(slot.replacementLayouts.begin(),
+                    slot.replacementLayouts.end(),
+                    expectedLayout) == slot.replacementLayouts.end()) {
+        slot.replacementLayouts.push_back(expectedLayout);
+      }
+    }
+    if (imageView != descriptor.info.imageView) {
+      descriptor.info.imageView = imageView;
+      writes.push_back(ivkGetWriteDescriptorSetImageInfo(
+          descriptor.dset, descriptor.binding, descriptor.type, 1, &descriptor.info));
+    }
+  }
+  if (!writes.empty()) {
+    ctx_.vf_.vkUpdateDescriptorSets(
+        ctx_.getVkDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  }
+  slot.replacementVersion = reusable_->replacementVersion;
+  return Result();
+}
+
+Result CommandBuffer::checkReplacements(
+    const std::vector<ImageDescriptor>& imageDescriptors,
+    const std::vector<std::pair<VkImage, uint8_t>>& imageUses) const {
+  if (reusable_->replacedTextures.empty()) {
+    return Result();
+  }
+  for (const ReplacedTexture& replaced : reusable_->replacedTextures) {
+    Result result = checkRecordedUse(imageDescriptors, imageUses, replaced);
+    if (!result.isOk()) {
+      return result;
+    }
+  }
+  // a run makes no layout transitions of the textures that replace recorded ones
+  for (const ImageDescriptor& descriptor : imageDescriptors) {
+    const ReplacedTexture* replaced = findReplacement(descriptor.recordedImageView);
+    if (!replaced) {
+      continue;
+    }
+    const VulkanTexture& vkTex = static_cast<const Texture&>(*replaced->texture).getVulkanTexture();
+    Result result = checkReplacementLayout(vkTex.image, descriptor.info.imageLayout);
+    if (!result.isOk()) {
+      return result;
+    }
+  }
+  return Result();
+}
+
+Result CommandBuffer::checkReplacementLayout(const VulkanImage& image, VkImageLayout layout) {
+  if (image.imageLayout_ != layout) {
+    return Result(Result::Code::InvalidOperation,
+                  layout == VK_IMAGE_LAYOUT_GENERAL
+                      ? "A texture that replaces a storage image is not ready to be read and "
+                        "written as a storage image"
+                      : "A texture that replaces a sampled texture is not ready to be sampled");
+  }
+  return Result();
+}
+
+const CommandBuffer::ReplacedTexture* IGL_NULLABLE
+CommandBuffer::findReplacement(VkImageView recordedImageView) const {
+  for (const ReplacedTexture& replaced : reusable_->replacedTextures) {
+    if (replaced.recordedImageView == recordedImageView) {
+      return &replaced;
+    }
+  }
+  return nullptr;
+}
+
+Result CommandBuffer::checkReplacement(const Texture& recorded, const Texture& texture) const {
+  const VulkanImage& recordedImage = recorded.getVulkanTexture().image;
+  const VulkanImage& image = texture.getVulkanTexture().image;
+  if (recordedImage.ctx_ != &ctx_ || image.ctx_ != &ctx_) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture or the recorded texture belongs to another device");
+  }
+  if ((recorded.getUsage() & ~texture.getUsage() &
+       (TextureDesc::TextureUsageBits::Sampled | TextureDesc::TextureUsageBits::Storage)) != 0) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture does not support every shader usage of the recorded texture");
+  }
+  // the image views that the image descriptors name, which a texture view makes its own
+  const VulkanImageView& recordedView = recorded.getVulkanTexture().imageView_;
+  const VulkanImageView& view = texture.getVulkanTexture().imageView_;
+  if (view.viewType != recordedView.viewType) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another type than the recorded texture");
+  }
+  if (view.aspectMask != recordedView.aspectMask) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another aspect than the recorded texture");
+  }
+  if (texture.getSamples() != recorded.getSamples()) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another number of samples than the recorded texture");
+  }
+  // the numbers of mip levels and layers that an image view covers
+  const auto counts = [](const VulkanImageView& imageView, const VulkanImage& img) {
+    const VkImageSubresourceRange& range = imageView.subresourceRange;
+    return std::make_pair(
+        range.levelCount == VK_REMAINING_MIP_LEVELS ? img.mipLevels_ - range.baseMipLevel
+                                                    : range.levelCount,
+        range.layerCount == VK_REMAINING_ARRAY_LAYERS ? img.arrayLayers_ - range.baseArrayLayer
+                                                      : range.layerCount);
+  };
+  if (counts(view, image) != counts(recordedView, recordedImage)) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another number of mip levels or layers than the recorded "
+                  "texture");
+  }
+  // a view with a YCbCr conversion is sampled only by an immutable sampler with that conversion
+  if (view.ycbcrConversion != recordedView.ycbcrConversion) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another YCbCr conversion than the recorded texture");
+  }
+  if (view.format != recordedView.format) {
+    return Result(Result::Code::ArgumentInvalid,
+                  "The texture has another format than the recorded texture");
+  }
+  return Result();
+}
+
+Result CommandBuffer::checkRecordedUse(const std::vector<ImageDescriptor>& imageDescriptors,
+                                       const std::vector<std::pair<VkImage, uint8_t>>& imageUses,
+                                       const ReplacedTexture& replaced) {
+  const auto& vkTexture = static_cast<const Texture&>(*replaced.texture);
+  if (vkTexture.getVkImageView() == replaced.recordedImageView) {
+    return Result();
+  }
+  for (const auto& [image, uses] : imageUses) {
+    // a run would change the layout of the texture while it is bound in place of the recorded one
+    if (image == vkTexture.getVkImage() &&
+        (uses & (kRecordedImageUseBitsAttachment | kRecordedImageUseBitsTransition)) != 0) {
+      return Result(Result::Code::Unsupported,
+                    "A recording renders to the texture that replaces the recorded one, or makes "
+                    "layout transitions of it");
+    }
+    if (image != replaced.recordedImage) {
+      continue;
+    }
+    if ((uses & kRecordedImageUseBitsAttachment) != 0) {
+      return Result(Result::Code::Unsupported,
+                    "A recording renders to the recorded texture, which only the textures that "
+                    "bindTexture() and bindImageTexture() bind can replace");
+    }
+    if ((uses & kRecordedImageUseBitsTransfer) != 0) {
+      return Result(Result::Code::Unsupported,
+                    "A recording copies, blits or clears the recorded texture, which only the "
+                    "textures that bindTexture() and bindImageTexture() bind can replace");
+    }
+    if ((uses & kRecordedImageUseBitsBindGroup) != 0) {
+      return Result(Result::Code::Unsupported,
+                    "A recording binds the recorded texture through a BindGroup, which only the "
+                    "textures that bindTexture() and bindImageTexture() bind can replace");
+    }
+  }
+  // also covers a recorded texture that is bound both as a sampled texture and as a storage
+  // image, since the texture that replaces it has every shader usage of it (see checkReplacement())
+  const bool isSampled =
+      (replaced.texture->getUsage() & TextureDesc::TextureUsageBits::Sampled) != 0;
+  for (const ImageDescriptor& descriptor : imageDescriptors) {
+    if (descriptor.recordedImageView == replaced.recordedImageView &&
+        descriptor.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && isSampled) {
+      return Result(Result::Code::Unsupported,
+                    "A texture that can be sampled cannot replace a storage image: passes leave it "
+                    "ready to be sampled, and a run makes no layout transitions of it");
+    }
+  }
+  return Result();
+}
+
+void CommandBuffer::replaceTexture(const ITexture& recorded,
+                                   const std::shared_ptr<ITexture>& texture,
+                                   Result* IGL_NULLABLE outResult) {
+  IGL_PROFILER_FUNCTION();
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx_);
+
+  if (!ctx_.supportsUpdateAfterBindTextures()) {
+    Result::setResult(outResult,
+                      Result::Code::Unsupported,
+                      "Replacing textures needs image descriptors that are updated after they are "
+                      "bound (see VulkanContextConfig::enableUpdateAfterBindTextures)");
+    return;
+  }
+  if (!reusable_) {
+    Result::setResult(outResult,
+                      Result::Code::InvalidOperation,
+                      "Only a reusable command buffer replaces textures");
+    return;
+  }
+  if (!texture) {
+    Result::setResult(outResult, Result::Code::ArgumentNull, "The texture is null");
+    return;
+  }
+  const auto& vkRecorded = static_cast<const Texture&>(recorded);
+  const auto& vkTexture = static_cast<const Texture&>(*texture);
+  Result result = checkReplacement(vkRecorded, vkTexture);
+  if (!result.isOk()) {
+    Result::setResult(outResult, std::move(result));
+    return;
+  }
+  ReplacedTexture replacement{
+      .recordedImageView = vkRecorded.getVkImageView(),
+      .recordedImage = vkRecorded.getVkImage(),
+      .texture = texture,
+  };
+  // the slots that record later check it when they run
+  for (const ReusableSlot& slot : reusable_->slots) {
+    if (slot.isRecorded) {
+      result = checkRecordedUse(slot.imageDescriptors, slot.imageUses, replacement);
+      if (!result.isOk()) {
+        Result::setResult(outResult, std::move(result));
+        return;
+      }
+    }
+  }
+
+  auto& replacedTextures = reusable_->replacedTextures;
+  const auto it = std::find_if(replacedTextures.begin(),
+                               replacedTextures.end(),
+                               [&replacement](const ReplacedTexture& replaced) {
+                                 return replaced.recordedImageView == replacement.recordedImageView;
+                               });
+  if (replacement.recordedImageView == vkTexture.getVkImageView()) {
+    if (it != replacedTextures.end()) {
+      replacedTextures.erase(it);
+      ++reusable_->replacementVersion;
+    }
+    Result::setOk(outResult);
+    return;
+  }
+  if (it != replacedTextures.end()) {
+    if (it->texture == texture) {
+      Result::setOk(outResult);
+      return;
+    }
+    *it = std::move(replacement);
+  } else {
+    replacedTextures.push_back(std::move(replacement));
+  }
+  ++reusable_->replacementVersion;
+  Result::setOk(outResult);
 }
 
 VkCommandBuffer IGL_NULLABLE CommandBuffer::beginRenderPass(const VkRenderPassBeginInfo& bi) {
@@ -390,6 +686,7 @@ void CommandBuffer::executeCommands(ICommandBuffer& reusable, Result* IGL_NULLAB
     executedSlots_.push_back({
         .reusable = vkReusable.reusable_,
         .slot = static_cast<uint32_t>(slot - vkReusable.reusable_->slots.data()),
+        .syncEpoch = ctx_.syncReserveCurrent(),
     });
     executedDrawCount_ += slot->numDraws;
   }
@@ -405,10 +702,12 @@ void CommandBuffer::releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle s
   for (const ExecutedSlot& executed : executedSlots_) {
     ReusableSlot& slot = executed.reusable->slots[executed.slot];
     slot.executor = nullptr;
+    ctx_.syncReleaseReservation(executed.slot, executed.syncEpoch);
     if (!submission.empty()) {
       slot.lastRun = carrier;
       executed.reusable->lastSubmission = submission;
       executed.reusable->lastCarrier = carrier;
+      ctx_.syncMarkExecuted(executed.slot, carrier);
     }
   }
   executedSlots_.clear();

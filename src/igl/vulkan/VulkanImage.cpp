@@ -11,6 +11,7 @@
 // NOLINTNEXTLINE(facebook-unused-include-check)
 #include <cinttypes>
 #include <type_traits>
+#include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanImageView.h>
@@ -1383,6 +1384,23 @@ void VulkanImage::transitionLayout(VkCommandBuffer cmdBuf,
                         srcStageMask,
                         dstStageMask,
                         subresourceRange);
+  // A reusable command buffer can replace this image in the image descriptors of its recording
+  // (see PlatformDevice::replaceTexture()): the same memory dependency covers the image that
+  // replaces it, which a run accesses wherever the recording accesses this one
+  if ((isSampledImage() || isStorageImage()) && ctx_->recordsReplaceableTextures(cmdBuf)) {
+    const VkMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = srcAccessMask,
+        .dstAccessMask = dstAccessMask,
+    };
+    ctx_->vf_.vkCmdPipelineBarrier(
+        cmdBuf, srcStageMask, dstStageMask, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+  }
+  ctx_->journalImageUse(cmdBuf, vkImage_, kRecordedImageUseBitsTransition);
+  if (newImageLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+      newImageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    ctx_->journalImageUse(cmdBuf, vkImage_, kRecordedImageUseBitsTransfer);
+  }
 
   ctx_->journalImageLayout(cmdBuf, *this);
   imageLayout_ = newImageLayout;

@@ -375,9 +375,15 @@ class DescriptorPoolsArena final {
               numDescriptorsPerDSet_[i] ? kNumDSetsPerPool * numDescriptorsPerDSet_[i] : 1u,
       };
     }
+    // the image bindings of descriptor set layouts can be updated after they are bound (see
+    // VulkanContext::supportsUpdateAfterBindTextures())
+    const bool hasImageBindings = types_[0] == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+                                  types_[0] == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     VK_ASSERT(ivkCreateDescriptorPool(&ctx_.vf_,
                                       device_,
-                                      VkDescriptorPoolCreateFlags{},
+                                      hasImageBindings && ctx_.supportsUpdateAfterBindTextures()
+                                          ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
+                                          : VkDescriptorPoolCreateFlags{},
                                       kNumDSetsPerPool,
                                       numTypes_,
                                       poolSizes,
@@ -1447,6 +1453,9 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
   IGL_DEBUG_ASSERT(config_.maxResourceCount > 0,
                    "Max resource count needs to be greater than zero");
   syncSubmitHandles.resize(config_.maxResourceCount);
+  syncExecutedHandles.resize(config_.maxResourceCount);
+  syncPendingReservations.resize(config_.maxResourceCount);
+  syncStaleReservations.resize(config_.maxResourceCount);
 
   // create Vulkan pipeline cache
   {
@@ -2480,6 +2489,7 @@ void VulkanContext::updateBindingsTextures(VkCommandBuffer IGL_NONNULL cmdBuf,
     IGL_PROFILER_ZONE("vkUpdateDescriptorSets()", IGL_PROFILER_COLOR_UPDATE);
     vf_.vkUpdateDescriptorSets(vkDevice_, numWrites, writes, 0, nullptr);
     IGL_PROFILER_ZONE_END();
+    journalImageDescriptors(cmdBuf, writes, numWrites);
 
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkCmdBindDescriptorSets(%u) - textures\n", cmdBuf, bindPoint);
@@ -2571,6 +2581,7 @@ void VulkanContext::updateBindingsStorageImages(
     IGL_PROFILER_ZONE("vkUpdateDescriptorSets()", IGL_PROFILER_COLOR_UPDATE);
     vf_.vkUpdateDescriptorSets(vkDevice_, numWrites, writes, 0, nullptr);
     IGL_PROFILER_ZONE_END();
+    journalImageDescriptors(cmdBuf, writes, numWrites);
 
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkCmdBindDescriptorSets(%u) - storage images\n", cmdBuf, bindPoint);
@@ -2909,7 +2920,8 @@ DescriptorPoolsArenas& VulkanContext::getDescriptorPoolsArenas(
 void VulkanContext::destroyRecordings(
     VkCommandPool commandPool,
     const std::vector<std::shared_ptr<DescriptorPoolsArenas>>& arenas,
-    SubmitHandle lastSubmission) const {
+    SubmitHandle lastSubmission,
+    std::vector<std::shared_ptr<ITexture>> textures) const {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
 
   std::vector<VkDescriptorPool> pools;
@@ -2920,15 +2932,19 @@ void VulkanContext::destroyRecordings(
     }
   }
   // freeing the command pool frees the command buffers of the recordings
-  std::packaged_task<void()> destroy(
-      [vf = &vf_, device = getVkDevice(), commandPool, pools = std::move(pools)]() {
-        if (commandPool != VK_NULL_HANDLE) {
-          vf->vkDestroyCommandPool(device, commandPool, nullptr);
-        }
-        for (VkDescriptorPool pool : pools) {
-          vf->vkDestroyDescriptorPool(device, pool, nullptr);
-        }
-      });
+  std::packaged_task<void()> destroy([vf = &vf_,
+                                      device = getVkDevice(),
+                                      commandPool,
+                                      pools = std::move(pools),
+                                      textures = std::move(textures)]() mutable {
+    if (commandPool != VK_NULL_HANDLE) {
+      vf->vkDestroyCommandPool(device, commandPool, nullptr);
+    }
+    for (VkDescriptorPool pool : pools) {
+      vf->vkDestroyDescriptorPool(device, pool, nullptr);
+    }
+    textures.clear();
+  });
   if (immediate_->isReady(lastSubmission)) {
     destroy();
   } else {
@@ -2937,11 +2953,11 @@ void VulkanContext::destroyRecordings(
 }
 
 void VulkanContext::journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage& image) const {
-  for (ImageLayoutJournal* journal : imageLayoutJournals_) {
+  for (RecordingJournal* journal : recordingJournals_) {
     const auto layout = std::find_if(
         journal->layouts.begin(),
         journal->layouts.end(),
-        [&image](const ImageLayoutJournal::Layout& entry) { return entry.image == &image; });
+        [&image](const RecordingJournal::Layout& entry) { return entry.image == &image; });
     if (journal->cmdBuf == cmdBuf) {
       if (layout == journal->layouts.end()) {
         journal->layouts.push_back({.image = &image, .layout = image.imageLayout_});
@@ -2957,9 +2973,81 @@ void VulkanContext::journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage
 
 bool VulkanContext::isRecordingSlot(VkCommandBuffer cmdBuf) const {
   return std::any_of(
-      imageLayoutJournals_.begin(),
-      imageLayoutJournals_.end(),
-      [cmdBuf](const ImageLayoutJournal* journal) { return journal->cmdBuf == cmdBuf; });
+      recordingJournals_.begin(),
+      recordingJournals_.end(),
+      [cmdBuf](const RecordingJournal* journal) { return journal->cmdBuf == cmdBuf; });
+}
+
+void VulkanContext::journalImageDescriptors(VkCommandBuffer cmdBuf,
+                                            const VkWriteDescriptorSet* IGL_NONNULL writes,
+                                            uint32_t numWrites) const {
+  if (recordingJournals_.empty() || !supportsUpdateAfterBindTextures()) {
+    return;
+  }
+  for (RecordingJournal* journal : recordingJournals_) {
+    if (journal->cmdBuf != cmdBuf) {
+      continue;
+    }
+    for (uint32_t i = 0; i != numWrites; ++i) {
+      const VkWriteDescriptorSet& write = writes[i];
+      if (write.descriptorType != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
+          write.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+        continue;
+      }
+      IGL_DEBUG_ASSERT(write.descriptorCount == 1);
+      journal->imageDescriptors.push_back(ImageDescriptor{
+          .dset = write.dstSet,
+          .binding = write.dstBinding,
+          .type = write.descriptorType,
+          .recordedImageView = write.pImageInfo->imageView,
+          .info = *write.pImageInfo,
+      });
+    }
+    return;
+  }
+}
+
+void VulkanContext::journalImageUse(VkCommandBuffer cmdBuf, VkImage image, uint8_t useBits) const {
+  if (recordingJournals_.empty() || !supportsUpdateAfterBindTextures()) {
+    return;
+  }
+  for (RecordingJournal* journal : recordingJournals_) {
+    if (journal->cmdBuf != cmdBuf) {
+      continue;
+    }
+    const auto use = std::find_if(
+        journal->imageUses.begin(),
+        journal->imageUses.end(),
+        [image](const std::pair<VkImage, uint8_t>& entry) { return entry.first == image; });
+    if (use != journal->imageUses.end()) {
+      use->second |= useBits;
+    } else {
+      journal->imageUses.emplace_back(image, useBits);
+    }
+    return;
+  }
+}
+
+void VulkanContext::journalBindGroupTextures(VkCommandBuffer cmdBuf,
+                                             BindGroupTextureHandle handle) const {
+  if (!recordsReplaceableTextures(cmdBuf) || !handle.valid()) {
+    return;
+  }
+  const BindGroupMetadataTextures* metadata = pimpl_->bindGroupTexturesPool.get(handle);
+  if (!metadata) {
+    return;
+  }
+  for (const std::shared_ptr<ITexture>& texture : metadata->desc.textures) {
+    if (texture) {
+      journalImageUse(cmdBuf,
+                      static_cast<const Texture&>(*texture).getVkImage(),
+                      kRecordedImageUseBitsBindGroup);
+    }
+  }
+}
+
+bool VulkanContext::recordsReplaceableTextures(VkCommandBuffer cmdBuf) const {
+  return isRecordingSlot(cmdBuf) && supportsUpdateAfterBindTextures();
 }
 
 void VulkanContext::deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle) const {
@@ -3356,16 +3444,20 @@ BindGroupTextureHandle VulkanContext::createBindGroup(const BindGroupTextureDesc
   VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
 
   {
+    // the same flags as the combined image sampler bindings of pipelines (see PipelineState)
+    const bool updateAfterBind = supportsUpdateAfterBindTextures();
+    const VkDescriptorSetLayoutCreateFlags dslFlags =
+        updateAfterBind ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT : 0u;
+    const VkDescriptorPoolCreateFlags poolFlags =
+        updateAfterBind ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0u;
     // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-    const VkDescriptorBindingFlags bindingFlags[IGL_TEXTURE_SAMPLERS_MAX] = {};
+    VkDescriptorBindingFlags bindingFlags[IGL_TEXTURE_SAMPLERS_MAX] = {};
+    std::fill_n(bindingFlags,
+                numBindings,
+                updateAfterBind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0u);
 
-    VK_ASSERT(ivkCreateDescriptorSetLayout(&vf_,
-                                           device,
-                                           VkDescriptorSetLayoutCreateFlags{},
-                                           numBindings,
-                                           bindings,
-                                           bindingFlags,
-                                           &dsl));
+    VK_ASSERT(ivkCreateDescriptorSetLayout(
+        &vf_, device, dslFlags, numBindings, bindings, bindingFlags, &dsl));
     VK_ASSERT(ivkSetDebugObjectName(
         &vf_,
         device,
@@ -3377,8 +3469,7 @@ BindGroupTextureHandle VulkanContext::createBindGroup(const BindGroupTextureDesc
     const VkDescriptorPoolSize poolSize = VkDescriptorPoolSize{
         .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = numBindings};
 
-    VK_ASSERT(ivkCreateDescriptorPool(
-        &vf_, device, VkDescriptorPoolCreateFlags{}, 1u, 1u, &poolSize, &metadata.pool));
+    VK_ASSERT(ivkCreateDescriptorPool(&vf_, device, poolFlags, 1u, 1u, &poolSize, &metadata.pool));
     VK_ASSERT(ivkSetDebugObjectName(
         &vf_,
         device,
@@ -3724,13 +3815,41 @@ bool VulkanContext::supportsReusableCommandBuffers() const {
   return !config_.enableDescriptorIndexing && !features_.has_VK_EXT_descriptor_buffer;
 }
 
+bool VulkanContext::supportsUpdateAfterBindTextures() const {
+#if IGL_PLATFORM_ANDROID
+  return false;
+#else
+  const auto* indexing = static_cast<const VkPhysicalDeviceDescriptorIndexingFeaturesEXT*>(
+      features_.feature(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT));
+  return config_.enableUpdateAfterBindTextures && supportsReusableCommandBuffers() &&
+         indexing != nullptr && indexing->descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+         indexing->descriptorBindingStorageImageUpdateAfterBind == VK_TRUE;
+#endif // IGL_PLATFORM_ANDROID
+}
+
 void VulkanContext::syncAcquireNext() noexcept {
   IGL_PROFILER_FUNCTION();
 
+  // the copies of the index that the sync index leaves hold the data of this frame until the
+  // command buffers that reserved them are submitted
+  syncStaleReservations[syncCurrentIndex] += syncPendingReservations[syncCurrentIndex];
+  syncPendingReservations[syncCurrentIndex] = 0;
   syncCurrentIndex = (syncCurrentIndex + 1) % config_.maxResourceCount;
+  ++syncEpoch;
 
   // Wait for the current buffer to become available
-  immediate_->wait(syncSubmitHandles[syncCurrentIndex], config_.fenceTimeoutNanoseconds);
+  syncCurrentAcquired = false;
+  (void)syncAcquireCurrent();
+}
+
+bool VulkanContext::syncAcquireCurrent() const noexcept {
+  if (!syncCurrentAcquired) {
+    syncCurrentAcquired = immediate_->wait(syncSubmitHandles[syncCurrentIndex],
+                                           config_.fenceTimeoutNanoseconds) == VK_SUCCESS &&
+                          immediate_->wait(syncExecutedHandles[syncCurrentIndex],
+                                           config_.fenceTimeoutNanoseconds) == VK_SUCCESS;
+  }
+  return syncCurrentAcquired;
 }
 
 void VulkanContext::syncMarkSubmitted(VulkanImmediateCommands::SubmitHandle handle) noexcept {
@@ -3744,9 +3863,39 @@ void VulkanContext::syncMarkSubmitted(VulkanImmediateCommands::SubmitHandle hand
   }
   ringBufferReadSinceSubmit = false;
 
-  syncSubmitHandles[syncCurrentIndex] = handle;
+  // A discarded submit, whose handle is empty, reads nothing. The submit that read the copy before
+  // it stays its reader, since it can still be pending after a failed wait for it, such as a run of
+  // a reusable command buffer.
+  if (!handle.empty() || !hasReusableCommandBuffers_) {
+    syncSubmitHandles[syncCurrentIndex] = handle;
+  }
 
   syncAcquireNext();
+}
+
+void VulkanContext::syncMarkExecuted(uint32_t index,
+                                     VulkanImmediateCommands::SubmitHandle handle) noexcept {
+  syncExecutedHandles[index] = handle;
+  if (index == syncCurrentIndex) {
+    syncCurrentAcquired = false;
+  }
+}
+
+uint64_t VulkanContext::syncReserveCurrent() noexcept {
+  ++syncPendingReservations[syncCurrentIndex];
+  return syncEpoch;
+}
+
+void VulkanContext::syncReleaseReservation(uint32_t index, uint64_t epoch) noexcept {
+  // the sync index moved on from `index` after the reservation iff the epoch changed
+  uint32_t& reservations = epoch == syncEpoch ? syncPendingReservations[index]
+                                              : syncStaleReservations[index];
+  IGL_DEBUG_ASSERT(reservations != 0);
+  --reservations;
+}
+
+bool VulkanContext::isSyncCopyReserved() const noexcept {
+  return syncStaleReservations[syncCurrentIndex] != 0;
 }
 
 void VulkanContext::ensureCurrentContextThread() const {

@@ -15,6 +15,22 @@ namespace igl::vulkan {
 
 static_assert(std::is_trivially_copyable_v<VulkanImageViewCreateInfo>);
 
+namespace {
+
+// The conversion of the VkSamplerYcbcrConversionInfo in the pNext chain of `ci`, if it has one
+// NOLINTNEXTLINE(facebook-hte-NullableReturn)
+VkSamplerYcbcrConversion getYcbcrConversion(const VkImageViewCreateInfo& ci) {
+  for (const auto* next = static_cast<const VkBaseInStructure*>(ci.pNext); next;
+       next = next->pNext) {
+    if (next->sType == VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO) {
+      return reinterpret_cast<const VkSamplerYcbcrConversionInfo*>(next)->conversion;
+    }
+  }
+  return VK_NULL_HANDLE;
+}
+
+} // namespace
+
 VulkanImageView::VulkanImageView(const VulkanContext& ctx,
                                  const VulkanImageViewCreateInfo& ci,
                                  const char* debugName) :
@@ -39,7 +55,11 @@ VulkanImageView::~VulkanImageView() {
 VulkanImageView::VulkanImageView(const VulkanContext& ctx,
                                  const VkImageViewCreateInfo& ci,
                                  const char* debugName) :
-  ctx(&ctx), aspectMask(ci.subresourceRange.aspectMask) {
+  ctx(&ctx),
+  aspectMask(ci.subresourceRange.aspectMask),
+  viewType(ci.viewType),
+  format(ci.format),
+  subresourceRange(ci.subresourceRange) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
 
   VkImageViewCreateInfo ciCopy(ci);
@@ -50,6 +70,7 @@ VulkanImageView::VulkanImageView(const VulkanContext& ctx,
     info = ctx.getOrCreateYcbcrConversionInfo(ci.format);
     ciCopy.pNext = &info;
   }
+  ycbcrConversion = getYcbcrConversion(ciCopy);
 
   const VkDevice device = this->ctx->getVkDevice();
   const VkResult result = this->ctx->vf_.vkCreateImageView(device, &ciCopy, nullptr, &vkImageView);
@@ -73,10 +94,18 @@ VulkanImageView& VulkanImageView::operator=(VulkanImageView&& other) noexcept {
   ctx = other.ctx;
   vkImageView = other.vkImageView;
   aspectMask = other.aspectMask;
+  viewType = other.viewType;
+  format = other.format;
+  subresourceRange = other.subresourceRange;
+  ycbcrConversion = other.ycbcrConversion;
   initResult_ = other.initResult_;
   other.ctx = nullptr;
   other.vkImageView = VK_NULL_HANDLE;
   other.aspectMask = 0;
+  other.viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+  other.format = VK_FORMAT_UNDEFINED;
+  other.subresourceRange = {};
+  other.ycbcrConversion = VK_NULL_HANDLE;
   other.initResult_ = VK_SUCCESS;
   return *this;
 }

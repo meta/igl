@@ -289,4 +289,22 @@ void PlatformDevice::executeCommands(ICommandBuffer& commandBuffer,
   vkCommandBuffer.executeCommands(reusable, outResult);
 }
 
+bool PlatformDevice::supportsTextureReplacement() const {
+  return device_.getVulkanContext().supportsUpdateAfterBindTextures();
+}
+
+void PlatformDevice::replaceTexture(ICommandBuffer& reusable,
+                                    const ITexture& recorded,
+                                    const std::shared_ptr<ITexture>& texture,
+                                    Result* IGL_NULLABLE outResult) const {
+  auto& vkReusable = static_cast<CommandBuffer&>(reusable);
+  if (!vkReusable.belongsTo(device_.getVulkanContext())) {
+    Result::setResult(outResult,
+                      Result::Code::ArgumentInvalid,
+                      "The reusable command buffer belongs to another device");
+    return;
+  }
+  vkReusable.replaceTexture(recorded, texture, outResult);
+}
+
 } // namespace igl::vulkan

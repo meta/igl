@@ -734,7 +734,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
       EXPECT_EQ(readTextureB(), expected) << "frame " << frame;
     }
     EXPECT_EQ(numRecordings, numSlots);
-    EXPECT_TRUE(getVulkanContext().imageLayoutJournals_.empty());
+    EXPECT_TRUE(getVulkanContext().recordingJournals_.empty());
   }
 
   // Renders 3 frames per slot without waiting between frames, and checks the output of every frame
@@ -961,7 +961,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     EXPECT_TRUE(submitAndRun(*cmdBuf, *reusable, executeInCommandBuffer));
     reusable->waitUntilCompleted();
     EXPECT_EQ(readTextureB(), bluePixels());
-    EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+    EXPECT_TRUE(ctx.recordingJournals_.empty());
   }
 
   // Records a render pass with a depth attachment that is not sampled, which the render pass leaves
@@ -998,7 +998,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     }
     EXPECT_EQ(getImageLayout(*depthTex), VK_IMAGE_LAYOUT_UNDEFINED);
     EXPECT_FALSE(isRecorded(*reusable));
-    EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+    EXPECT_TRUE(ctx.recordingJournals_.empty());
   }
 
   // Records the passes, and moves the shared slot with the run of another reusable command buffer,
@@ -1053,7 +1053,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     EXPECT_EQ(readTextureB(), fillPixels(kMagenta));
     EXPECT_EQ(getImageLayout(*depthTex), VK_IMAGE_LAYOUT_UNDEFINED);
     EXPECT_FALSE(isRecorded(*reusable));
-    EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+    EXPECT_TRUE(ctx.recordingJournals_.empty());
 
     EXPECT_TRUE(renderFrame(*reusable, executeInCommandBuffer));
     reusable->waitUntilCompleted();
@@ -1173,7 +1173,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     ASSERT_NE(cmdBuf, nullptr);
     EXPECT_FALSE(submitAndRun(*cmdBuf, *reusable, executeInCommandBuffer));
     EXPECT_EQ(getImageLayout(*tex), VK_IMAGE_LAYOUT_GENERAL);
-    EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+    EXPECT_TRUE(ctx.recordingJournals_.empty());
   }
 
   // Records the passes, lets the runs of another reusable command buffer move the shared slot
@@ -1400,7 +1400,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     srgbTex->generateMipmap(*reusable);
     EXPECT_EQ(getImageLayout(*depthTex), VK_IMAGE_LAYOUT_UNDEFINED);
     EXPECT_EQ(getImageLayout(*srgbTex), VK_IMAGE_LAYOUT_UNDEFINED);
-    EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+    EXPECT_TRUE(ctx.recordingJournals_.empty());
     EXPECT_EQ(reusable->createRenderCommandEncoder(renderPass_, fbB_, &ret), nullptr);
     EXPECT_EQ(ret.code, Result::Code::Unsupported) << ret.message.c_str();
     if (executeInCommandBuffer) {
@@ -1446,12 +1446,12 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
     const VkCommandBuffer recording =
         static_cast<vulkan::CommandBuffer&>(*reusable).getVkCommandBuffer();
     ASSERT_TRUE(ctx.isRecordingSlot(recording));
-    ASSERT_EQ(ctx.imageLayoutJournals_.size(), 1u);
-    const size_t numJournaled = ctx.imageLayoutJournals_.front()->layouts.size();
+    ASSERT_EQ(ctx.recordingJournals_.size(), 1u);
+    const size_t numJournaled = ctx.recordingJournals_.front()->layouts.size();
     const Result result = image.generateMipmap(recording, srgbTex->getFullMipRange());
     EXPECT_EQ(result.code, Result::Code::Unsupported) << result.message.c_str();
     EXPECT_EQ(image.imageLayout_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    ASSERT_EQ(ctx.imageLayoutJournals_.front()->layouts.size(), numJournaled);
+    ASSERT_EQ(ctx.recordingJournals_.front()->layouts.size(), numJournaled);
     EXPECT_TRUE(submitAndRun(*cmdBuf, *reusable, executeInCommandBuffer));
     reusable->waitUntilCompleted();
     EXPECT_EQ(readTextureB(), bluePixels());
@@ -1665,7 +1665,7 @@ TEST_F(ReusableCommandBufferVulkanTest, DestructionPutsBackTheImageLayoutsOfARec
   EXPECT_EQ(getImageLayout(*depthTex), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
   reusable.reset();
   EXPECT_EQ(getImageLayout(*depthTex), VK_IMAGE_LAYOUT_UNDEFINED);
-  EXPECT_TRUE(getVulkanContext().imageLayoutJournals_.empty());
+  EXPECT_TRUE(getVulkanContext().recordingJournals_.empty());
 }
 
 TEST_F(ReusableCommandBufferVulkanTest, ExecutingCommandBufferKeepsTheRecordingsAlive) {
@@ -1973,7 +1973,7 @@ TEST_F(ReusableCommandBufferVulkanTest, FailedRecordingKeepsTheLayoutsThatOthers
   EXPECT_EQ(cmdQueue_->submit(*reusable), 0u);
   // the upload is the last change of the layout that ran
   EXPECT_EQ(getImageLayout(*tex), VK_IMAGE_LAYOUT_GENERAL);
-  EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+  EXPECT_TRUE(ctx.recordingJournals_.empty());
 }
 
 TEST_F(ReusableCommandBufferVulkanTest, FailedRecordingKeepsAnOverriddenLayout) {
@@ -1999,7 +1999,7 @@ TEST_F(ReusableCommandBufferVulkanTest, FailedRecordingKeepsAnOverriddenLayout) 
   ASSERT_NE(cmdQueue_->submit(*otherEngine), 0u);
   EXPECT_EQ(cmdQueue_->submit(*reusable), 0u);
   EXPECT_EQ(getImageLayout(*tex), VK_IMAGE_LAYOUT_GENERAL);
-  EXPECT_TRUE(ctx.imageLayoutJournals_.empty());
+  EXPECT_TRUE(ctx.recordingJournals_.empty());
 }
 
 TEST_F(ReusableCommandBufferVulkanTest, SubmitPutsBackTheLayoutThatAnUploadLeft) {

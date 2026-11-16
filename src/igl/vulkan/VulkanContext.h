@@ -56,7 +56,7 @@ struct BindingsBuffers;
 struct BindingsTextures;
 struct BindingsStorageImages;
 struct DescriptorPoolsArenas;
-struct ImageLayoutJournal;
+struct RecordingJournal;
 struct VulkanContextImpl;
 struct VulkanImageCreateInfo;
 struct VulkanImageViewCreateInfo;
@@ -194,10 +194,36 @@ class VulkanContext final {
   [[nodiscard]] uint32_t currentSyncIndex() const noexcept {
     return syncCurrentIndex;
   }
+  /// @brief Advances the sync index and waits, up to VulkanContextConfig::fenceTimeoutNanoseconds,
+  /// for the submit that last read the Ring buffer copies of the new index (see
+  /// syncAcquireCurrent())
   void syncAcquireNext() noexcept;
+  /// @brief Returns true once the submits that last read the Ring buffer copies of the current sync
+  /// index have completed (see syncMarkExecuted()). If the last wait for them failed, waits for
+  /// them again up to VulkanContextConfig::fenceTimeoutNanoseconds each. Nothing may write those
+  /// copies while it returns false.
+  [[nodiscard]] bool syncAcquireCurrent() const noexcept;
   /// @brief Called after every submit. Advances the sync index and waits for the submit that last
-  /// used the new index, but only if a Ring buffer copy was read since the previous submit.
+  /// used the new index, but only if a Ring buffer copy was read since the previous submit. Once
+  /// the context has created a reusable command buffer, a discarded submit, whose `handle` is
+  /// empty, leaves the submit that read the copy before it as its reader.
   void syncMarkSubmitted(VulkanImmediateCommands::SubmitHandle handle) noexcept;
+  /// @brief Records `handle`, a submit that runs a slot of a reusable command buffer with
+  /// PlatformDevice::executeCommands(), as a reader of the Ring buffer copies of `index`, the sync
+  /// index of the slot: syncAcquireCurrent() waits for it too, even if submits after the
+  /// executeCommands() call moved the sync index on before this submit.
+  void syncMarkExecuted(uint32_t index, VulkanImmediateCommands::SubmitHandle handle) noexcept;
+  /// @brief Reserves the Ring buffer copies of the current sync index for a command buffer that
+  /// executes a slot of a reusable command buffer with PlatformDevice::executeCommands(), until it
+  /// is submitted or destroyed (see syncReleaseReservation()). Returns syncEpoch.
+  [[nodiscard]] uint64_t syncReserveCurrent() noexcept;
+  /// @brief Releases the reservation of the Ring buffer copies of `index` that
+  /// syncReserveCurrent() returned `epoch` for
+  void syncReleaseReservation(uint32_t index, uint64_t epoch) noexcept;
+  /// @brief Returns true if a command buffer that is not submitted yet executes a slot that reads
+  /// the Ring buffer copies of the current sync index, and the sync index has moved on since: those
+  /// copies then hold the data of that earlier frame, which nothing may write.
+  [[nodiscard]] bool isSyncCopyReserved() const noexcept;
 
   /// @brief Records that GPU work being encoded reads the current copy of a Ring buffer. Called by
   /// Buffer::getVkBuffer() and Buffer::gpuAddress(). The next submit is assumed to be the one that
@@ -272,22 +298,43 @@ class VulkanContext final {
   [[nodiscard]] std::shared_ptr<DescriptorPoolsArenas> createDescriptorPoolsArenas() const;
 
   /// @brief Destroys `commandPool`, unless it is null, and the descriptor pools of `arenas`, which
-  /// recordings of a reusable command buffer use, once `lastSubmission`, the last submission that
-  /// runs one of them, completes: at once if it is empty or has completed.
+  /// recordings of a reusable command buffer use, and releases `textures`, which they read in place
+  /// of recorded textures, once `lastSubmission`, the last submission that runs one of them,
+  /// completes: at once if it is empty or has completed.
   void destroyRecordings(VkCommandPool commandPool,
                          const std::vector<std::shared_ptr<DescriptorPoolsArenas>>& arenas,
-                         SubmitHandle lastSubmission) const;
+                         SubmitHandle lastSubmission,
+                         std::vector<std::shared_ptr<ITexture>> textures) const;
 
   /// @brief Keeps the layout of `image`, before a command recorded into `cmdBuf` changes it, in the
-  /// ImageLayoutJournal of the reusable command buffer that records into `cmdBuf`, unless the
-  /// journal holds a layout of `image` that no change elsewhere has replaced since, and marks it
-  /// changed elsewhere in the other journals that hold it; a null `cmdBuf` stands for a change
-  /// outside of IGL's command buffers
+  /// RecordingJournal of the reusable command buffer that records into `cmdBuf`, unless the journal
+  /// holds a layout of `image` that no change elsewhere has replaced since, and marks it changed
+  /// elsewhere in the other journals that hold it; a null `cmdBuf` stands for a change outside of
+  /// IGL's command buffers
   void journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage& image) const;
 
   /// @brief Returns true if `cmdBuf` records a slot of a reusable command buffer, whose recording
   /// runs later, and as many times as the slot runs
   [[nodiscard]] bool isRecordingSlot(VkCommandBuffer cmdBuf) const;
+
+  /// @brief Keeps the combined image sampler and storage image descriptors of `writes`, whose
+  /// descriptor sets are bound in `cmdBuf`, in the RecordingJournal of the reusable command buffer
+  /// that records into `cmdBuf`
+  void journalImageDescriptors(VkCommandBuffer cmdBuf,
+                               const VkWriteDescriptorSet* IGL_NONNULL writes,
+                               uint32_t numWrites) const;
+
+  /// @brief Adds `useBits`, which are RecordedImageUseBits, to the uses of `image` in the
+  /// RecordingJournal of the reusable command buffer that records into `cmdBuf`
+  void journalImageUse(VkCommandBuffer cmdBuf, VkImage image, uint8_t useBits) const;
+
+  /// @brief Journals the textures of the bind group `handle`, which `cmdBuf` binds, as
+  /// journalImageUse() does
+  void journalBindGroupTextures(VkCommandBuffer cmdBuf, BindGroupTextureHandle handle) const;
+
+  /// @brief Returns true if `cmdBuf` records a slot of a reusable command buffer whose recordings
+  /// can read other textures than the ones that they bind (see supportsUpdateAfterBindTextures())
+  [[nodiscard]] bool recordsReplaceableTextures(VkCommandBuffer cmdBuf) const;
 
   bool areValidationLayersEnabled() const;
 
@@ -347,6 +394,18 @@ class VulkanContext final {
   /// VK_EXT_descriptor_buffer is enabled, because the context rewrites their descriptors while a
   /// recording could still bind them.
   [[nodiscard]] bool supportsReusableCommandBuffers() const;
+
+  /// @brief Returns true if the textures that the recordings of reusable command buffers read can
+  /// change between their runs (PlatformDevice::supportsTextureReplacement(),
+  /// PlatformDevice::replaceTexture()): VulkanContextConfig::enableUpdateAfterBindTextures is set,
+  /// reusable command buffers are supported, and the device can update sampled and storage image
+  /// descriptors after they are bound. Then the combined image sampler and storage image bindings
+  /// of the descriptor set layouts of every pipeline and texture BindGroup of the context have
+  /// VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, and their descriptor pools
+  /// VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT, for every command buffer: a descriptor set
+  /// that a recording binds needs the layout of the pipeline that it is bound with. Always false on
+  /// Android, where descriptor set layouts are created without binding flags.
+  [[nodiscard]] bool supportsUpdateAfterBindTextures() const;
 
   [[nodiscard]] const VkSurfaceCapabilitiesKHR& getSurfaceCapabilities() const noexcept {
     return deviceSurfaceCaps_;
@@ -487,7 +546,12 @@ class VulkanContext final {
   std::unique_ptr<VulkanContextImpl> pimpl_;
 
   // the journals of the reusable command buffers that record a slot now
-  std::vector<ImageLayoutJournal*> imageLayoutJournals_;
+  std::vector<RecordingJournal*> recordingJournals_;
+  // set once the context creates a reusable command buffer, and never cleared, since the last runs
+  // of its recordings can outlive it: only then does IBuffer::upload() of a Ring buffer check that
+  // nothing still reads the copy that it writes (see syncAcquireCurrent(), isSyncCopyReserved()),
+  // and does a discarded submit keep the earlier reader of its copy (see syncMarkSubmitted())
+  bool hasReusableCommandBuffers_ = false;
 
   VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
 
@@ -603,7 +667,17 @@ class VulkanContext final {
   // sync resources
   uint32_t syncCurrentIndex = 0u;
   std::vector<SubmitHandle> syncSubmitHandles;
+  // the last submit that ran an executed slot of each sync index (see syncMarkExecuted())
+  std::vector<SubmitHandle> syncExecutedHandles;
+  // how many times the sync index has moved on
+  uint64_t syncEpoch = 0;
+  // the reservations of each sync index (see syncReserveCurrent()) made since the sync index last
+  // came to it, and the ones made before
+  std::vector<uint32_t> syncPendingReservations;
+  std::vector<uint32_t> syncStaleReservations;
   mutable bool ringBufferReadSinceSubmit = false;
+  // set once the submits that last read the Ring buffer copies of `syncCurrentIndex` have completed
+  mutable bool syncCurrentAcquired = true;
 
   VkPhysicalDeviceMemoryProperties memoryProperties{};
 

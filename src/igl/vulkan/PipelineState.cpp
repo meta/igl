@@ -134,6 +134,12 @@ PipelineState::PipelineState(
       ctx.features().has_VK_EXT_descriptor_buffer
           ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT
           : VkDescriptorSetLayoutCreateFlags{};
+  // a recording of a reusable command buffer can read other textures in each run
+  const bool updateAfterBind = ctx.supportsUpdateAfterBindTextures();
+  const VkDescriptorSetLayoutCreateFlags imageFlag =
+      updateAfterBind ? flag | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT : flag;
+  const VkDescriptorBindingFlags imageBindingFlag =
+      updateAfterBind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0u;
 
   // Create all Vulkan descriptor set layouts for this pipeline
 
@@ -154,10 +160,10 @@ PipelineState::PipelineState(
         bindings.back().pImmutableSamplers = &ctx.samplers_.get(sampler->sampler_)->vkSampler;
       }
     }
-    std::vector<VkDescriptorBindingFlags> bindingFlags(bindings.size());
+    std::vector<VkDescriptorBindingFlags> bindingFlags(bindings.size(), imageBindingFlag);
     dslCombinedImageSamplers = std::make_unique<VulkanDescriptorSetLayout>(
         ctx,
-        flag,
+        imageFlag,
         static_cast<uint32_t>(bindings.size()),
         bindings.data(),
         bindingFlags.data(),
@@ -214,10 +220,13 @@ PipelineState::PipelineState(
           .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
       });
     }
-    std::vector<VkDescriptorBindingFlags> bindingFlags(bindings.size());
+    // the storage images come first: the input attachments after them keep no flag, since they
+    // cannot be updated after they are bound
+    std::vector<VkDescriptorBindingFlags> bindingFlags(info.images.size(), imageBindingFlag);
+    bindingFlags.resize(bindings.size());
     dslStorageImages = std::make_unique<VulkanDescriptorSetLayout>(
         ctx,
-        flag,
+        imageFlag,
         static_cast<uint32_t>(bindings.size()),
         bindings.data(),
         bindingFlags.data(),
