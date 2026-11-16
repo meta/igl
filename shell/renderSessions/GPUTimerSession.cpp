@@ -328,7 +328,7 @@ void GPUTimerSession::update(SurfaceTextures textures) noexcept {
   // Log GPU timing results
   if (timer_ != nullptr && timer_->resultsAvailable()) {
     const uint64_t elapsedNanos = timer_->getElapsedTimeNanos();
-    const double elapsedMs = static_cast<double>(elapsedNanos) / 1000000.0;
+    [[maybe_unused]] const double elapsedMs = static_cast<double>(elapsedNanos) / 1000000.0;
     IGL_LOG_INFO("GPU Timer: render pass took %.3f ms (%llu ns)\n",
                  elapsedMs,
                  static_cast<unsigned long long>(elapsedNanos));

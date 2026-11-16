@@ -300,7 +300,7 @@ void BindlessBufferSession::initialize() noexcept {
 
   if (isBindlessSupported_) {
     // Log the GPU address of the vertex buffer.
-    const uint64_t gpuAddr = vertexBuffer_->gpuAddress(0);
+    [[maybe_unused]] const uint64_t gpuAddr = vertexBuffer_->gpuAddress(0);
     IGL_LOG_INFO("BindlessBufferSession: Vertex buffer GPU address = 0x%llx\n",
                  static_cast<unsigned long long>(gpuAddr));
   }

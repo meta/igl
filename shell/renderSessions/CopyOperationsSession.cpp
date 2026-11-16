@@ -355,10 +355,10 @@ void CopyOperationsSession::update(SurfaceTextures textures) noexcept {
 
         // Log first pixel RGBA (packed as 0xAABBGGRR in most backends)
         const uint32_t firstPixel = pixels[0];
-        const uint8_t r = static_cast<uint8_t>(firstPixel & 0xFF);
-        const uint8_t g = static_cast<uint8_t>((firstPixel >> 8) & 0xFF);
-        const uint8_t b = static_cast<uint8_t>((firstPixel >> 16) & 0xFF);
-        const uint8_t a = static_cast<uint8_t>((firstPixel >> 24) & 0xFF);
+        [[maybe_unused]] const uint8_t r = static_cast<uint8_t>(firstPixel & 0xFF);
+        [[maybe_unused]] const uint8_t g = static_cast<uint8_t>((firstPixel >> 8) & 0xFF);
+        [[maybe_unused]] const uint8_t b = static_cast<uint8_t>((firstPixel >> 16) & 0xFF);
+        [[maybe_unused]] const uint8_t a = static_cast<uint8_t>((firstPixel >> 24) & 0xFF);
         IGL_LOG_INFO(
             "[CopyOperationsSession] Framebuffer readback: first pixel RGBA = (%u, %u, %u, %u)\n",
             r,
