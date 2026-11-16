@@ -1260,6 +1260,7 @@ void VulkanImage::discardNeverSubmitted() {
   if (!valid() || isExternallyManaged_) {
     return;
   }
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(ctx_);
   failInit(VK_ERROR_UNKNOWN);
 }
 
