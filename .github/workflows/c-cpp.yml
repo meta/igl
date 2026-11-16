@@ -195,8 +195,8 @@ jobs:
               name: "Ubuntu - Clang",
               os: ubuntu-latest,
               build_type: "Debug",
-              cc: "clang-16",
-              cxx: "clang++-16",
+              cc: "clang-18",
+              cxx: "clang++-18",
               generators: "Unix Makefiles",
             }
       runs-on: ${{ matrix.config.os }}
@@ -210,7 +210,7 @@ jobs:
           shell: bash
           run: |
             sudo apt-get update
-            sudo apt-get install -y gcc-13 clang-16 xorg-dev libxinerama-dev libxcursor-dev libgles2-mesa-dev libegl1-mesa-dev libglfw3-dev libglew-dev libstdc++-12-dev extra-cmake-modules libxkbcommon-x11-dev wayland-protocols ninja-build
+            sudo apt-get install -y gcc-13 clang-18 xorg-dev libxinerama-dev libxcursor-dev libgles2-mesa-dev libegl1-mesa-dev libglfw3-dev libglew-dev libstdc++-12-dev extra-cmake-modules libxkbcommon-x11-dev wayland-protocols ninja-build
             sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools vulkan-validationlayers
             cmake --version
             vulkaninfo
