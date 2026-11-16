@@ -10,15 +10,51 @@
 #include "../util/TestDevice.h"
 
 #include <array>
+#include <cstdarg>
+#include <string>
+#include <igl/Common.h>
 #include <igl/Device.h>
 #include <igl/Texture.h>
 #include <igl/tests/util/device/vulkan/TestDevice.h>
+#include <igl/vulkan/Common.h>
 #include <igl/vulkan/Texture.h>
 #include <igl/vulkan/VulkanTexture.h>
 
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
 
 namespace igl::tests {
+
+namespace {
+thread_local int sDebugAbortCount = 0;
+
+/// Counts the debug aborts raised on this thread while it lives. The count stays 0 in builds where
+/// debug aborts are compiled out, so the checks on it only bite where they are enabled.
+class ScopedDebugAbortCounter {
+ public:
+  ScopedDebugAbortCounter() : previous_(iglGetDebugAbortListener()) {
+    sDebugAbortCount = 0;
+    iglSetDebugAbortListener([](const char* /*category*/,
+                                const char* /*reason*/,
+                                const char* /*file*/,
+                                const char* /*func*/,
+                                int /*line*/,
+                                const char* /*format*/,
+                                va_list /*ap*/) { ++sDebugAbortCount; });
+  }
+  ~ScopedDebugAbortCounter() {
+    iglSetDebugAbortListener(previous_);
+  }
+  ScopedDebugAbortCounter(const ScopedDebugAbortCounter&) = delete;
+  ScopedDebugAbortCounter& operator=(const ScopedDebugAbortCounter&) = delete;
+
+  [[nodiscard]] static int count() {
+    return sDebugAbortCount;
+  }
+
+ private:
+  IGLErrorHandlerFunc previous_;
+};
+} // namespace
 
 class TextureVulkanExtendedTest : public ::testing::Test {
  public:
@@ -203,6 +239,79 @@ TEST_F(TextureVulkanExtendedTest, TextureUploadPropagatesStagingFailure) {
   const Result upload = texture->upload(texture->getFullRange(0), pixels.data());
   EXPECT_FALSE(upload.isOk());
   EXPECT_EQ(upload.code, Result::Code::RuntimeError);
+}
+
+TEST_F(TextureVulkanExtendedTest, AReportedImageCreationFailureIsReturnedWithItsVkResult) {
+  if (!IGL_VULKAN_USE_VMA) {
+    GTEST_SKIP() << "The allocation tests run on the VMA path";
+  }
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+
+  const ScopedDebugAbortCounter aborts;
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateImage,
+         VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  Result ret;
+  const auto texture = fd.device()->createTexture(
+      TextureDesc::new2D(
+          TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  EXPECT_EQ(texture, nullptr);
+  EXPECT_EQ(ret.code, Result::Code::ArgumentOutOfRange);
+  EXPECT_NE(ret.message.find(ivkGetVulkanResultString(VK_ERROR_OUT_OF_DEVICE_MEMORY)),
+            std::string::npos)
+      << ret.message;
+  EXPECT_EQ(ScopedDebugAbortCounter::count(), 0);
+}
+
+TEST_F(TextureVulkanExtendedTest, AReportedImageViewCreationFailureIsReturnedWithItsVkResult) {
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+
+  const ScopedDebugAbortCounter aborts;
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateImageView,
+         VK_ERROR_OUT_OF_HOST_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  Result ret;
+  const auto texture = fd.device()->createTexture(
+      TextureDesc::new2D(
+          TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  EXPECT_EQ(texture, nullptr);
+  EXPECT_EQ(ret.code, Result::Code::ArgumentOutOfRange);
+  EXPECT_NE(ret.message.find("Cannot create VulkanImageView"), std::string::npos) << ret.message;
+  EXPECT_NE(ret.message.find(ivkGetVulkanResultString(VK_ERROR_OUT_OF_HOST_MEMORY)),
+            std::string::npos)
+      << ret.message;
+  EXPECT_EQ(ScopedDebugAbortCounter::count(), 0);
+}
+
+TEST_F(TextureVulkanExtendedTest,
+       AReportedImageViewFailureOfATextureViewIsReturnedWithItsVkResult) {
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+
+  Result ret;
+  const auto base = fd.device()->createTexture(
+      TextureDesc::new2D(
+          TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled),
+      &ret);
+  ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
+  ASSERT_NE(base, nullptr);
+
+  const ScopedDebugAbortCounter aborts;
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateImageView,
+         VK_ERROR_OUT_OF_HOST_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  const auto view = fd.device()->createTextureView(base, TextureViewDesc{}, &ret);
+  EXPECT_EQ(view, nullptr);
+  EXPECT_EQ(ret.code, Result::Code::ArgumentOutOfRange);
+  EXPECT_NE(ret.message.find("Cannot create VulkanImageView"), std::string::npos) << ret.message;
+  EXPECT_EQ(ScopedDebugAbortCounter::count(), 0);
 }
 
 } // namespace igl::tests
