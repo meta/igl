@@ -3091,6 +3091,46 @@ TEST_F(VulkanImmediateCommandsTest,
   }
 }
 
+TEST_F(VulkanImmediateCommandsTest, HandlelessDeferredTaskOfAnOpenRecordingWaitsForItsSubmission) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Open recording deferred task test");
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, 1'000'000);
+  const auto earlier = ctx.immediate_->submit(ctx.immediate_->acquire());
+  completeSubmissions(1);
+  ASSERT_TRUE(ctx.immediate_->isReady(earlier));
+  bool ran = false;
+  const auto& recording = ctx.immediate_->acquire();
+  ctx.deferredTask(std::packaged_task<void()>([&ran] { ran = true; }));
+  const auto handle = ctx.immediate_->submit(recording);
+
+  // The task waits for the recording that was open, not just for the work submitted before it.
+  gQueue.blockingWaitsComplete = false;
+  ctx.waitDeferredTasks();
+  EXPECT_FALSE(ran);
+  gQueue.blockingWaitsComplete = true;
+  ctx.waitDeferredTasks();
+  EXPECT_TRUE(ran);
+  EXPECT_TRUE(ctx.immediate_->isReady(handle));
+}
+
+TEST_F(VulkanImmediateCommandsTest,
+       HandlelessDeferredTaskWithoutAnOpenRecordingWaitsForTheLastSubmission) {
+  auto& ctx = getVulkanContext();
+  const FakeContextPool fakePool(*this, ctx.immediate_, "Last submission deferred task test");
+  const ScopedValue<uint64_t> timeout(ctx.config_.fenceTimeoutNanoseconds, 1'000'000);
+  const auto last = ctx.immediate_->submit(ctx.immediate_->acquire());
+  bool ran = false;
+  ctx.deferredTask(std::packaged_task<void()>([&ran] { ran = true; }));
+
+  gQueue.blockingWaitsComplete = false;
+  ctx.waitDeferredTasks();
+  EXPECT_FALSE(ran);
+  gQueue.blockingWaitsComplete = true;
+  ctx.waitDeferredTasks();
+  EXPECT_TRUE(ran);
+  EXPECT_TRUE(ctx.immediate_->isReady(last));
+}
+
 TEST_F(VulkanImmediateCommandsTest, ReadinessFollowsSubmissionsWhileARecordingStaysOpen) {
   const auto pool = makeFakePool("Held recording test");
 
