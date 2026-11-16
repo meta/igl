@@ -91,6 +91,18 @@ uint64_t handleKey(T handle) {
   }
 }
 
+/// An opaque non-null Vulkan handle for submissions that never reach the device. A non-dispatchable
+/// handle is a 64-bit integer on 32-bit platforms.
+template<typename T>
+T opaqueHandle(uint64_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<T>(static_cast<uintptr_t>(value));
+  } else {
+    return static_cast<T>(value);
+  }
+}
+
 template<typename T>
 std::string handleName(const std::map<uint64_t, size_t>& names, const char* prefix, T handle) {
   const auto it = names.find(handleKey(handle));
@@ -2373,7 +2385,7 @@ TEST_F(VulkanImmediateCommandsTest, SubmittingAStaleWrapperLeavesAFreeRowFree) {
   // What `submit()` does to the row of a wrapper that is no longer encoding: nothing.
   moveRowToSubmitted(commands, row);
   EXPECT_STREQ(rowState(commands, row), "Free");
-  EXPECT_EQ(wrapper.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_EQ(wrapper.cmdBuf, nullptr);
   EXPECT_FALSE(wrapper.isEncoding);
   EXPECT_TRUE(rowAgrees(commands, row));
   // Whatever the row state is now, nothing was submitted on this row: free it before anything else
@@ -2386,7 +2398,7 @@ TEST_F(VulkanImmediateCommandsTest, SubmittingAStaleWrapperLeavesAFreeRowFree) {
   const auto handle = commands.submit(again);
   EXPECT_STREQ(rowState(commands, row), "Submitted");
   EXPECT_FALSE(again.isEncoding);
-  EXPECT_NE(again.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_NE(again.cmdBuf, nullptr);
   EXPECT_TRUE(rowAgrees(commands, row));
   EXPECT_EQ(commands.wait(handle), VK_SUCCESS);
 }
@@ -2442,7 +2454,7 @@ TEST_F(VulkanImmediateCommandsTest, WaitAllLeavesARecordingThatIsStillOpenAlone)
   static_cast<void>(commands.submit(inner));
   commands.waitAll();
   EXPECT_TRUE(outer.isEncoding);
-  EXPECT_NE(outer.cmdBuf, VK_NULL_HANDLE);
+  EXPECT_NE(outer.cmdBuf, nullptr);
   EXPECT_STREQ(rowState(commands, outer.handle.bufferIndex), "Encoding");
   EXPECT_STREQ(rowState(commands, inner.handle.bufferIndex), "Free");
   // Only the submitted row is waited on and reset; the open recording is not touched.
@@ -2560,10 +2572,8 @@ TEST_F(VulkanImmediateCommandsTest, InjectedSemaphoreSubmitCallTraceIsUnchanged)
   gTrace.lines.clear();
 
   // Opaque non-null handles: the traced submit never reaches the device.
-  // NOLINTBEGIN(performance-no-int-to-ptr)
-  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
-  const auto signalSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x20));
-  // NOLINTEND(performance-no-int-to-ptr)
+  const auto waitSemaphore = opaqueHandle<VkSemaphore>(0x10);
+  const auto signalSemaphore = opaqueHandle<VkSemaphore>(0x20);
   ASSERT_TRUE(commands.waitSemaphore(waitSemaphore, 0));
   ASSERT_TRUE(commands.signalSemaphore(signalSemaphore, 0));
   const auto handle = commands.submit(commands.acquire());
@@ -4319,8 +4329,7 @@ TEST_F(VulkanImmediateCommandsTest,
        ARecordingThatIsNotSubmittedDropsItsInjectedSemaphoresCallTrace) {
   auto& ctx = getVulkanContext();
   // An opaque non-null handle: the traced submissions never reach the device.
-  // NOLINTNEXTLINE(performance-no-int-to-ptr)
-  const auto signalSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x20));
+  const auto signalSemaphore = opaqueHandle<VkSemaphore>(0x20);
   const VulkanFunctionTable vf = tracedTable(ctx.vf_);
   // Without the chain, and with an injected signal but no injected wait: nothing orders later work
   // after the recording, so the next submission is not stopped.
@@ -5568,8 +5577,7 @@ TEST_F(VulkanImmediateCommandsTest, AnUnchainedRecordingThatIsNotSubmittedDoesNo
 }
 
 TEST_F(VulkanImmediateCommandsTest, ARecordingWithAnInjectedWaitThatIsNotSubmittedStopsTheQueue) {
-  // NOLINTNEXTLINE(performance-no-int-to-ptr)
-  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  const auto waitSemaphore = opaqueHandle<VkSemaphore>(0x10);
   // Without the chain, an injected wait still orders the next submission after the recording.
   const auto pool = makeFakePool("Injected wait queue stop test");
   chained(*pool) = false;
@@ -5587,8 +5595,7 @@ TEST_F(VulkanImmediateCommandsTest, ARecordingWithAnInjectedWaitThatIsNotSubmitt
 
 TEST_F(VulkanImmediateCommandsTest,
        ADoubleOutOfMemoryWithAnInjectedWaitStopsTheQueueOfBothPoolsAtOnce) {
-  // NOLINTNEXTLINE(performance-no-int-to-ptr)
-  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  const auto waitSemaphore = opaqueHandle<VkSemaphore>(0x10);
   for (const bool isChained : {false, true}) {
     SCOPED_TRACE(isChained);
     const auto pool = makeFakePool("Double out of memory queue stop test");
@@ -5610,8 +5617,7 @@ TEST_F(VulkanImmediateCommandsTest,
 }
 
 TEST_F(VulkanImmediateCommandsTest, AFailedEndWithAnInjectedWaitStopsTheQueueAtOnce) {
-  // NOLINTNEXTLINE(performance-no-int-to-ptr)
-  const auto waitSemaphore = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x10));
+  const auto waitSemaphore = opaqueHandle<VkSemaphore>(0x10);
   for (const bool isChained : {true, false}) {
     const auto pool = makeFakePool("Failed end queue stop test");
     const auto other = makeFakePool("Failed end queue stop test, other pool");

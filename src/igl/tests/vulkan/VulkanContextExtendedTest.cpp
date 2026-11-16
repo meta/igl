@@ -414,7 +414,12 @@ thread_local PoolFaults gPool;
 
 template<typename T>
 uint64_t keyOf(T handle) {
-  return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+  if constexpr (std::is_pointer_v<T>) {
+    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+  } else {
+    // A non-dispatchable handle is a 64-bit integer on 32-bit platforms.
+    return static_cast<uint64_t>(handle);
+  }
 }
 
 template<typename T>
