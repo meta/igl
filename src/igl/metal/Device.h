@@ -9,7 +9,7 @@
 
 @protocol MTLCommandQueue;
 @protocol MTLDevice;
-#import <Metal/MTLTypes.h>
+#import <Metal/MTLResource.h>
 #include <ldrutils/lutils/Pool.h>
 #include <mutex>
 #include <igl/CommandEncoder.h>
