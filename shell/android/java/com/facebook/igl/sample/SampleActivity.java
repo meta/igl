@@ -80,7 +80,7 @@ public class SampleActivity extends Activity implements View.OnClickListener {
 
     // set up tab and cached sample view for different backend types
     mBackendViewFrame = new FrameLayout(this);
-    mConfigs = SampleLib.getRenderSessionConfigs();
+    mConfigs = SampleLib.getRenderSessionConfigs(getIntent());
     final int vulkanConfig = shouldUseVulkanOnly() ? findVulkanConfig() : -1;
     final boolean vulkanOnly = vulkanConfig >= 0;
     curConfig = vulkanOnly ? vulkanConfig : 0;
@@ -108,6 +108,7 @@ public class SampleActivity extends Activity implements View.OnClickListener {
                 getApplication(),
                 mConfigs[i].version,
                 mConfigs[i].swapchainColorTextureFormat,
+                mConfigs[i].swapchainColorSpace,
                 getIntent());
       } else if (mConfigs[i].version.flavor == SampleLib.BackendFlavor.OpenGL_ES) {
         backendView =
@@ -115,6 +116,7 @@ public class SampleActivity extends Activity implements View.OnClickListener {
                 getApplication(),
                 mConfigs[i].version,
                 mConfigs[i].swapchainColorTextureFormat,
+                mConfigs[i].swapchainColorSpace,
                 mEnableStencilBuffer,
                 getIntent());
         ((SampleView) backendView).onPause();

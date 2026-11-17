@@ -52,11 +52,12 @@ public class SampleLib {
     }
   }
 
-  public static native RenderSessionConfig[] getRenderSessionConfigs();
+  public static native RenderSessionConfig[] getRenderSessionConfigs(Intent intent);
 
-  public static native void init(
+  public static native boolean init(
       BackendVersion backendVersion,
       int swapchainColorTextureFormat,
+      int swapchainColorSpace,
       AssetManager assetManager,
       Surface surface,
       Intent intent,
@@ -247,12 +248,17 @@ public class SampleLib {
     String displayName;
     BackendVersion version;
     int swapchainColorTextureFormat;
+    int swapchainColorSpace;
 
     public RenderSessionConfig(
-        String displayName, BackendVersion version, int swapchainColorTextureFormat) {
+        String displayName,
+        BackendVersion version,
+        int swapchainColorTextureFormat,
+        int swapchainColorSpace) {
       this.displayName = displayName;
       this.version = version;
       this.swapchainColorTextureFormat = swapchainColorTextureFormat;
+      this.swapchainColorSpace = swapchainColorSpace;
     }
   }
 }

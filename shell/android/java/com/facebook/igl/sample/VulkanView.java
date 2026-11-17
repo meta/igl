@@ -12,6 +12,7 @@ package com.facebook.igl.shell;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.PixelFormat;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -26,12 +27,14 @@ import android.view.SurfaceView;
 public class VulkanView extends SurfaceView
     implements SurfaceHolder.Callback2, Choreographer.FrameCallback {
   private static String TAG = "VulkanView";
+  private static final float HDR_HEADROOM = 1000.0f / 203.0f;
   private float lastTouchX = 0.0f;
   private float lastTouchY = 0.0f;
   Context mContext;
   RenderThread mRenderThread;
   private final SampleLib.BackendVersion mBackendVersion;
   private final int mSwapchainColorTextureFormat;
+  private final int mSwapchainColorSpace;
   private Intent mIntent;
   private final SampleLib.DisplayRateWatcher mDisplayRateWatcher;
 
@@ -40,6 +43,7 @@ public class VulkanView extends SurfaceView
       Context context,
       SampleLib.BackendVersion backendVersion,
       int swapchainColorTextureFormat,
+      int swapchainColorSpace,
       Intent intent) {
 
     super(context);
@@ -51,6 +55,7 @@ public class VulkanView extends SurfaceView
     mContext = context;
     mBackendVersion = backendVersion;
     mSwapchainColorTextureFormat = swapchainColorTextureFormat;
+    mSwapchainColorSpace = swapchainColorSpace;
     mIntent = intent;
 
     // The render thread's Handler is the hop onto it. A null thread or handler means there is
@@ -113,7 +118,12 @@ public class VulkanView extends SurfaceView
   public void surfaceCreated(SurfaceHolder surfaceHolder) {
     // Start rendering on the RenderThread
     mRenderThread =
-        new RenderThread(mContext, surfaceHolder, mBackendVersion, mSwapchainColorTextureFormat);
+        new RenderThread(
+            mContext,
+            surfaceHolder,
+            mBackendVersion,
+            mSwapchainColorTextureFormat,
+            mSwapchainColorSpace);
     mRenderThread.setName("Vulkan Render Thread");
     mRenderThread.start();
     mRenderThread.waitUntilReady();
@@ -125,6 +135,16 @@ public class VulkanView extends SurfaceView
       // We cannot check isHeadless() here because init() runs asynchronously on
       // the RenderThread and hasn't read shell params yet.
       rh.sendSurfaceCreated();
+    }
+  }
+
+  private void requestHdrHeadroom() {
+    try {
+      if (Build.VERSION.SDK_INT >= 35) {
+        setDesiredHdrHeadroom(HDR_HEADROOM);
+      }
+    } catch (RuntimeException error) {
+      Log.w(TAG, "Could not request HDR headroom", error);
     }
   }
 
@@ -180,16 +200,19 @@ public class VulkanView extends SurfaceView
     private boolean mReady = false;
     private final SampleLib.BackendVersion mBackendVersion;
     private final int mSwapchainColorTextureFormat;
+    private final int mSwapchainColorSpace;
 
     public RenderThread(
         Context context,
         SurfaceHolder surfaceHolder,
         SampleLib.BackendVersion backendVersion,
-        int swapchainColorTextureformat) {
+        int swapchainColorTextureformat,
+        int swapchainColorSpace) {
       mContext = context;
       mSurfaceHolder = surfaceHolder;
       mBackendVersion = backendVersion;
       mSwapchainColorTextureFormat = swapchainColorTextureformat;
+      mSwapchainColorSpace = swapchainColorSpace;
     }
 
     public RenderHandler getHandler() {
@@ -230,28 +253,33 @@ public class VulkanView extends SurfaceView
     public void surfaceCreated() {
       Log.d(TAG, "SurfaceCreated");
       Surface surface = mSurfaceHolder.getSurface();
-      SampleLib.init(
-          mBackendVersion,
-          mSwapchainColorTextureFormat,
-          mContext.getAssets(),
-          surface,
-          mIntent,
-          SampleLib.displayCurrentRefreshRateHz(mContext),
-          SampleLib.displayMaxRefreshRateHz(mContext));
+      boolean hdrDisplay =
+          SampleLib.init(
+              mBackendVersion,
+              mSwapchainColorTextureFormat,
+              mSwapchainColorSpace,
+              mContext.getAssets(),
+              surface,
+              mIntent,
+              SampleLib.displayCurrentRefreshRateHz(mContext),
+              SampleLib.displayMaxRefreshRateHz(mContext));
 
-      // Now that init() has completed and shell params are read, decide render mode.
-      if (SampleLib.isHeadless()) {
-        // Headless: enter unrestricted render loop directly on this thread
+      boolean headless = SampleLib.isHeadless();
+      new Handler(Looper.getMainLooper())
+          .post(
+              () -> {
+                if (mRenderThread != this) {
+                  return;
+                }
+                if (hdrDisplay) {
+                  requestHdrHeadroom();
+                }
+                if (!headless) {
+                  Choreographer.getInstance().postFrameCallback(VulkanView.this);
+                }
+              });
+      if (headless) {
         startUnrestrictedLoop();
-      } else {
-        // Normal: kick off vsync-driven rendering via Choreographer on the UI thread
-        new Handler(Looper.getMainLooper())
-            .post(
-                () -> {
-                  if (mRenderThread != null) {
-                    Choreographer.getInstance().postFrameCallback(VulkanView.this);
-                  }
-                });
       }
     }
 

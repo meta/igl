@@ -40,10 +40,17 @@ public class SampleView extends GLSurfaceView {
       Context context,
       SampleLib.BackendVersion backendVersion,
       int swapchainColorTextureFormat,
+      int swapchainColorSpace,
       boolean enableStencilBuffer,
       Intent intent) {
     super(context);
-    init(context, backendVersion, swapchainColorTextureFormat, enableStencilBuffer, intent);
+    init(
+        context,
+        backendVersion,
+        swapchainColorTextureFormat,
+        swapchainColorSpace,
+        enableStencilBuffer,
+        intent);
   }
 
   @SuppressWarnings("this-escape")
@@ -51,9 +58,10 @@ public class SampleView extends GLSurfaceView {
       Context context,
       SampleLib.BackendVersion backendVersion,
       int swapchainColorTextureFormat,
+      int swapchainColorSpace,
       Intent intent) {
     super(context);
-    init(context, backendVersion, swapchainColorTextureFormat, false, intent);
+    init(context, backendVersion, swapchainColorTextureFormat, swapchainColorSpace, false, intent);
   }
 
   @SuppressWarnings("this-escape")
@@ -61,6 +69,7 @@ public class SampleView extends GLSurfaceView {
       Context context,
       SampleLib.BackendVersion backendVersion,
       int swapchainColorTextureFormat,
+      int swapchainColorSpace,
       boolean enableStencilBuffer,
       Intent intent) {
 
@@ -83,6 +92,7 @@ public class SampleView extends GLSurfaceView {
             context,
             backendVersion,
             swapchainColorTextureFormat,
+            swapchainColorSpace,
             renderSessionInitLatch,
             mIntent,
             this.getHolder()));
@@ -283,6 +293,7 @@ public class SampleView extends GLSurfaceView {
     private final Intent mIntent;
     private final SampleLib.BackendVersion mBackendVersion;
     private final int mSwapchainColorTextureFormat;
+    private final int mSwapchainColorSpace;
     private CountDownLatch mRenderSessionInitLatch;
     /// GLSurfaceView drives GL through its own EGL surface and hands the Renderer nothing that
     /// identifies the window, but the native side needs the Surface to hold an ANativeWindow
@@ -293,6 +304,7 @@ public class SampleView extends GLSurfaceView {
         Context context,
         SampleLib.BackendVersion backendVersion,
         int swapchainColorTextureFormat,
+        int swapchainColorSpace,
         CountDownLatch renderSessionInitLatch,
         Intent intent,
         SurfaceHolder surfaceHolder) {
@@ -300,6 +312,7 @@ public class SampleView extends GLSurfaceView {
       mIntent = intent;
       mBackendVersion = backendVersion;
       mSwapchainColorTextureFormat = swapchainColorTextureFormat;
+      mSwapchainColorSpace = swapchainColorSpace;
       mRenderSessionInitLatch = renderSessionInitLatch;
       mSurfaceHolder = surfaceHolder;
     }
@@ -308,6 +321,7 @@ public class SampleView extends GLSurfaceView {
       SampleLib.init(
           mBackendVersion,
           mSwapchainColorTextureFormat,
+          mSwapchainColorSpace,
           mContext.getAssets(),
           mSurfaceHolder.getSurface(),
           mIntent,

@@ -7,9 +7,11 @@ MediaPrism demo and other IGL sample apps.
 ## Layout
 
 - `java/com/facebook/igl/sample/` — `SampleActivity`, `SampleLib`,
-  `SampleView`, `VulkanView`. The Activity owns the `Intent` and forwards it
-  to the surface views, which hand it to the JNI layer at first surface
-  creation.
+  `SampleView`, `VulkanView`. `SampleActivity` passes its `Intent` to
+  `SampleLib.getRenderSessionConfigs()` before creating the surface views.
+  JNI initializes `Platform::argc()` / `argv()` from `args` before the
+  factory requests session configs. The views pass the Intent to
+  `SampleLib.init()` at first surface creation for `ShellParams` extras.
 - `jni/` — `Jni.cpp` (Java ↔ native bridge, Intent extra parsing) and
   `TinyRenderer` (per-backend `IDevice` setup + frame loop).
 
@@ -18,8 +20,8 @@ MediaPrism demo and other IGL sample apps.
 The shell exposes one Intent extra to native CLI parsers: a single string
 named `args` whose value is forwarded to
 `igl::shell::Platform::argc()` / `argv()` after whitespace tokenization.
-RenderSessions consume those tokens through the same shared flag parsers
-used on Mac, iOS, and Windows.
+`requestedSessionConfigs()` and RenderSessions consume those tokens through
+the same shared flag parsers used on Mac, iOS, and Windows.
 
 Example — launch the MediaPrism demo with the file input source instead of
 the default Camera:
@@ -38,12 +40,18 @@ adb shell am start -n com.facebook.igl.sample/com.facebook.igl.shell.SampleActiv
 
 Notes:
 
+- `getRenderSessionConfigs(intent)` forwards `args` before any surface is
+  created, so `requestedSessionConfigs()` sees the launch flags.
 - Other Intent extras (e.g. `debug.iglshell.<session>.*` system properties or
-  custom Bundle keys) stay on the existing `ShellParams` path and are not
-  surfaced through `Platform::argv()`.
+  custom Bundle keys) reach `ShellParams` through `SampleLib.init()` at
+  surface creation. `Platform::argv()` contains only `args` tokens.
 - When no `args` extra is supplied, `Platform::argc()` returns `0` and
-  `Platform::argv()` returns `nullptr` — preserving the historical Android
-  behavior.
+  `Platform::argv()` returns `nullptr`.
 - The placeholder `argv[0]` ("`igl_android_shell`") is reserved as a program
   name so `findCliFlag()`-style parsers (which skip index 0) see the real
   tokens at indices ≥ 1.
+
+## Assumptions
+
+- Hosting activities follow `SampleActivity`'s order: request session
+  configs before creating the surface views.

@@ -29,11 +29,14 @@
 #include <shell/shared/renderSession/RenderSession.h>
 #include <shell/shared/renderSession/ShellParams.h>
 #if IGL_BACKEND_VULKAN
+#include <android/data_space.h>
+#include <dlfcn.h>
 #include <igl/ShaderCreator.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/HWDevice.h>
 #include <igl/vulkan/PlatformDevice.h>
 #include <igl/vulkan/VulkanContext.h>
+#include <igl/vulkan/VulkanSwapchain.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -42,6 +45,34 @@
 #include <unordered_set>
 
 namespace {
+
+#if IGL_BACKEND_VULKAN
+const char* IGL_NULLABLE getHdrDisplayUnsupportedReason(igl::IDevice* IGL_NULLABLE device,
+                                                        ANativeWindow* IGL_NULLABLE window) {
+  if (!device) {
+    return "Vulkan device creation failed";
+  }
+  if (!window) {
+    return "native window unavailable";
+  }
+  auto& context = static_cast<igl::vulkan::Device&>(*device).getVulkanContext();
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&context);
+  if (!context.hasSwapchain() ||
+      context.swapchain_->getFormatColor() != VK_FORMAT_R16G16B16A16_SFLOAT) {
+    return "drawable is not RGBA_F16";
+  }
+  using GetBuffersDataSpaceFn = int32_t (*)(ANativeWindow*);
+  static const auto kGetDataSpace =
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) dlsym() returns void*.
+      reinterpret_cast<GetBuffersDataSpaceFn>(
+          dlsym(RTLD_DEFAULT, "ANativeWindow_getBuffersDataSpace"));
+  if (!kGetDataSpace) {
+    return "ANativeWindow_getBuffersDataSpace() requires API 28";
+  }
+  return kGetDataSpace(window) == ADATASPACE_SCRGB_LINEAR ? nullptr
+                                                          : "window is not ADATASPACE_SCRGB_LINEAR";
+}
+#endif
 
 // Helper functions to read Android system properties.
 std::optional<std::string> getAndroidSystemProperty(const char* keyName) noexcept {
@@ -500,10 +531,12 @@ void TinyRenderer::init(AAssetManager* mgr,
                         shell::IRenderSessionFactory& factory,
                         BackendVersion backendVersion,
                         TextureFormat swapchainColorTextureFormat,
+                        ColorSpace swapchainColorSpace,
                         const std::vector<std::string>& args,
                         float displayCurrentRefreshRateHz,
                         float displayMaxRefreshRateHz) {
   backendVersion_ = backendVersion;
+  requestedSwapchainColorSpace_ = swapchainColorSpace;
   adoptNativeWindow(nativeWindow);
   displayRates_->currentHz = displayCurrentRefreshRateHz;
   displayRates_->maxHz = displayMaxRefreshRateHz;
@@ -579,27 +612,17 @@ void TinyRenderer::init(AAssetManager* mgr,
 
 #if IGL_BACKEND_VULKAN
   case igl::BackendFlavor::Vulkan: {
-    IGL_DEBUG_ASSERT(nativeWindow != nullptr);
+    if (!nativeWindow) {
+      hdrDisplayUnsupportedReason_ = "native window unavailable";
+      return;
+    }
     vulkan::VulkanContextConfig config;
     config.terminateOnValidationError = true;
     config.requestedSwapChainTextureFormat = swapchainColorTextureFormat;
+    config.swapChainColorSpace = swapchainColorSpace;
     // Don't use headless mode on Android - instead we'll render to offscreen surface
     config.headless = false;
     factory.configureVulkanContext(shellParams_, config);
-
-    auto ctx = vulkan::HWDevice::createContext(config, nativeWindow);
-    if (!ctx) {
-      __android_log_print(ANDROID_LOG_ERROR, "igl", "Vulkan 1.1 or newer is required.\n");
-      return;
-    }
-
-    auto devices =
-        vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &result);
-
-    if (!result.isOk() || devices.empty()) {
-      __android_log_print(ANDROID_LOG_ERROR, "igl", "Error: %s\n", result.message.c_str());
-      return;
-    }
 
     if (shellParams_.isHeadless) {
       // Use viewport size from shell params for headless mode
@@ -610,35 +633,58 @@ void TinyRenderer::init(AAssetManager* mgr,
       height_ = static_cast<uint32_t>(ANativeWindow_getHeight(nativeWindow));
     }
 
-    // https://github.com/gpuweb/gpuweb/issues/4283
-    // Only 49.5% of Android devices support dualSrcBlend.
-    // Android devices that do not support dualSrcBlend primarily use ARM, ImgTec, and Qualcomm
-    // GPUs.
-    // https://vulkan.gpuinfo.org/listdevicescoverage.php?feature=dualSrcBlend&platform=android&option=not
-    igl::vulkan::VulkanFeatures vulkanFeatures(config);
-    vulkanFeatures.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
-    factory.addVulkanFeatureRequests(vulkanFeatures);
+    const auto createDevice = [&]() -> std::unique_ptr<IDevice> {
+      auto ctx = vulkan::HWDevice::createContext(config, nativeWindow);
+      if (!ctx) {
+        __android_log_print(ANDROID_LOG_ERROR, "igl", "Vulkan 1.1 or newer is required.\n");
+        return nullptr;
+      }
+      auto devices =
+          vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &result);
+      if (!result.isOk() || devices.empty()) {
+        __android_log_print(ANDROID_LOG_ERROR, "igl", "Error: %s\n", result.message.c_str());
+        return nullptr;
+      }
+      igl::vulkan::VulkanFeatures vulkanFeatures(config);
+      vulkanFeatures.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
+      factory.addVulkanFeatureRequests(vulkanFeatures);
 
-    // Opt-in: sessions may declare extra Vulkan device extensions via the factory.
-    // Default is empty -> behavior unchanged for sessions that declare nothing.
-    const std::vector<std::string> extraDeviceExtensions =
-        factory.requestedVulkanDeviceExtensions();
-    std::vector<const char*> extraDeviceExtensionPtrs;
-    extraDeviceExtensionPtrs.reserve(extraDeviceExtensions.size());
-    for (const auto& ext : extraDeviceExtensions) {
-      extraDeviceExtensionPtrs.push_back(ext.c_str());
+      const std::vector<std::string> extraDeviceExtensions =
+          factory.requestedVulkanDeviceExtensions();
+      std::vector<const char*> extraDeviceExtensionPtrs;
+      extraDeviceExtensionPtrs.reserve(extraDeviceExtensions.size());
+      for (const auto& ext : extraDeviceExtensions) {
+        extraDeviceExtensionPtrs.push_back(ext.c_str());
+      }
+      auto device = vulkan::HWDevice::create(
+          std::move(ctx),
+          devices[0],
+          width_,
+          height_,
+          extraDeviceExtensionPtrs.size(),
+          extraDeviceExtensionPtrs.empty() ? nullptr : extraDeviceExtensionPtrs.data(),
+          &vulkanFeatures,
+          "TinyRenderer",
+          &result);
+      if (!device || !result.isOk()) {
+        IGL_LOG_ERROR("Vulkan device creation failed: %s\n", result.message.c_str());
+        return nullptr;
+      }
+      return device;
+    };
+    d = createDevice();
+    if (swapchainColorSpace == ColorSpace::ExtendedSRGBLinear) {
+      hdrDisplayUnsupportedReason_ = getHdrDisplayUnsupportedReason(d.get(), nativeWindow);
+      if (hdrDisplayUnsupportedReason_) {
+        d.reset();
+        config.requestedSwapChainTextureFormat = TextureFormat::BGRA_SRGB;
+        config.swapChainColorSpace = ColorSpace::SRGBNonlinear;
+        d = createDevice();
+      }
     }
-
-    d = vulkan::HWDevice::create(std::move(ctx),
-                                 devices[0],
-                                 width_, // width
-                                 height_, // height,,
-                                 extraDeviceExtensionPtrs.size(),
-                                 extraDeviceExtensionPtrs.empty() ? nullptr
-                                                                  : extraDeviceExtensionPtrs.data(),
-                                 &vulkanFeatures,
-                                 "TinyRenderer",
-                                 &result);
+    if (!d) {
+      return;
+    }
     break;
   }
 #endif
@@ -688,6 +734,15 @@ void TinyRenderer::init(AAssetManager* mgr,
   // Outside the ContextGuard above, so the EGL lever is read against the context the shell
   // presents on rather than whichever one IGL left current while building the device.
   installPresentationRateBackend();
+}
+
+bool TinyRenderer::isHdrDisplay() const {
+#if IGL_BACKEND_VULKAN
+  return backendVersion_.flavor == BackendFlavor::Vulkan && platform_ &&
+         getHdrDisplayUnsupportedReason(&platform_->getDevice(), nativeWindow_) == nullptr;
+#else
+  return false;
+#endif
 }
 
 void TinyRenderer::setDisplayRates(float currentHz, float maxHz, bool reinstallBackend) {

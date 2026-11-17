@@ -36,6 +36,7 @@ class TinyRenderer final {
             shell::IRenderSessionFactory& factor,
             BackendVersion backendVersion,
             TextureFormat swapchainColorTextureFormat,
+            ColorSpace swapchainColorSpace,
             const std::vector<std::string>& args = {},
             float displayCurrentRefreshRateHz = 0.0f,
             float displayMaxRefreshRateHz = 0.0f);
@@ -86,6 +87,16 @@ class TinyRenderer final {
     return shellParams_.isHeadless;
   }
 
+  [[nodiscard]] bool isHdrDisplay() const;
+
+  [[nodiscard]] ColorSpace requestedSwapchainColorSpace() const noexcept {
+    return requestedSwapchainColorSpace_;
+  }
+
+  [[nodiscard]] const char* IGL_NULLABLE hdrDisplayUnsupportedReason() const noexcept {
+    return hdrDisplayUnsupportedReason_;
+  }
+
   [[nodiscard]] const BackendVersion& backendVersion() const noexcept {
     return backendVersion_;
   }
@@ -100,6 +111,8 @@ class TinyRenderer final {
   uint32_t height_ = 0;
   TextureFormat swapchainColorTextureFormat_ = TextureFormat::RGBA_UNorm8;
   ANativeWindow* nativeWindow_ = nullptr;
+  ColorSpace requestedSwapchainColorSpace_ = ColorSpace::SRGBNonlinear;
+  const char* IGL_NULLABLE hdrDisplayUnsupportedReason_ = "renderer initialization failed";
   /// Shared with the installed backend's rates provider, so an update here is visible to a
   /// backend that is already running rather than only to the next one. Written and read on
   /// the shell's render thread, which is where every JNI entry point that touches it and

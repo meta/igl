@@ -72,6 +72,7 @@ namespace {
 std::unique_ptr<shell::IRenderSessionFactory> factory;
 std::vector<std::unique_ptr<TinyRenderer>> renderers;
 std::optional<BackendVersion> activeBackendVersion;
+bool hdrDisplayLogged = false;
 
 // Process-lifetime storage backing igl::shell::Platform::argc()/argv(). The IGL
 // Android shell has no main()-supplied argv; we synthesize one from the
@@ -90,6 +91,8 @@ constexpr const char* kPlatformArgv0 = "igl_android_shell";
 // @fb-only
 // ShellParams customParams path in extractIntentExtras() still consumes them).
 constexpr const char* kArgsExtraName = "args";
+
+void initializeLaunchArgs(JNIEnv* env, jobject intent);
 
 constexpr auto* kBackendFlavorClassName = "com/facebook/igl/shell/SampleLib$BackendFlavor";
 constexpr auto* kBackendVersionClassName = "com/facebook/igl/shell/SampleLib$BackendVersion";
@@ -157,14 +160,19 @@ jobject toJava(JNIEnv* env, BackendVersion backendVersion) {
 jobject toJava(JNIEnv* env, const shell::RenderSessionConfig& config) {
   jclass jclass = env->FindClass(kRenderSessionConfigClassName);
   const std::string methodSignature =
-      std::string("(Ljava/lang/String;") + toTypeSignature(kBackendVersionClassName) + "I)V";
+      std::string("(Ljava/lang/String;") + toTypeSignature(kBackendVersionClassName) + "II)V";
   jmethodID constructor = env->GetMethodID(jclass, "<init>", methodSignature.c_str());
 
   jstring jdisplayName = env->NewStringUTF(config.displayName.c_str());
   jobject jbackendVersion = toJava(env, config.backendVersion);
   const jint jswapchainColorTextureFormat = static_cast<int>(config.swapchainColorTextureFormat);
-  jobject ret = env->NewObject(
-      jclass, constructor, jdisplayName, jbackendVersion, jswapchainColorTextureFormat);
+  const jint jswapchainColorSpace = static_cast<int>(config.swapchainColorSpace);
+  jobject ret = env->NewObject(jclass,
+                               constructor,
+                               jdisplayName,
+                               jbackendVersion,
+                               jswapchainColorTextureFormat,
+                               jswapchainColorSpace);
   env->DeleteLocalRef(jdisplayName);
   env->DeleteLocalRef(jbackendVersion);
   return ret;
@@ -198,12 +206,15 @@ std::optional<size_t> findRendererIndex(std::optional<BackendVersion> backendVer
 
 extern "C" {
 JNIEXPORT jobjectArray JNICALL
-Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env, jobject obj);
-JNIEXPORT void JNICALL
+Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env,
+                                                              jobject obj,
+                                                              jobject intent);
+JNIEXPORT jboolean JNICALL
 Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
                                            jobject obj,
                                            jobject jbackendVersion,
                                            jint jswapchainColorTextureFormat,
+                                           jint jswapchainColorSpace,
                                            jobject javaAssetManager,
                                            jobject surface,
                                            jobject intent,
@@ -254,7 +265,11 @@ JNIEXPORT jboolean JNICALL Java_com_facebook_igl_shell_SampleLib_isHeadless(JNIE
 };
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env, jobject /*obj*/) {
+Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env,
+                                                              jobject /*obj*/,
+                                                              jobject intent) {
+  initializeLaunchArgs(env, intent);
+  hdrDisplayLogged = false;
   if (!factory) {
     factory = shell::createDefaultRenderSessionFactory();
   }
@@ -359,6 +374,32 @@ Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env, jobje
   }
   return tokens;
 }
+
+namespace {
+void initializeLaunchArgs(JNIEnv* env, jobject intent) {
+  // Other Intent extras stay in extractIntentExtras() for ShellParams and are
+  // @fb-only
+  // bridge scoped to argv-style only).
+  const auto argsTokens = extractArgsExtra(env, intent);
+  gPlatformArgvStorage.clear();
+  gPlatformArgv.clear();
+  if (argsTokens.empty()) {
+    shell::Platform::initializeCommandLineArgs(0, nullptr);
+    return;
+  }
+  gPlatformArgvStorage.reserve(argsTokens.size() + 1);
+  gPlatformArgvStorage.emplace_back(kPlatformArgv0);
+  for (const auto& token : argsTokens) {
+    gPlatformArgvStorage.emplace_back(token);
+  }
+  gPlatformArgv.reserve(gPlatformArgvStorage.size());
+  for (auto& arg : gPlatformArgvStorage) {
+    gPlatformArgv.push_back(arg.data());
+  }
+  shell::Platform::initializeCommandLineArgs(static_cast<int>(gPlatformArgv.size()),
+                                             gPlatformArgv.data());
+}
+} // namespace
 
 // Helper function to extract all Intent extras as command-line style arguments
 // NOLINTNEXTLINE(misc-use-anonymous-namespace)
@@ -501,11 +542,12 @@ Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env, jobje
   return extras;
 }
 
-JNIEXPORT void JNICALL
+JNIEXPORT jboolean JNICALL
 Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
                                            jobject /*obj*/,
                                            jobject jbackendVersion,
                                            jint jtextureFormat,
+                                           jint jcolorSpace,
                                            jobject javaAssetManager,
                                            jobject surface,
                                            jobject intent,
@@ -513,9 +555,11 @@ Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
                                            jfloat jdisplayMaxRefreshRateHz) {
   const auto backendVersion = toBackendVersion(env, jbackendVersion);
   const auto swapchainColorTextureFormat = static_cast<TextureFormat>(jtextureFormat);
+  const auto swapchainColorSpace = static_cast<ColorSpace>(jcolorSpace);
+  const bool hdrRequested = swapchainColorSpace == ColorSpace::ExtendedSRGBLinear;
   const auto rendererIndex = findRendererIndex(backendVersion);
 
-  if (backendVersion && !rendererIndex) {
+  const auto createRenderer = [&]() {
     auto renderer = std::make_unique<TinyRenderer>();
     auto cmdLine = extractIntentExtras(env, intent);
     IGL_LOG_INFO("init: creating backend renderer cmd line: %d\n", cmdLine.size());
@@ -523,49 +567,25 @@ Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
       IGL_LOG_INFO("Param: %s\n", cmd.c_str());
     }
 
-    // Forward the argv-style `args` Intent extra (if present) to
-    // igl::shell::Platform::argc()/argv() so RenderSessions can consume CLI
-    // flags via the same shared parsers used on Mac/iOS/Windows. Other Intent
-    // extras stay in the broader cmdLine path above for ShellParams and are
-    // @fb-only
-    // bridge scoped to argv-style only). Storage is refreshed on every backend
-    // init so a tab switch with a different intent (rare but legal) picks up
-    // the new value.
-    const auto argsTokens = extractArgsExtra(env, intent);
-    if (argsTokens.empty()) {
-      // Preserve the historical Android argc=0/argv=null behavior so callers
-      // see "no args supplied" rather than a synthetic single-element argv.
-      gPlatformArgvStorage.clear();
-      gPlatformArgv.clear();
-      igl::shell::Platform::initializeCommandLineArgs(0, nullptr);
-    } else {
-      gPlatformArgvStorage.clear();
-      gPlatformArgv.clear();
-      gPlatformArgvStorage.reserve(argsTokens.size() + 1);
-      // Prepend a placeholder argv[0] so findCliFlag()-style parsers (which
-      // skip index 0 as the program name) see the real tokens at indices ≥ 1.
-      gPlatformArgvStorage.emplace_back(kPlatformArgv0);
-      for (const auto& tok : argsTokens) {
-        gPlatformArgvStorage.emplace_back(tok);
-      }
-      gPlatformArgv.reserve(gPlatformArgvStorage.size());
-      for (auto& s : gPlatformArgvStorage) {
-        gPlatformArgv.push_back(s.data());
-      }
-      igl::shell::Platform::initializeCommandLineArgs(static_cast<int>(gPlatformArgv.size()),
-                                                      gPlatformArgv.data());
-    }
-
     renderer->init(AAssetManager_fromJava(env, javaAssetManager),
                    surface ? ANativeWindow_fromSurface(env, surface) : nullptr,
                    *factory,
                    *backendVersion,
                    swapchainColorTextureFormat,
+                   swapchainColorSpace,
                    cmdLine,
                    static_cast<float>(jdisplayCurrentRefreshRateHz),
                    static_cast<float>(jdisplayMaxRefreshRateHz));
-    renderers.emplace_back(std::move(renderer));
+    if (rendererIndex) {
+      renderers[*rendererIndex] = std::move(renderer);
+    } else {
+      renderers.emplace_back(std::move(renderer));
+    }
     IGL_LOG_INFO("init: creating backend renderer: %s\n", toString(backendVersion).c_str());
+  };
+
+  if (backendVersion && !rendererIndex) {
+    createRenderer();
   } else if (rendererIndex) {
     // The replacement Surface is adopted BEFORE anything reinstalls the presentation-rate
     // backend, and setDisplayRates() below is one of the things that does. These renderers
@@ -586,6 +606,12 @@ Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
       IGL_LOG_INFO("init: Updating backend renderer: %s\n", toString(backendVersion).c_str());
       renderers[*rendererIndex]->recreateSwapchain(
           surface != nullptr ? ANativeWindow_fromSurface(env, surface) : nullptr, true);
+      if (renderers[*rendererIndex]->requestedSwapchainColorSpace() != swapchainColorSpace ||
+          (hdrRequested && renderers[*rendererIndex]->hdrDisplayUnsupportedReason() == nullptr &&
+           !renderers[*rendererIndex]->isHdrDisplay())) {
+        renderers[*rendererIndex].reset();
+        createRenderer();
+      }
     } else {
       IGL_LOG_INFO("init: no changes: %s\n", toString(backendVersion).c_str());
     }
@@ -594,6 +620,21 @@ Java_com_facebook_igl_shell_SampleLib_init(JNIEnv* env,
   }
 
   activeBackendVersion = backendVersion;
+  const auto finalRendererIndex = findRendererIndex(backendVersion);
+  const bool hdrDisplay = hdrRequested && finalRendererIndex &&
+                          renderers[*finalRendererIndex]->isHdrDisplay();
+  if (hdrRequested && !hdrDisplayLogged) {
+    hdrDisplayLogged = true;
+    if (hdrDisplay) {
+      IGL_LOG_INFO("HDR display: on\n");
+    } else {
+      [[maybe_unused]] const char* reason =
+          finalRendererIndex ? renderers[*finalRendererIndex]->hdrDisplayUnsupportedReason()
+                             : "backend unavailable";
+      IGL_LOG_INFO("HDR display: unsupported (%s)\n", reason ? reason : "drawable unavailable");
+    }
+  }
+  return hdrDisplay ? JNI_TRUE : JNI_FALSE;
 }
 
 // NOLINTBEGIN(misc-use-internal-linkage)
