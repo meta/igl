@@ -266,7 +266,7 @@ constexpr std::underlying_type_t<E> EnumToValue(E enumerator) noexcept {
 /// MARK: - ScopeGuard
 
 // a very minimalistic version of folly/ScopeGuard.h
-namespace {
+namespace detail {
 
 enum class ScopeGuardOnExit {};
 
@@ -288,10 +288,10 @@ ScopeGuard<T> operator+(ScopeGuardOnExit /*guard*/, T&& fn) {
   return ScopeGuard<T>(std::forward<T>(fn));
 }
 
-} // namespace
+} // namespace detail
 
 #define IGL_SCOPE_EXIT \
-  auto FB_ANONYMOUS_VARIABLE(SCOPE_EXIT_STATE) = ScopeGuardOnExit() + [&]() noexcept
+  auto FB_ANONYMOUS_VARIABLE(SCOPE_EXIT_STATE) = ::igl::detail::ScopeGuardOnExit() + [&]() noexcept
 
 ///--------------------------------------
 /// MARK: - optimizedMemcpy

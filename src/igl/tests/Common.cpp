@@ -253,7 +253,7 @@ TEST(CommonTest, EnumToValueTest) {
 TEST(CommonTest, ScopeGuardTest) {
   int testValue = 0;
   {
-    auto scopeGuard = ScopeGuardOnExit() + [&]() { ++testValue; };
+    auto scopeGuard = detail::ScopeGuardOnExit() + [&]() { ++testValue; };
   }
   ASSERT_EQ(testValue, 1);
 }
