@@ -102,12 +102,9 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
 
   // Submit to the graphics queue.
   const bool shouldPresent = ctx.hasSwapchain() && cmdBuffer->isFromSwapchain() && present;
-  // `submitHandle` is what the caller and `waitUntilCompleted()` wait for; `carrier` is what
-  // internal bookkeeping waits for (see below).
-  const auto finishCommandBuffer = [&](VulkanImmediateCommands::SubmitHandle submitHandle,
-                                       VulkanImmediateCommands::SubmitHandle carrier) {
+  const auto finishCommandBuffer = [&](VulkanImmediateCommands::SubmitHandle submitHandle) {
     cmdBuffer->lastSubmitHandle_ = submitHandle;
-    ctx.syncMarkSubmitted(carrier);
+    ctx.syncMarkSubmitted(submitHandle);
     ctx.processDeferredTasks();
     ctx.stagingDevice_->mergeRegionsAndFreeBuffers();
     return submitHandle.handle();
@@ -125,7 +122,7 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
     } else {
       ctx.immediate_->release(*cmdBuffer->wrapper_);
     }
-    cmdBuffer->releaseExecutedSlots({}, {});
+    cmdBuffer->releaseExecutedSlots({});
   };
   if (shouldPresent) {
     // Injected-semaphore overflow below discards the command buffer and skips present(), leaving
@@ -138,14 +135,14 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
       // we wait for this value next time we want to acquire this swapchain image
       if (!ctx.immediate_->signalSemaphore(ctx.timelineSemaphore_->getVkSemaphore(), signalValue)) {
         discard();
-        return finishCommandBuffer({}, {});
+        return finishCommandBuffer({});
       }
       ctx.swapchain_->timelineWaitValues[ctx.swapchain_->getCurrentImageIndex()] = signalValue;
     } else {
       // this can be removed once we switch to timeline semaphores
       if (!ctx.immediate_->waitSemaphore(ctx.swapchain_->getSemaphore())) {
         discard();
-        return finishCommandBuffer({}, {});
+        return finishCommandBuffer({});
       }
     }
   }
@@ -170,17 +167,10 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
       ctx.immediate_->submit(cmdBuffer->wrapper_ ? *cmdBuffer->wrapper_ : ctx.immediate_->acquire(),
                              presentationSemaphore,
                              slot ? slot->commands.front() : VK_NULL_HANDLE);
-  // A recording that cannot run is not submitted: `submitHandle` never completes, as the work it
-  // names never runs. Internal bookkeeping (slots, ring buffers, recordings to destroy) waits for
-  // the last submission the queue accepted instead, which bounds everything submitted before.
-  const bool droppedTheRecording = ctx.immediate_->lastSubmitDroppedTheRecording();
-  const VulkanImmediateCommands::SubmitHandle carrier =
-      droppedTheRecording ? ctx.immediate_->lastAcceptedSubmitHandle() : submitHandle;
   // the draw statistics count the draws of the slots that run
   if (slot) {
-    slot->lastRun = carrier;
+    slot->lastRun = submitHandle;
     cmdBuffer->reusable_->lastSubmission = submitHandle;
-    cmdBuffer->reusable_->lastCarrier = carrier;
     incrementDrawCount(slot->numDraws);
   } else {
     incrementDrawCount(cmdBuffer->executedDrawCount_);
@@ -190,15 +180,12 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
     ctx.markRingBufferRead();
   }
   // the slots that the command buffer executes run in this submission
-  cmdBuffer->releaseExecutedSlots(submitHandle, carrier);
-  // A recording that was not submitted never wrote its timestamps.
-  if (timer && !droppedTheRecording) {
+  cmdBuffer->releaseExecutedSlots(submitHandle);
+  if (timer) {
     timer->submitted(cmdBuffer->timerSlot_, submitHandle);
   }
 
-  // Nothing signals the presentation semaphore of a recording that was not submitted: presenting
-  // would wait on it forever. The image stays acquired.
-  if (shouldPresent && !droppedTheRecording) {
+  if (shouldPresent) {
     ctx.present();
   }
   // Without descriptor indexing no descriptor set refers to texture slots, so textures that only
@@ -209,7 +196,7 @@ SubmitHandle CommandQueue::endCommandBuffer(VulkanContext& ctx,
   if (!ctx.config_.enableDescriptorIndexing && !ctx.immediate_->isAnyCommandBufferEncoding()) {
     ctx.pruneTextures();
   }
-  return finishCommandBuffer(submitHandle, carrier);
+  return finishCommandBuffer(submitHandle);
 }
 
 } // namespace igl::vulkan

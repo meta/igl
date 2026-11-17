@@ -148,8 +148,6 @@ void VulkanBuffer::failInit(VkResult result) {
 }
 
 void VulkanBuffer::discardNeverSubmitted() {
-  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
-
   if (!valid()) {
     return;
   }

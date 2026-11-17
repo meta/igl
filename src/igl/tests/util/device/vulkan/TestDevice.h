@@ -70,10 +70,6 @@ class FaultingDevice {
     CreateCommandPool,
     /// vkGetAndroidHardwareBufferPropertiesANDROID (only looked up on devices that expose it).
     GetAndroidHardwareBufferProperties,
-    /// vkQueueWaitIdle: the context's teardown waits on its queues with it.
-    QueueWaitIdle,
-    /// vkGetMemoryFdKHR (only looked up on devices that expose VK_KHR_external_memory_fd).
-    GetMemoryFd,
     Count,
   };
   /// The calls the fixture only counts.
@@ -86,11 +82,6 @@ class FaultingDevice {
     DestroyFence,
     DestroySemaphore,
     DestroyCommandPool,
-    DestroySwapchain,
-    DestroySurface,
-    /// A destroy call with a non-null messenger handle.
-    DestroyDebugMessenger,
-    DestroyDevice,
     /// A destroy call of a fence, semaphore or command pool with a handle this fixture did not see
     /// created (not forwarded to the driver).
     BadDestroy,
@@ -120,9 +111,6 @@ class FaultingDevice {
   [[nodiscard]] const Result& creationResult() const {
     return creationResult_;
   }
-
-  /// Destroys the device now (the context's teardown runs); the counters stay readable.
-  void destroyDevice();
 
   /// Fails calls of `call` with `result`: the first `skip` calls pass, then `count` calls fail.
   void arm(Call call, VkResult result, uint32_t skip = 0, uint32_t count = 1);

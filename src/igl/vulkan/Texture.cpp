@@ -7,7 +7,6 @@
 
 #include <igl/vulkan/Texture.h>
 
-#include <string>
 #include <igl/IGLSafeC.h>
 #include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/Common.h>
@@ -27,14 +26,6 @@ void logMipmapFailure(const Result& result) {
   if (!result.isOk()) {
     IGL_LOG_ERROR_ONCE("Texture::generateMipmap(): %s\n", result.message.c_str());
   }
-}
-
-// The Result for an invalid image or image view: the failure it reported, with its VkResult.
-Result invalidObjectResult(VkResult initResult, const char* what) {
-  Result result = initResult == VK_SUCCESS ? Result(Result::Code::InvalidOperation, "not created")
-                                           : getResultFromVkResult(initResult);
-  result.message = std::string(what) + ": " + result.message;
-  return result;
 }
 } // namespace
 
@@ -221,7 +212,7 @@ Result Texture::create(const TextureDesc& desc) {
                             samples,
                             &result,
                             debugNameImage.c_str());
-    if (!result.isOk()) {
+    if (!IGL_DEBUG_VERIFY(result.isOk())) {
       return result; // NOLINT(clang-diagnostic-nrvo)
     }
   } else if (desc_.exportability == TextureDesc::TextureExportability::Exportable) {
@@ -249,8 +240,8 @@ Result Texture::create(const TextureDesc& desc) {
 #endif // IGL_PLATFORM_WINDOWS || IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
   }
 
-  if (!image.valid()) {
-    return invalidObjectResult(image.initResult(), "Cannot create VulkanImage");
+  if (!IGL_DEBUG_VERIFY(image.valid())) {
+    return Result(Result::Code::InvalidOperation, "Cannot create VulkanImage");
   }
 
   VkImageAspectFlags aspect = 0;
@@ -273,8 +264,8 @@ Result Texture::create(const TextureDesc& desc) {
                                                     arrayLayerCount,
                                                     debugNameImageView.c_str());
 
-  if (!imageView.valid()) {
-    return invalidObjectResult(imageView.initResult(), "Cannot create VulkanImageView");
+  if (!IGL_DEBUG_VERIFY(imageView.valid())) {
+    return Result(Result::Code::InvalidOperation, "Cannot create VulkanImageView");
   }
 
   texture_ = ctx.createTexture(std::move(image), std::move(imageView), desc.debugName.c_str());
@@ -391,8 +382,8 @@ Result Texture::createView(const Texture& baseTexture, const TextureViewDesc& de
       },
       debugNameImageView.c_str());
 
-  if (!imageView.valid()) {
-    return invalidObjectResult(imageView.initResult(), "Cannot create VulkanImageView");
+  if (!IGL_DEBUG_VERIFY(imageView.valid())) {
+    return Result(Result::Code::InvalidOperation, "Cannot create VulkanImageView");
   }
 
   const VulkanContext& ctx = device_.getVulkanContext();

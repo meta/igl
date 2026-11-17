@@ -11,7 +11,6 @@
 // NOLINTNEXTLINE(facebook-unused-include-check)
 #include <cinttypes>
 #include <type_traits>
-#include <igl/vulkan/CommandBuffer.h>
 #include <igl/vulkan/Common.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanImageView.h>
@@ -972,9 +971,7 @@ VulkanImage VulkanImage::createWithExportMemory(const VulkanContext& ctx,
         tiling,
         usageFlags,
         createFlags);
-    VulkanImage notCreated;
-    notCreated.initResult_ = result;
-    return notCreated;
+    return VulkanImage();
   }
   const auto& externalFormatProperties = externalImageFormatProperties.externalMemoryProperties;
   if ((externalFormatProperties.externalMemoryFeatures &
@@ -985,9 +982,7 @@ VulkanImage VulkanImage::createWithExportMemory(const VulkanContext& ctx,
         tiling,
         usageFlags,
         createFlags);
-    VulkanImage notCreated;
-    notCreated.initResult_ = VK_ERROR_FORMAT_NOT_SUPPORTED;
-    return notCreated;
+    return VulkanImage();
   }
 
   IGL_DEBUG_ASSERT((externalFormatProperties.compatibleHandleTypes & kHandleType) != 0);
@@ -1065,14 +1060,7 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   };
 
   // create VkImage importing external memory cannot use VMA
-  VkResult stepResult = ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
-  if (stepResult != VK_SUCCESS) {
-    IGL_LOG_ERROR("VulkanImage (export): vkCreateImage() failed (VkResult %d)\n",
-                  static_cast<int>(stepResult));
-    vkImage_ = VK_NULL_HANDLE;
-    failInit(stepResult);
-    return;
-  }
+  VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
   VK_ASSERT(ivkSetDebugObjectName(
       &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
@@ -1129,15 +1117,7 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
                  memoryRequirements.memoryRequirements.memoryTypeBits,
                  memoryAllocateInfo.memoryTypeIndex);
 
-    stepResult = ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[p]);
-    if (stepResult != VK_SUCCESS) {
-      IGL_LOG_ERROR("VulkanImage (export): vkAllocateMemory() failed for plane %u (VkResult %d)\n",
-                    p,
-                    static_cast<int>(stepResult));
-      vkMemory_[p] = VK_NULL_HANDLE; // the planes allocated before it are freed by failInit()
-      failInit(stepResult);
-      return;
-    }
+    VK_ASSERT(ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[p]));
     // Record allocation size so consumers (e.g. test framework swapchains)
     // can advertise it to memory importers.
     allocatedSize += memoryRequirements.memoryRequirements.size;
@@ -1159,13 +1139,7 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
         .memory = vkMemory_[p],
     };
   }
-  stepResult = ctx_->vf_.vkBindImageMemory2(device_, numPlanes, bindInfo.data());
-  if (stepResult != VK_SUCCESS) {
-    IGL_LOG_ERROR("VulkanImage (export): vkBindImageMemory2() failed (VkResult %d)\n",
-                  static_cast<int>(stepResult));
-    failInit(stepResult);
-    return;
-  }
+  VK_ASSERT(ctx_->vf_.vkBindImageMemory2(device_, numPlanes, bindInfo.data()));
 
 #if IGL_PLATFORM_WINDOWS
   const VkMemoryGetWin32HandleInfoKHR getHandleInfo{
@@ -1173,7 +1147,7 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
       .memory = vkMemory_[0],
       .handleType = kHandleType,
   };
-  stepResult = ctx_->vf_.vkGetMemoryWin32HandleKHR(device_, &getHandleInfo, &exportedMemoryHandle_);
+  VK_ASSERT(ctx_->vf_.vkGetMemoryWin32HandleKHR(device_, &getHandleInfo, &exportedMemoryHandle_));
 #else
 
   const VkMemoryGetFdInfoKHR getFdInfo{
@@ -1181,16 +1155,9 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
       .memory = vkMemory_[0],
       .handleType = kHandleType,
   };
-  stepResult = ctx_->vf_.vkGetMemoryFdKHR(device_, &getFdInfo, &exportedFd_);
+  VK_ASSERT(ctx_->vf_.vkGetMemoryFdKHR(device_, &getFdInfo, &exportedFd_));
 
 #endif
-  if (stepResult != VK_SUCCESS) {
-    IGL_LOG_ERROR("VulkanImage (export): getting the exported memory handle failed (VkResult %d)\n",
-                  static_cast<int>(stepResult));
-    exportedFd_ = -1;
-    exportedMemoryHandle_ = nullptr;
-    failInit(stepResult);
-  }
 }
 #endif // IGL_PLATFORM_WINDOWS || IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
 
@@ -1292,7 +1259,6 @@ void VulkanImage::discardNeverSubmitted() {
   if (!valid() || isExternallyManaged_) {
     return;
   }
-  IGL_ENSURE_VULKAN_CONTEXT_THREAD(ctx_);
   failInit(VK_ERROR_UNKNOWN);
 }
 
@@ -1417,23 +1383,6 @@ void VulkanImage::transitionLayout(VkCommandBuffer cmdBuf,
                         srcStageMask,
                         dstStageMask,
                         subresourceRange);
-  // A reusable command buffer can replace this image in the image descriptors of its recording
-  // (see PlatformDevice::replaceTexture()): the same memory dependency covers the image that
-  // replaces it, which a run accesses wherever the recording accesses this one
-  if ((isSampledImage() || isStorageImage()) && ctx_->recordsReplaceableTextures(cmdBuf)) {
-    const VkMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-        .srcAccessMask = srcAccessMask,
-        .dstAccessMask = dstAccessMask,
-    };
-    ctx_->vf_.vkCmdPipelineBarrier(
-        cmdBuf, srcStageMask, dstStageMask, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-  }
-  ctx_->journalImageUse(cmdBuf, vkImage_, kRecordedImageUseBitsTransition);
-  if (newImageLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
-      newImageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-    ctx_->journalImageUse(cmdBuf, vkImage_, kRecordedImageUseBitsTransfer);
-  }
 
   ctx_->journalImageLayout(cmdBuf, *this);
   imageLayout_ = newImageLayout;

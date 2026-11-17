@@ -67,8 +67,7 @@ bool VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
                                static_cast<VkDeviceSize>(size),
                                data);
     immediate->submit(wrapper);
-    // A recording that did not run copied nothing.
-    return !immediate->lastSubmitDroppedTheRecording();
+    return true;
   }
 
   VkDeviceSize chunkDstOffset = dstOffset;
@@ -106,10 +105,8 @@ bool VulkanStagingDevice::bufferSubData(VulkanBuffer& buffer,
     const auto& wrapper = immediate->acquire();
     ctx_.vf_.vkCmdCopyBuffer(
         wrapper.cmdBuf, stagingBuffer->getVkBuffer(), buffer.getVkBuffer(), 1, &copy);
-    returnBlock(memoryChunk, immediate->submit(wrapper));
-    if (immediate->lastSubmitDroppedTheRecording()) {
-      return false;
-    }
+    memoryChunk.handle = immediate->submit(wrapper); // store the submit handle with the allocation
+    regions_.push_back(memoryChunk);
 
     size -= copySize;
     copyData = static_cast<uint8_t*>(copyData) + copySize;
@@ -273,11 +270,10 @@ VulkanStagingDevice::MemoryRegion VulkanStagingDevice::nextFreeBlock(VkDeviceSiz
     return {};
   }
 
-  // After waitAndReset()/allocateStagingBuffer() the new buffer's whole, ready region is at the
-  // front (any block waitAndReset() kept follows it). Split it through the same path so the
-  // returned block is not also left behind in `regions_` as free. std::min() also covers a
-  // contiguous request larger than the maximum staging buffer size (only reachable via alignment
-  // padding), handing out the whole buffer instead of nothing.
+  // After waitAndReset()/allocateStagingBuffer() the deque holds a single whole, ready region.
+  // Split it through the same path so the returned block is not also left behind in `regions_` as
+  // free. std::min() also covers a contiguous request larger than the maximum staging buffer size
+  // (only reachable via alignment padding), handing out the whole buffer instead of nothing.
   regionItr = regions_.begin();
   return splitAndReturn(regionItr, std::min(regionItr->size, requestedAlignedSize));
 }
@@ -321,9 +317,8 @@ bool VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
     ctx_.vf_.vkCmdCopyBuffer(
         wrapper.cmdBuf, buffer.getVkBuffer(), stagingBuffer->getVkBuffer(), 1, &copy);
 
-    if (!finishReadback(memoryChunk, immediate->submit(wrapper))) {
-      return false;
-    }
+    // Wait for command to finish
+    immediate->wait(immediate->submit(wrapper), ctx_.config_.fenceTimeoutNanoseconds);
 
     if (!stagingBuffer->isCoherentMemory()) {
       stagingBuffer->invalidateMappedMemory(memoryChunk.offset, memoryChunk.size);
@@ -339,6 +334,10 @@ bool VulkanStagingDevice::getBufferSubData(const VulkanBuffer& buffer,
     size -= copySize;
     dstData += copySize;
     chunkSrcOffset += copySize;
+
+    // the transfer has completed above, so the staging block is free again
+    regions_.push_back(memoryChunk);
+    freeStagingBufferSize_ += memoryChunk.size;
   }
   return true;
 }
@@ -517,17 +516,15 @@ bool VulkanStagingDevice::imageData(const VulkanImage& image,
                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                           subresourceRange);
 
+    ctx_.journalImageLayout(wrapper.cmdBuf, image);
+    image.imageLayout_ = targetLayout;
+
     ivkCmdEndDebugUtilsLabel(&ctx_.vf_, wrapper.cmdBuf);
 
     // Store the allocated block with the SubmitHandle at the end of the deque
-    returnBlock(memoryChunk, immediate->submit(wrapper));
+    memoryChunk.handle = immediate->submit(wrapper);
+    regions_.push_back(memoryChunk);
 
-    if (immediate->lastSubmitDroppedTheRecording()) {
-      // The recording was not submitted: the image keeps its layout.
-      return false;
-    }
-    ctx_.journalImageLayout(wrapper.cmdBuf, image);
-    image.imageLayout_ = targetLayout;
     return true;
 
     // end of VK_FORMAT_G8_B8R8_2PLANE_420_UNORM code path
@@ -677,16 +674,14 @@ bool VulkanStagingDevice::imageData(const VulkanImage& image,
                         dstStageMask,
                         subresourceRange);
 
+  ctx_.journalImageLayout(wrapper.cmdBuf, image);
+  image.imageLayout_ = targetLayout;
+
   ivkCmdEndDebugUtilsLabel(&ctx_.vf_, wrapper.cmdBuf);
 
   // Store the allocated block with the SubmitHandle at the end of the deque
-  returnBlock(memoryChunk, immediate->submit(wrapper));
-  if (immediate->lastSubmitDroppedTheRecording()) {
-    // The recording was not submitted: the image keeps its layout.
-    return false;
-  }
-  ctx_.journalImageLayout(wrapper.cmdBuf, image);
-  image.imageLayout_ = targetLayout;
+  memoryChunk.handle = immediate->submit(wrapper);
+  regions_.push_back(memoryChunk);
   return true;
 }
 
@@ -732,18 +727,11 @@ bool VulkanStagingDevice::getImageData2D(VkImage srcImage,
   const VkDeviceSize stagingOffset = (memoryChunk.offset + alignment - 1) / alignment * alignment;
 
   IGL_DEBUG_ASSERT(memoryChunk.size >= stagingOffset - memoryChunk.offset + storageSize);
-  const auto& wrapper = immediate->acquire();
-  const VkImageSubresourceRange subresourceRange = {
-      .aspectMask = aspectFlags,
-      .baseMipLevel = level,
-      .levelCount = 1,
-      .baseArrayLayer = layer,
-      .layerCount = 1,
-  };
+  const auto& wrapper1 = immediate->acquire();
 
   // 1. Transition to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
   ivkImageMemoryBarrier(&ctx_.vf_,
-                        wrapper.cmdBuf,
+                        wrapper1.cmdBuf,
                         srcImage,
                         VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT |
                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, // srcAccessMask
@@ -752,7 +740,13 @@ bool VulkanStagingDevice::getImageData2D(VkImage srcImage,
                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, // wait for any previous operation
                         VK_PIPELINE_STAGE_TRANSFER_BIT, // dstStageMask
-                        subresourceRange);
+                        VkImageSubresourceRange{
+                            .aspectMask = aspectFlags,
+                            .baseMipLevel = level,
+                            .levelCount = 1,
+                            .baseArrayLayer = layer,
+                            .layerCount = 1,
+                        });
 
   auto& stagingBuffer = stagingBuffers_[memoryChunk.stagingBufferIndex];
 
@@ -773,33 +767,45 @@ bool VulkanStagingDevice::getImageData2D(VkImage srcImage,
                       .height = imageRegion.extent.height,
                       .depth = 1u},
   };
-  ctx_.vf_.vkCmdCopyImageToBuffer(wrapper.cmdBuf,
+  ctx_.vf_.vkCmdCopyImageToBuffer(wrapper1.cmdBuf,
                                   srcImage,
                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                   stagingBuffer->getVkBuffer(),
                                   1,
                                   &copy);
 
-  // 3. The transition back to the initial image layout, in the same recording: the image's layout
-  // changes only if the copy runs, and then it is restored.
-  ivkImageMemoryBarrier(&ctx_.vf_,
-                        wrapper.cmdBuf,
-                        srcImage,
-                        VK_ACCESS_TRANSFER_READ_BIT, // srcAccessMask
-                        0, // dstAccessMask
-                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        layout,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // dstStageMask
-                        subresourceRange);
+  // Wait for command to finish
+  immediate->wait(immediate->submit(wrapper1), ctx_.config_.fenceTimeoutNanoseconds);
 
-  if (!finishReadback(memoryChunk, immediate->submit(wrapper))) {
-    // Nothing can be read. The image is in `layout` whether or not the recording runs.
-    return false;
-  }
+  // 4 (below). The transition back to the initial image layout.
+  const auto transitionBack = [&]() {
+    const auto& wrapper2 = immediate->acquire();
+    ivkImageMemoryBarrier(&ctx_.vf_,
+                          wrapper2.cmdBuf,
+                          srcImage,
+                          VK_ACCESS_TRANSFER_READ_BIT, // srcAccessMask
+                          0, // dstAccessMask
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          layout,
+                          VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
+                          VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // dstStageMask
+                          VkImageSubresourceRange{
+                              .aspectMask = aspectFlags,
+                              .baseMipLevel = level,
+                              .levelCount = 1,
+                              .baseArrayLayer = layer,
+                              .layerCount = 1,
+                          });
+    // the data should be available as we get out of this function
+    immediate->wait(immediate->submit(wrapper2), ctx_.config_.fenceTimeoutNanoseconds);
+  };
 
-  // 4. Copy data from staging buffer into data
+  // 3. Copy data from staging buffer into data
   if (!IGL_DEBUG_VERIFY(stagingBuffer->getMappedPtr())) {
+    // The copy finished, so the block is free; the image still goes back to its layout.
+    regions_.push_back(memoryChunk);
+    freeStagingBufferSize_ += memoryChunk.size;
+    transitionBack();
     return false;
   }
 
@@ -823,6 +829,10 @@ bool VulkanStagingDevice::getImageData2D(VkImage srcImage,
     }
   }
 
+  transitionBack();
+
+  regions_.push_back(memoryChunk);
+  freeStagingBufferSize_ += memoryChunk.size;
   return true;
 }
 
@@ -844,54 +854,13 @@ VkDeviceSize VulkanStagingDevice::getImageCopyAlignment(
 void VulkanStagingDevice::waitAndReset() {
   IGL_PROFILER_FUNCTION();
 
-  for (const auto& region : regions_) {
+  for (const auto region : regions_) {
     immediate->wait(region.handle, ctx_.config_.fenceTimeoutNanoseconds);
-  }
-  if (!std::all_of(regions_.begin(), regions_.end(), [this](const MemoryRegion& region) {
-        return immediate->isReady(region.handle);
-      })) {
-    return;
   }
 
   regions_.clear();
   stagingBuffers_.clear();
   freeStagingBufferSize_ = 0;
-}
-
-void VulkanStagingDevice::returnBlock(MemoryRegion block,
-                                      VulkanImmediateCommands::SubmitHandle handle) {
-  if (immediate->lastSubmitDroppedTheRecording()) {
-    // The copy was not submitted and never runs: the block is free again.
-    block.handle = {};
-    freeStagingBufferSize_ += block.size;
-  } else {
-    block.handle = handle;
-  }
-  regions_.push_back(block);
-}
-
-bool VulkanStagingDevice::finishReadback(MemoryRegion block,
-                                         VulkanImmediateCommands::SubmitHandle handle) {
-  // Known only right after the submission.
-  if (immediate->lastSubmitDroppedTheRecording()) {
-    // The copy was not submitted: there is nothing to wait for or to read.
-    returnBlock(block, handle);
-    return false;
-  }
-  const bool recordingRan = !immediate->lastSubmitOutcomeUnknown();
-  immediate->wait(handle, ctx_.config_.fenceTimeoutNanoseconds);
-  // Retirement decides, not the result of the wait, which also reports a fence that could not be
-  // reset while other rows were freed.
-  if (!immediate->isReady(handle)) {
-    // The copy may still run.
-    block.handle = handle;
-    regions_.push_back(block);
-    return false;
-  }
-  regions_.push_back(block);
-  freeStagingBufferSize_ += block.size;
-  // A submission retired by a device loss copied nothing that can be trusted.
-  return recordingRan && !immediate->isDeviceLost();
 }
 
 bool VulkanStagingDevice::shouldAllocateStagingBuffer(VkDeviceSize sizeNeeded,

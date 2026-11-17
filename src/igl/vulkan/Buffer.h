@@ -26,11 +26,6 @@ class Buffer final : public IBuffer {
   explicit Buffer(const Device& device);
   ~Buffer() override = default;
 
-  /// @brief Writes a Ring buffer into its copy for the current frame. Once the device has created a
-  /// reusable command buffer (PlatformDevice::createReusableCommandBuffer()), it fails, and writes
-  /// nothing, while a submission that read that copy may still run (see
-  /// VulkanContext::syncAcquireCurrent()), or while a command buffer that executed a slot reading
-  /// it in an earlier frame is not submitted (see VulkanContext::isSyncCopyReserved()).
   Result upload(const void* data, const BufferRange& range) override;
 
   void* map(const BufferRange& range, Result* outResult) override;

@@ -270,7 +270,6 @@ VulkanFence VulkanSwapchain::createAcquireFence(uint32_t index) const {
           IGL_FORMAT("Fence: swapchain-acquire #{}", index).c_str()};
 }
 
-// NOLINTNEXTLINE(facebook-hte-NullableReturn)
 VkImage VulkanSwapchain::getDepthVkImage() const {
   if (!depthTexture_) {
     lazyAllocateDepthBuffer();
@@ -281,7 +280,6 @@ VkImage VulkanSwapchain::getDepthVkImage() const {
   return depthTexture_->image.getVkImage();
 }
 
-// NOLINTNEXTLINE(facebook-hte-NullableReturn)
 VkImageView VulkanSwapchain::getDepthVkImageView() const {
   if (!depthTexture_) {
     lazyAllocateDepthBuffer();

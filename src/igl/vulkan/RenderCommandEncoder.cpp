@@ -82,21 +82,6 @@ void setLayoutAfterRenderPass(const igl::vulkan::VulkanContext& ctx,
   image.imageLayout_ = layout;
 }
 
-// Journals the textures of `attachment`, which a render pass renders to, for a reusable command
-// buffer that records into `cmdBuf`
-void journalAttachment(const igl::vulkan::VulkanContext& ctx,
-                       VkCommandBuffer cmdBuf,
-                       const igl::FramebufferDesc::AttachmentDesc& attachment) {
-  for (const igl::ITexture* IGL_NULLABLE texture :
-       {attachment.texture.get(), attachment.resolveTexture.get()}) {
-    if (texture) {
-      ctx.journalImageUse(cmdBuf,
-                          static_cast<const igl::vulkan::Texture&>(*texture).getVkImage(),
-                          igl::vulkan::kRecordedImageUseBitsAttachment);
-    }
-  }
-}
-
 } // namespace
 
 namespace igl::vulkan {
@@ -145,11 +130,6 @@ void RenderCommandEncoder::initialize(const RenderPassDesc& renderPass,
   }
 
   const FramebufferDesc& desc = static_cast<const Framebuffer&>((*framebuffer)).getDesc();
-  for (const FramebufferDesc::AttachmentDesc& attachment : desc.colorAttachments) {
-    journalAttachment(ctx_, cmdBuffer_, attachment);
-  }
-  journalAttachment(ctx_, cmdBuffer_, desc.depthAttachment);
-  journalAttachment(ctx_, cmdBuffer_, desc.stencilAttachment);
 
   std::array<VkClearValue, 2 * IGL_COLOR_ATTACHMENTS_MAX + 2> clearValues{};
   uint32_t numClearValues = 0;
@@ -1409,7 +1389,6 @@ bool RenderCommandEncoder::flushDynamicState() {
 #endif // IGL_VULKAN_PRINT_COMMANDS
     ctx_.vf_.vkCmdBindDescriptorSets(
         cmdBuffer_, bindPoint, layout, kBindPoint_CombinedImageSamplers, 1, &dset, 0, nullptr);
-    ctx_.journalBindGroupTextures(cmdBuffer_, pendingBindGroupTexture_);
     // This is necessary to support a mix of BindGroups and bindTexture() calls in the same command
     // encoder. A typical use case for that is running ImGui rendering etc.
     binder_.isDirtyFlags_ &= ~igl::vulkan::ResourcesBinder::DirtyFlagBits_Textures;

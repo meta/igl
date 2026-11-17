@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -52,33 +51,6 @@
 #endif
 
 namespace {
-
-/// At teardown, the deferred tasks that tasks queue run in later sweeps, at most this many. In-tree
-/// tasks destroy handles, and may release an object whose destructor queues such a task: two
-/// sweeps suffice for them.
-constexpr uint32_t kMaxTeardownSweeps = 16;
-
-/// @brief Deferred tasks given up at teardown. They are never run and never destroyed: destroying
-/// one can destroy what it owns, such as a semaphore, or queue another task, and the device is
-/// destroyed next. Every list stays reachable, so leak checkers do not report it.
-struct AbandonedTasks {
-  std::deque<igl::vulkan::VulkanContext::DeferredTask> tasks;
-  AbandonedTasks* IGL_NULLABLE next = nullptr;
-};
-
-void abandonDeferredTasks(std::deque<igl::vulkan::VulkanContext::DeferredTask>&& tasks) {
-  static std::atomic<AbandonedTasks*> abandoned{nullptr};
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  auto* list = new AbandonedTasks{.tasks = std::move(tasks)};
-  AbandonedTasks* head = abandoned.load();
-  do {
-    list->next = head;
-  } while (!abandoned.compare_exchange_weak(head, list));
-}
-
-/// At teardown, after `waitIdle()` failed, how many times the destructor waits again on each queue
-/// before it takes the failure (a result other than success or device loss) as unproven.
-constexpr uint32_t kTeardownIdleAttempts = 3;
 
 [[maybe_unused]] const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 const char* kGfxReconstructLayerName = "VK_LAYER_LUNARG_gfxreconstruct";
@@ -359,9 +331,7 @@ class DescriptorPoolsArena final {
     // same SubmitHandle because they have not yet been submitted)
     if (extinct_.size() > 1 && extinct_.front().handle != nextSubmitHandle) {
       ExtinctDescriptorPool& p = extinct_.front();
-      // Retired: the work up to its recording finished, or the recording was not submitted and the
-      // work before it finished.
-      if (ic.isRetired(p.handle)) {
+      if (ic.isReady(p.handle)) {
         pool_ = p.pool;
         allocatedDSet_ = std::move(p.allocatedDSet);
         dsetCursor_ = 0;
@@ -379,15 +349,9 @@ class DescriptorPoolsArena final {
               numDescriptorsPerDSet_[i] ? kNumDSetsPerPool * numDescriptorsPerDSet_[i] : 1u,
       };
     }
-    // the image bindings of descriptor set layouts can be updated after they are bound (see
-    // VulkanContext::supportsUpdateAfterBindTextures())
-    const bool hasImageBindings = types_[0] == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-                                  types_[0] == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     VK_ASSERT(ivkCreateDescriptorPool(&ctx_.vf_,
                                       device_,
-                                      hasImageBindings && ctx_.supportsUpdateAfterBindTextures()
-                                          ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
-                                          : VkDescriptorPoolCreateFlags{},
+                                      VkDescriptorPoolCreateFlags{},
                                       kNumDSetsPerPool,
                                       numTypes_,
                                       poolSizes,
@@ -444,8 +408,6 @@ uint32_t queryTimestampValidBits(const VulkanFunctionTable& vf,
 
 class DescriptorBuffersArena final {
  public:
-  using IsRetired = bool (VulkanImmediateCommands::*)(VulkanImmediateCommands::SubmitHandle) const;
-
   explicit DescriptorBuffersArena(const VulkanContext& ctx) : ctx_(ctx) {
     buffer_ = createNewBuffer();
   }
@@ -457,12 +419,10 @@ class DescriptorBuffersArena final {
 
   /// Returns null when a new descriptor buffer is needed and cannot be created. The arena is then
   /// untouched (the replacement is obtained before anything changes), so a later call retries.
-  /// `(ic.*isRetired)(handle)` tells whether the work submitted up to `handle` retired.
   // @fb-only
   DescriptorBuffer* getDescriptorBuffer(size_t requireSize,
                                         size_t alignment,
                                         VulkanImmediateCommands& ic,
-                                        IsRetired isRetired,
                                         VulkanImmediateCommands::SubmitHandle nextSubmitHandle) {
     IGL_DEBUG_ASSERT(requireSize && alignment);
     IGL_DEBUG_ASSERT(requireSize <= kBufferSize);
@@ -475,10 +435,8 @@ class DescriptorBuffersArena final {
     // An earlier buffer whose submission has finished can be reused; otherwise a new one is made.
     bool canReuse = false;
     DescriptorBuffer replacement;
-    // `VulkanContext`, a friend of the pool, passes the pool's private `isRetired()`, so this
-    // arena, local to this file, needs no access of its own.
     if (!extinct_.empty() && extinct_.front().handle != nextSubmitHandle &&
-        (ic.*isRetired)(extinct_.front().handle)) {
+        ic.isReady(extinct_.front().handle)) {
       replacement = extinct_.front();
       canReuse = true;
     } else {
@@ -723,29 +681,6 @@ struct VulkanContextImpl final {
   TextureHandle dummyTexture = {};
 };
 
-namespace {
-
-/// @brief The swapchain of a context whose queues were not proven idle at teardown. A present that
-/// is still pending may use it, so it is never destroyed, and neither are the surface, the device
-/// and the instance, which must outlive it. Every record stays reachable, so leak checkers do not
-/// report it.
-struct QuarantinedSwapchain {
-  std::unique_ptr<VulkanSwapchain> swapchain;
-  QuarantinedSwapchain* IGL_NULLABLE next = nullptr;
-};
-
-void quarantineSwapchain(std::unique_ptr<VulkanSwapchain>&& swapchain) {
-  static std::atomic<QuarantinedSwapchain*> quarantined{nullptr};
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  auto* record = new QuarantinedSwapchain{.swapchain = std::move(swapchain)};
-  QuarantinedSwapchain* head = quarantined.load();
-  do {
-    record->next = head;
-  } while (!quarantined.compare_exchange_weak(head, record));
-}
-
-} // namespace
-
 VulkanContext::VulkanContext(VulkanContextConfig config,
                              void* IGL_NULLABLE window,
                              void* IGL_NULLABLE display) :
@@ -812,28 +747,8 @@ VulkanContext::VulkanContext(VulkanContextConfig config,
 VulkanContext::~VulkanContext() {
   IGL_PROFILER_FUNCTION();
 
-  // An idle wait that is not proven leaves two things open. The work submitted through the two
-  // pools is proven below, through their checkpoints, before anything it uses is destroyed. A
-  // present is not tracked by a pool: it may still use the swapchain, which then outlives the
-  // context together with the surface, the device and the instance.
-  VkResult idleFailure = VK_SUCCESS;
-  const bool queuesIdle = vkDevice_ == nullptr || waitIdleForTeardown(idleFailure);
-  const bool keepSwapchain = !queuesIdle && swapchain_ != nullptr;
-  if (keepSwapchain) {
-    IGL_LOG_ERROR(
-        "VulkanContext: vkQueueWaitIdle() kept failing (VkResult %d); the swapchain, the surface, "
-        "the device and the instance are leaked instead of destroyed\n",
-        static_cast<int>(idleFailure));
-  }
-  if (!queuesIdle) {
-    // The failed wait proves nothing about the work submitted through the two pools: prove it
-    // through them (checkpoints) before anything that work uses is destroyed.
-    if (immediate_) {
-      immediate_->drainSubmitted();
-    }
-    if (stagingDevice_ && stagingDevice_->immediate) {
-      stagingDevice_->immediate->drainSubmitted();
-    }
+  if (vkDevice_) {
+    waitIdle();
   }
 
 #if defined(IGL_WITH_TRACY_GPU)
@@ -880,8 +795,7 @@ VulkanContext::~VulkanContext() {
   textures_.clear();
   samplers_.clear();
 
-  // This will free an internal buffer that was allocated by VMA, and must precede
-  // `immediate_.reset()`: its pool shares the main pool's queue state.
+  // This will free an internal buffer that was allocated by VMA
   stagingDevice_.reset(nullptr);
 
   if (vkDevice_) {
@@ -892,11 +806,7 @@ VulkanContext::~VulkanContext() {
 
   pimpl_->dslBindless.reset(nullptr);
 
-  if (keepSwapchain) {
-    quarantineSwapchain(std::move(swapchain_));
-  } else {
-    swapchain_.reset(nullptr); // Swapchain has to be destroyed prior to Surface
-  }
+  swapchain_.reset(nullptr); // Swapchain has to be destroyed prior to Surface
 
   pimpl_->arenas.arenaCombinedImageSamplers.clear();
   pimpl_->arenas.arenaStorageImages.clear();
@@ -914,33 +824,8 @@ VulkanContext::~VulkanContext() {
   }
   pimpl_->dslCache.clear();
 
-  // The deferred tasks run once everything submitted retired, or no longer runs after a device
-  // loss (a recording still open is never submitted), and while the pool still exists, in sweeps:
-  // a task may queue another one, with the default handle, which runs in the next sweep. Not
-  // through `waitDeferredTasks()`, which runs such a task at once and never ends for a task that
-  // keeps queueing tasks.
-  if (immediate_) {
-    immediate_->drainSubmitted();
-  }
-  for (uint32_t sweep = 0; !deferredTasks.empty(); ++sweep) {
-    if (sweep == kMaxTeardownSweeps) {
-      // Only a task that keeps queueing tasks gets here. The tasks left are leaked: neither run nor
-      // destroyed (see `abandonDeferredTasks()`).
-      IGL_LOG_ERROR(
-          "VulkanContext: deferred tasks keep queueing tasks at teardown; %zu are leaked\n",
-          deferredTasks.size());
-      IGL_DEBUG_ABORT("Deferred tasks keep queueing tasks at teardown");
-      abandonDeferredTasks(std::move(deferredTasks));
-      deferredTasks.clear();
-      break;
-    }
-    std::deque<DeferredTask> tasks;
-    tasks.swap(deferredTasks);
-    for (DeferredTask& task : tasks) {
-      task.task();
-    }
-  }
-  IGL_DEBUG_ASSERT(deferredTasks.empty());
+  waitDeferredTasks();
+
   immediate_.reset(nullptr);
   timelineSemaphore_.reset(nullptr);
 
@@ -961,7 +846,7 @@ VulkanContext::~VulkanContext() {
     vf_.vkDestroyPipelineCache(vkDevice_, pipelineCache_, nullptr);
   }
 
-  if (vkSurface_ != VK_NULL_HANDLE && !keepSwapchain) {
+  if (vkSurface_ != VK_NULL_HANDLE) {
     vf_.vkDestroySurfaceKHR(vkInstance_, vkSurface_, nullptr);
   }
 
@@ -970,16 +855,15 @@ VulkanContext::~VulkanContext() {
     vmaDestroyAllocator(pimpl_->vma);
   }
 
-  if (vkDevice_ && !keepSwapchain) {
+  if (vkDevice_) {
     vf_.vkDestroyDevice(vkDevice_, nullptr); // Device has to be destroyed prior to Instance
   }
 #if !IGL_PLATFORM_APPLE
-  // The messenger's user data is this context, so it goes even when the instance is kept.
   if (vf_.vkDestroyDebugUtilsMessengerEXT) {
     vf_.vkDestroyDebugUtilsMessengerEXT(vkInstance_, vkDebugUtilsMessenger_, nullptr);
   }
 #endif // !IGL_PLATFORM_APPLE
-  if (vf_.vkDestroyInstance && !keepSwapchain) {
+  if (vf_.vkDestroyInstance) {
     vf_.vkDestroyInstance(vkInstance_, nullptr);
   }
 
@@ -995,9 +879,7 @@ VulkanContext::~VulkanContext() {
 #endif // IGL_LOGGING_ENABLED
 
 #if defined(IGL_CMAKE_BUILD)
-  if (!keepSwapchain) {
-    volkFinalize();
-  }
+  volkFinalize();
 #endif
 
 #if IGL_VULKAN_VALIDATION_LAYER_ERROR_SUMMARY
@@ -1507,9 +1389,6 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
   IGL_DEBUG_ASSERT(config_.maxResourceCount > 0,
                    "Max resource count needs to be greater than zero");
   syncSubmitHandles.resize(config_.maxResourceCount);
-  syncExecutedHandles.resize(config_.maxResourceCount);
-  syncPendingReservations.resize(config_.maxResourceCount);
-  syncStaleReservations.resize(config_.maxResourceCount);
 
   // create Vulkan pipeline cache
   {
@@ -1553,9 +1432,6 @@ Result VulkanContext::initContext(const HWDeviceDesc& desc,
                   IGL_FORMAT("Cannot create the staging command buffer pool (VkResult {})",
                              static_cast<int>(poolResult)));
   }
-  // Both pools submit to the graphics queue: once a submission of either cannot follow a recording
-  // that was not submitted, neither submits any more. The main pool outlives the staging device.
-  stagingDevice_->immediate->queueState_ = immediate_->queueState_;
 
   // Unextended Vulkan 1.1 does not allow sparse (VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT)
   // bindings. Our descriptor set layout emulates OpenGL binding slots but we cannot put
@@ -1903,54 +1779,14 @@ VkExtent2D VulkanContext::getSwapchainExtent() const {
   return hasSwapchain() ? swapchain_->getExtent() : VkExtent2D{.width = 0, .height = 0};
 }
 
-VkResult VulkanContext::waitQueueIdle(VkQueue queue) const {
-  const VkResult result = vf_.vkQueueWaitIdle(queue);
-  if (queue == deviceQueues_.graphicsQueue &&
-      (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)) {
-    // Both command buffer pools submit only to the graphics queue: everything they submitted
-    // finished, or no longer runs.
-    const bool lost = result == VK_ERROR_DEVICE_LOST;
-    if (immediate_) {
-      immediate_->certifyQueueIdle(lost);
-    }
-    if (stagingDevice_ && stagingDevice_->immediate) {
-      stagingDevice_->immediate->certifyQueueIdle(lost);
-    }
-  }
-  return result;
-}
-
 Result VulkanContext::waitIdle() const {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
   for (VkQueue queue : {deviceQueues_.graphicsQueue, deviceQueues_.computeQueue}) {
-    const VkResult result = waitQueueIdle(queue);
-    VK_ASSERT_RETURN(result);
+    VK_ASSERT_RETURN(vf_.vkQueueWaitIdle(queue));
   }
 
   return getResultFromVkResult(VK_SUCCESS);
-}
-
-bool VulkanContext::waitIdleForTeardown(VkResult& failure) const {
-  if (waitIdle().isOk()) {
-    return true;
-  }
-  // A failed wait proves nothing unless the device is lost: the queue may still be executing.
-  // Ask again, since a failure for lack of memory can pass.
-  for (VkQueue queue : {deviceQueues_.graphicsQueue, deviceQueues_.computeQueue}) {
-    VkResult result = VK_NOT_READY;
-    for (uint32_t attempt = 0; attempt < kTeardownIdleAttempts; ++attempt) {
-      result = waitQueueIdle(queue);
-      if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) {
-        break;
-      }
-    }
-    if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) {
-      failure = result;
-      return false;
-    }
-  }
-  return true;
 }
 
 Result VulkanContext::present() const {
@@ -2153,9 +1989,8 @@ VkResult VulkanContext::checkAndUpdateDescriptorSets() {
   // safe on its own because it destroys image views through deferred tasks that already wait on
   // the submit handle. Waiting on that path would only let a timeout stop reclaiming textures.
   if (config_.enableDescriptorIndexing) {
-    // The last submission that reached the queue: a recording that was not submitted never runs.
     const VkResult waitResult = immediate_->wait(
-        immediate_->lastAcceptedSubmitHandle(),
+        immediate_->getLastSubmitHandle(),
         descriptorSetWaitTimeout(config_.fenceTimeoutNanoseconds, descriptorSetWaitDegraded_));
     if (waitResult != VK_SUCCESS) {
       descriptorSetWaitDegraded_ = true;
@@ -2570,7 +2405,6 @@ void VulkanContext::updateBindingsTextures(VkCommandBuffer IGL_NONNULL cmdBuf,
     IGL_PROFILER_ZONE("vkUpdateDescriptorSets()", IGL_PROFILER_COLOR_UPDATE);
     vf_.vkUpdateDescriptorSets(vkDevice_, numWrites, writes, 0, nullptr);
     IGL_PROFILER_ZONE_END();
-    journalImageDescriptors(cmdBuf, writes, numWrites);
 
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkCmdBindDescriptorSets(%u) - textures\n", cmdBuf, bindPoint);
@@ -2662,7 +2496,6 @@ void VulkanContext::updateBindingsStorageImages(
     IGL_PROFILER_ZONE("vkUpdateDescriptorSets()", IGL_PROFILER_COLOR_UPDATE);
     vf_.vkUpdateDescriptorSets(vkDevice_, numWrites, writes, 0, nullptr);
     IGL_PROFILER_ZONE_END();
-    journalImageDescriptors(cmdBuf, writes, numWrites);
 
 #if IGL_VULKAN_PRINT_COMMANDS
     IGL_LOG_INFO("%p vkCmdBindDescriptorSets(%u) - storage images\n", cmdBuf, bindPoint);
@@ -2756,7 +2589,7 @@ bool VulkanContext::updateBindingsTexturesByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -2845,7 +2678,7 @@ bool VulkanContext::updateBindingsStorageImagesByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -2925,7 +2758,7 @@ bool VulkanContext::updateBindingsBuffersByDescriptorBuffer(
   auto layoutSize = dsl.layoutSize;
 
   DescriptorBuffer* const descriptorBufferPtr = pimpl_->descriptorBuffersArena->getDescriptorBuffer(
-      layoutSize, alignment, *immediate_, &VulkanImmediateCommands::isRetired, nextSubmitHandle);
+      layoutSize, alignment, *immediate_, nextSubmitHandle);
   if (descriptorBufferPtr == nullptr) {
     IGL_LOG_ERROR_ONCE("No descriptor buffer is available: the bindings are not updated\n");
     return false;
@@ -3001,8 +2834,7 @@ DescriptorPoolsArenas& VulkanContext::getDescriptorPoolsArenas(
 void VulkanContext::destroyRecordings(
     VkCommandPool commandPool,
     const std::vector<std::shared_ptr<DescriptorPoolsArenas>>& arenas,
-    SubmitHandle lastSubmission,
-    std::vector<std::shared_ptr<ITexture>> textures) const {
+    SubmitHandle lastSubmission) const {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_DESTROY);
 
   std::vector<VkDescriptorPool> pools;
@@ -3013,19 +2845,15 @@ void VulkanContext::destroyRecordings(
     }
   }
   // freeing the command pool frees the command buffers of the recordings
-  std::packaged_task<void()> destroy([vf = &vf_,
-                                      device = getVkDevice(),
-                                      commandPool,
-                                      pools = std::move(pools),
-                                      textures = std::move(textures)]() mutable {
-    if (commandPool != VK_NULL_HANDLE) {
-      vf->vkDestroyCommandPool(device, commandPool, nullptr);
-    }
-    for (VkDescriptorPool pool : pools) {
-      vf->vkDestroyDescriptorPool(device, pool, nullptr);
-    }
-    textures.clear();
-  });
+  std::packaged_task<void()> destroy(
+      [vf = &vf_, device = getVkDevice(), commandPool, pools = std::move(pools)]() {
+        if (commandPool != VK_NULL_HANDLE) {
+          vf->vkDestroyCommandPool(device, commandPool, nullptr);
+        }
+        for (VkDescriptorPool pool : pools) {
+          vf->vkDestroyDescriptorPool(device, pool, nullptr);
+        }
+      });
   if (immediate_->isReady(lastSubmission)) {
     destroy();
   } else {
@@ -3034,11 +2862,11 @@ void VulkanContext::destroyRecordings(
 }
 
 void VulkanContext::journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage& image) const {
-  for (RecordingJournal* journal : recordingJournals_) {
+  for (ImageLayoutJournal* journal : imageLayoutJournals_) {
     const auto layout = std::find_if(
         journal->layouts.begin(),
         journal->layouts.end(),
-        [&image](const RecordingJournal::Layout& entry) { return entry.image == &image; });
+        [&image](const ImageLayoutJournal::Layout& entry) { return entry.image == &image; });
     if (journal->cmdBuf == cmdBuf) {
       if (layout == journal->layouts.end()) {
         journal->layouts.push_back({.image = &image, .layout = image.imageLayout_});
@@ -3054,81 +2882,9 @@ void VulkanContext::journalImageLayout(VkCommandBuffer cmdBuf, const VulkanImage
 
 bool VulkanContext::isRecordingSlot(VkCommandBuffer cmdBuf) const {
   return std::any_of(
-      recordingJournals_.begin(),
-      recordingJournals_.end(),
-      [cmdBuf](const RecordingJournal* journal) { return journal->cmdBuf == cmdBuf; });
-}
-
-void VulkanContext::journalImageDescriptors(VkCommandBuffer cmdBuf,
-                                            const VkWriteDescriptorSet* IGL_NONNULL writes,
-                                            uint32_t numWrites) const {
-  if (recordingJournals_.empty() || !supportsUpdateAfterBindTextures()) {
-    return;
-  }
-  for (RecordingJournal* journal : recordingJournals_) {
-    if (journal->cmdBuf != cmdBuf) {
-      continue;
-    }
-    for (uint32_t i = 0; i != numWrites; ++i) {
-      const VkWriteDescriptorSet& write = writes[i];
-      if (write.descriptorType != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
-          write.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
-        continue;
-      }
-      IGL_DEBUG_ASSERT(write.descriptorCount == 1);
-      journal->imageDescriptors.push_back(ImageDescriptor{
-          .dset = write.dstSet,
-          .binding = write.dstBinding,
-          .type = write.descriptorType,
-          .recordedImageView = write.pImageInfo->imageView,
-          .info = *write.pImageInfo,
-      });
-    }
-    return;
-  }
-}
-
-void VulkanContext::journalImageUse(VkCommandBuffer cmdBuf, VkImage image, uint8_t useBits) const {
-  if (recordingJournals_.empty() || !supportsUpdateAfterBindTextures()) {
-    return;
-  }
-  for (RecordingJournal* journal : recordingJournals_) {
-    if (journal->cmdBuf != cmdBuf) {
-      continue;
-    }
-    const auto use = std::find_if(
-        journal->imageUses.begin(),
-        journal->imageUses.end(),
-        [image](const std::pair<VkImage, uint8_t>& entry) { return entry.first == image; });
-    if (use != journal->imageUses.end()) {
-      use->second |= useBits;
-    } else {
-      journal->imageUses.emplace_back(image, useBits);
-    }
-    return;
-  }
-}
-
-void VulkanContext::journalBindGroupTextures(VkCommandBuffer cmdBuf,
-                                             BindGroupTextureHandle handle) const {
-  if (!recordsReplaceableTextures(cmdBuf) || !handle.valid()) {
-    return;
-  }
-  const BindGroupMetadataTextures* metadata = pimpl_->bindGroupTexturesPool.get(handle);
-  if (!metadata) {
-    return;
-  }
-  for (const std::shared_ptr<ITexture>& texture : metadata->desc.textures) {
-    if (texture) {
-      journalImageUse(cmdBuf,
-                      static_cast<const Texture&>(*texture).getVkImage(),
-                      kRecordedImageUseBitsBindGroup);
-    }
-  }
-}
-
-bool VulkanContext::recordsReplaceableTextures(VkCommandBuffer cmdBuf) const {
-  return isRecordingSlot(cmdBuf) && supportsUpdateAfterBindTextures();
+      imageLayoutJournals_.begin(),
+      imageLayoutJournals_.end(),
+      [cmdBuf](const ImageLayoutJournal* journal) { return journal->cmdBuf == cmdBuf; });
 }
 
 void VulkanContext::deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle) const {
@@ -3153,92 +2909,24 @@ void VulkanContext::processDeferredTasks() const {
   const uint64_t frameId = getFrameNumber();
   constexpr uint64_t kNumWaitFrames = 3u;
 
-  while (!deferredTasks.empty() && immediate_->isRetired(deferredTasks.front().handle)) {
+  while (!deferredTasks.empty() && immediate_->isReady(deferredTasks.front().handle)) {
     if (frameId && frameId <= deferredTasks.front().frameId + kNumWaitFrames) {
       // do not check anything if it is not yet older than kNumWaitFrames
       break;
     }
-    // A task can queue another one: take it off the queue before it runs.
-    DeferredTask task = std::move(deferredTasks.front());
+    deferredTasks.front().task();
     deferredTasks.pop_front();
-    task.task();
   }
-}
-
-VkResult VulkanContext::certifyAll(uint64_t timeoutNanoseconds) {
-  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
-  IGL_ENSURE_VULKAN_CONTEXT_THREAD(this);
-
-  if (!immediate_) {
-    // Before `initContext()` created the pools, or after it failed to: nothing was submitted.
-    return VK_SUCCESS;
-  }
-
-  // Both pools submit to the same queue; the staging pool gets what is left of the budget. A pool
-  // that was never created has submitted nothing.
-  VulkanImmediateCommands* const pools[] = {
-      immediate_.get(),
-      stagingDevice_ ? stagingDevice_->immediate.get() : nullptr,
-  };
-  // A fence wait, a checkpoint or a back-off of either pool that answered that the device is lost,
-  // during this call or before it (in `acquire()`, `waitAll()` or a destructor), means that nothing
-  // submitted to it runs any more: that ends the work of both pools, also the work neither of them
-  // waited for.
-  // Both pools share the main pool's queue state.
-  VulkanImmediateCommands::QueueState& queueState = *immediate_->queueState_;
-  const auto consumeLossAnswers = [&queueState, &pools]() {
-    if (queueState.lossAnswers == queueState.certifiedLossAnswers) {
-      return false;
-    }
-    queueState.certifiedLossAnswers = queueState.lossAnswers;
-    for (VulkanImmediateCommands* const pool : pools) {
-      if (pool) {
-        pool->certifyQueueIdle(true);
-      }
-    }
-    return true;
-  };
-  if (consumeLossAnswers()) {
-    return VK_ERROR_DEVICE_LOST;
-  }
-  uint64_t remaining = timeoutNanoseconds;
-  VkResult result = VK_SUCCESS;
-  for (VulkanImmediateCommands* const pool : pools) {
-    if (!pool) {
-      continue;
-    }
-    // A pool reports VK_ERROR_DEVICE_LOST only for such an answer.
-    const VkResult poolResult = pool->certifyAll(remaining);
-    if (consumeLossAnswers()) {
-      return VK_ERROR_DEVICE_LOST;
-    }
-    if (result == VK_SUCCESS) {
-      result = poolResult;
-    }
-  }
-  return result;
 }
 
 void VulkanContext::waitDeferredTasks() {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
-  // A task runs only once the work submitted up to its handle finished or was lost with the device.
-  // When that is not proven within the fence timeout, it stays queued with every later task. A task
-  // can queue another one: it is taken off the queue before it runs.
-  while (!deferredTasks.empty()) {
-    const VkResult result =
-        immediate_->waitRetired(deferredTasks.front().handle, config_.fenceTimeoutNanoseconds);
-    if (result != VK_SUCCESS) {
-      IGL_LOG_ERROR_ONCE(
-          "VulkanContext::waitDeferredTasks(): the work of a deferred task is not proven finished "
-          "(VkResult %d); it stays queued\n",
-          static_cast<int>(result));
-      return;
-    }
-    DeferredTask task = std::move(deferredTasks.front());
-    deferredTasks.pop_front();
+  for (auto& task : deferredTasks) {
+    immediate_->wait(task.handle, config_.fenceTimeoutNanoseconds);
     task.task();
   }
+  deferredTasks.clear();
 }
 
 // @fb-only
@@ -3253,7 +2941,6 @@ VkFence VulkanContext::getVkFenceFromSubmitHandle(igl::SubmitHandle handle) cons
 
 // @fb-only
 int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const noexcept {
-  IGL_ENSURE_VULKAN_CONTEXT_THREAD(this);
   int fenceFd = -1;
 #if defined(IGL_PLATFORM_ANDROID) && defined(VK_KHR_external_fence_fd)
   if (handle == 0) {
@@ -3270,9 +2957,19 @@ int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const no
     return -1;
   }
 
-  // The pool exports the fence, so that it stops waiting on the fence whose payload moved to the
-  // file descriptor.
-  fenceFd = immediate_->exportFenceFd(VulkanImmediateCommands::SubmitHandle(handle));
+  const VkFence vkFence = getVkFenceFromSubmitHandle(handle);
+  IGL_DEBUG_ASSERT(vkFence != VK_NULL_HANDLE);
+
+  const VkFenceGetFdInfoKHR getFdInfo = {
+      .sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
+      .fence = vkFence,
+      .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
+  };
+
+  const VkResult result = vf_.vkGetFenceFdKHR(vkDevice_, &getFdInfo, &fenceFd);
+  if (result != VK_SUCCESS) {
+    IGL_LOG_ERROR("Unable to get fence fd from submit handle: %lu", handle);
+  }
   immediate_->storeFDInSubmitHandle(VulkanImmediateCommands::SubmitHandle(handle), fenceFd);
 #endif // defined(IGL_PLATFORM_ANDROID)
   return fenceFd;
@@ -3525,20 +3222,16 @@ BindGroupTextureHandle VulkanContext::createBindGroup(const BindGroupTextureDesc
   VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
 
   {
-    // the same flags as the combined image sampler bindings of pipelines (see PipelineState)
-    const bool updateAfterBind = supportsUpdateAfterBindTextures();
-    const VkDescriptorSetLayoutCreateFlags dslFlags =
-        updateAfterBind ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT : 0u;
-    const VkDescriptorPoolCreateFlags poolFlags =
-        updateAfterBind ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0u;
     // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-    VkDescriptorBindingFlags bindingFlags[IGL_TEXTURE_SAMPLERS_MAX] = {};
-    std::fill_n(bindingFlags,
-                numBindings,
-                updateAfterBind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0u);
+    const VkDescriptorBindingFlags bindingFlags[IGL_TEXTURE_SAMPLERS_MAX] = {};
 
-    VK_ASSERT(ivkCreateDescriptorSetLayout(
-        &vf_, device, dslFlags, numBindings, bindings, bindingFlags, &dsl));
+    VK_ASSERT(ivkCreateDescriptorSetLayout(&vf_,
+                                           device,
+                                           VkDescriptorSetLayoutCreateFlags{},
+                                           numBindings,
+                                           bindings,
+                                           bindingFlags,
+                                           &dsl));
     VK_ASSERT(ivkSetDebugObjectName(
         &vf_,
         device,
@@ -3550,7 +3243,8 @@ BindGroupTextureHandle VulkanContext::createBindGroup(const BindGroupTextureDesc
     const VkDescriptorPoolSize poolSize = VkDescriptorPoolSize{
         .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = numBindings};
 
-    VK_ASSERT(ivkCreateDescriptorPool(&vf_, device, poolFlags, 1u, 1u, &poolSize, &metadata.pool));
+    VK_ASSERT(ivkCreateDescriptorPool(
+        &vf_, device, VkDescriptorPoolCreateFlags{}, 1u, 1u, &poolSize, &metadata.pool));
     VK_ASSERT(ivkSetDebugObjectName(
         &vf_,
         device,
@@ -3896,41 +3590,13 @@ bool VulkanContext::supportsReusableCommandBuffers() const {
   return !config_.enableDescriptorIndexing && !features_.has_VK_EXT_descriptor_buffer;
 }
 
-bool VulkanContext::supportsUpdateAfterBindTextures() const {
-#if IGL_PLATFORM_ANDROID
-  return false;
-#else
-  const auto* indexing = static_cast<const VkPhysicalDeviceDescriptorIndexingFeaturesEXT*>(
-      features_.feature(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT));
-  return config_.enableUpdateAfterBindTextures && supportsReusableCommandBuffers() &&
-         indexing != nullptr && indexing->descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
-         indexing->descriptorBindingStorageImageUpdateAfterBind == VK_TRUE;
-#endif // IGL_PLATFORM_ANDROID
-}
-
 void VulkanContext::syncAcquireNext() noexcept {
   IGL_PROFILER_FUNCTION();
 
-  // the copies of the index that the sync index leaves hold the data of this frame until the
-  // command buffers that reserved them are submitted
-  syncStaleReservations[syncCurrentIndex] += syncPendingReservations[syncCurrentIndex];
-  syncPendingReservations[syncCurrentIndex] = 0;
   syncCurrentIndex = (syncCurrentIndex + 1) % config_.maxResourceCount;
-  ++syncEpoch;
 
   // Wait for the current buffer to become available
-  syncCurrentAcquired = false;
-  (void)syncAcquireCurrent();
-}
-
-bool VulkanContext::syncAcquireCurrent() const noexcept {
-  if (!syncCurrentAcquired) {
-    syncCurrentAcquired = immediate_->wait(syncSubmitHandles[syncCurrentIndex],
-                                           config_.fenceTimeoutNanoseconds) == VK_SUCCESS &&
-                          immediate_->wait(syncExecutedHandles[syncCurrentIndex],
-                                           config_.fenceTimeoutNanoseconds) == VK_SUCCESS;
-  }
-  return syncCurrentAcquired;
+  immediate_->wait(syncSubmitHandles[syncCurrentIndex], config_.fenceTimeoutNanoseconds);
 }
 
 void VulkanContext::syncMarkSubmitted(VulkanImmediateCommands::SubmitHandle handle) noexcept {
@@ -3944,39 +3610,9 @@ void VulkanContext::syncMarkSubmitted(VulkanImmediateCommands::SubmitHandle hand
   }
   ringBufferReadSinceSubmit = false;
 
-  // A discarded submit, whose handle is empty, reads nothing. The submit that read the copy before
-  // it stays its reader, since it can still be pending after a failed wait for it, such as a run of
-  // a reusable command buffer.
-  if (!handle.empty() || !hasReusableCommandBuffers_) {
-    syncSubmitHandles[syncCurrentIndex] = handle;
-  }
+  syncSubmitHandles[syncCurrentIndex] = handle;
 
   syncAcquireNext();
-}
-
-void VulkanContext::syncMarkExecuted(uint32_t index,
-                                     VulkanImmediateCommands::SubmitHandle handle) noexcept {
-  syncExecutedHandles[index] = handle;
-  if (index == syncCurrentIndex) {
-    syncCurrentAcquired = false;
-  }
-}
-
-uint64_t VulkanContext::syncReserveCurrent() noexcept {
-  ++syncPendingReservations[syncCurrentIndex];
-  return syncEpoch;
-}
-
-void VulkanContext::syncReleaseReservation(uint32_t index, uint64_t epoch) noexcept {
-  // the sync index moved on from `index` after the reservation iff the epoch changed
-  uint32_t& reservations = epoch == syncEpoch ? syncPendingReservations[index]
-                                              : syncStaleReservations[index];
-  IGL_DEBUG_ASSERT(reservations != 0);
-  --reservations;
-}
-
-bool VulkanContext::isSyncCopyReserved() const noexcept {
-  return syncStaleReservations[syncCurrentIndex] != 0;
 }
 
 void VulkanContext::ensureCurrentContextThread() const {

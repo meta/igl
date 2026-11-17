@@ -123,11 +123,6 @@ struct VulkanContextConfig {
   bool enableValidationOnAndroid = false;
   bool enableExtraLogs = true;
   bool enableDescriptorIndexing = false;
-  // Lets reusable command buffers replace the textures that their recordings read
-  // (PlatformDevice::replaceTexture()), if VulkanContext::supportsUpdateAfterBindTextures() allows.
-  // Then the image bindings of every pipeline and texture BindGroup of the context, and their
-  // descriptor pools, can be updated after they are bound, for every command buffer.
-  bool enableUpdateAfterBindTextures = false;
   bool enableShaderInt16 = true;
   bool enableShaderDrawParameters = true;
   bool enableStorageBuffer16BitAccess = true;

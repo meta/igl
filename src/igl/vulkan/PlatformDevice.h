@@ -109,17 +109,9 @@ class PlatformDevice : public IPlatformDevice {
   /// them since.
   ///
   /// A recording keeps everything that was encoded: resources, bindings, dynamic state, push
-  /// constants, the bytes of ICommandBuffer::updateBuffer() and image layout transitions. Its
-  /// resources must stay alive as long as the command buffer, and until every command buffer that
-  /// executes one of its slots is submitted. They change only through Ring buffers, whose copy for
-  /// a slot the recording of the slot reads and IBuffer::upload() writes while the slot is the
-  /// current one, or through replaceTexture(): this is how per-frame data reaches the runs. Once
-  /// the device has created a reusable command buffer, IBuffer::upload() of a Ring buffer fails,
-  /// and writes nothing, if a submission that read the copy of the current slot has not completed
-  /// in time, or if a command buffer that executes the slot from an earlier frame, which reads that
-  /// copy, has not been submitted yet. Since a recording that reads a Ring buffer moves the slot at
-  /// the first submission after it, submit nothing between such a recording and its first run.
-  /// Every image that a recording uses must be in the same layout at the start of each run as at
+  /// constants and image layout transitions. Its resources must stay alive and unchanged as long
+  /// as the command buffer, and until every command buffer that executes one of its slots is
+  /// submitted, and every image it uses must be in the same layout at the start of each run as at
   /// the start and at the end of the recording of its slot. Render passes leave their color
   /// attachments ready to be sampled, and the textures of their Dependencies that have
   /// TextureDesc::TextureUsageBits::Attachment ready to be rendered to. Render passes cannot have
@@ -165,55 +157,6 @@ class PlatformDevice : public IPlatformDevice {
   void executeCommands(ICommandBuffer& commandBuffer,
                        ICommandBuffer& reusable,
                        Result* IGL_NULLABLE outResult) const;
-
-  /// @brief Returns true if replaceTexture() can succeed: the device was created with
-  /// VulkanContextConfig::enableUpdateAfterBindTextures, reusable command buffers are supported,
-  /// and the device updates sampled and storage image descriptors after they are bound (see
-  /// VulkanContext::supportsUpdateAfterBindTextures()). Always false on Android.
-  [[nodiscard]] bool supportsTextureReplacement() const;
-
-  /// @brief Makes the runs of `reusable`, a reusable command buffer, read and write `texture`
-  /// wherever its recordings bound `recorded` with the bindTexture() or bindImageTexture()
-  /// functions of their encoders, until `recorded` is replaced again. Per-frame textures, such as
-  /// camera frames and the storage images that a frame writes, reach the runs this way without
-  /// encoding the slots again: record every slot with the same `recorded` texture, which must stay
-  /// alive as long as `reusable`, and replace it before the runs that use the new texture.
-  /// Replacing `recorded` with itself undoes the replacement. `reusable` keeps `texture` until
-  /// `recorded` is replaced again, and a slot keeps the texture that its runs use until it runs
-  /// with another one, or until its recordings are destroyed after their last run.
-  ///
-  /// This replaces textures in the bindings of the recordings, not in their other commands: the
-  /// recordings keep rendering to their framebuffer attachments, swapchain images included,
-  /// copying, blitting and clearing their textures, and reading the textures of their BindGroups.
-  /// The memory dependencies that the recordings have on `recorded` cover `texture` too, but a run
-  /// makes no layout transitions of `texture`: whenever a run starts, `texture` must be ready to be
-  /// sampled, or read and written as a storage image, as the recordings bind `recorded`.
-  ///
-  /// Both textures must be Vulkan textures. Fails with Result::Code::ArgumentInvalid, before any
-  /// other check, if `reusable` belongs to another device than this one. Fails with
-  /// Result::Code::ArgumentNull if `texture` is null, and with Result::Code::ArgumentInvalid if
-  /// `texture` or `recorded` belongs to another device, if `texture` lacks a shader usage (Sampled,
-  /// Storage) of `recorded` or has another number of samples, or if the two, as their bindings see
-  /// them (a texture view as the view), differ in type, aspect, number of mip levels or layers,
-  /// YCbCr conversion or format; their sizes can differ. Fails with Result::Code::Unsupported if a
-  /// recording renders to, copies, blits or clears `recorded`, or binds it through a BindGroup, or
-  /// binds it as a storage image while `texture` has TextureDesc::TextureUsageBits::Sampled, which
-  /// includes a `recorded` that is also bound as a sampled texture: passes leave a texture that can
-  /// be sampled ready to be sampled, which a storage image is not, and a run makes no layout
-  /// transitions of `texture`. For the same reason, it fails with Result::Code::Unsupported if a
-  /// recording renders to `texture` itself or makes layout transitions of it, which the runs would
-  /// make while `texture` is bound in place of `recorded`. A slot recorded after the call checks it
-  /// when it runs, and the run fails as the call would; a run also fails, with
-  /// Result::Code::InvalidOperation, if `texture` is not ready. executeCommands() returns these
-  /// codes, while ICommandQueue::submit() returns 0. A first run of a slot that fails these checks
-  /// fails the recording of the slot, which can then be recorded again (see
-  /// createReusableCommandBuffer()). Fails with Result::Code::InvalidOperation if `reusable` is not
-  /// a reusable command buffer, and with Result::Code::Unsupported if supportsTextureReplacement()
-  /// is false.
-  void replaceTexture(ICommandBuffer& reusable,
-                      const ITexture& recorded,
-                      const std::shared_ptr<ITexture>& texture,
-                      Result* IGL_NULLABLE outResult) const;
 
   /// Android only for now - Creates the file descriptor for the underlying VkFence
   /// @param handle The handle to the GPU Fence

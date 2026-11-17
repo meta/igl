@@ -18,41 +18,13 @@ namespace igl::vulkan {
 
 struct DescriptorPoolsArenas;
 struct ReusableCommandBufferDesc;
-class Texture;
 class VulkanContext;
 class VulkanImage;
 
-/// @brief A combined image sampler or storage image descriptor that the recording of a slot of a
-/// reusable command buffer wrote into a descriptor set that it binds
-struct ImageDescriptor {
-  VkDescriptorSet dset = VK_NULL_HANDLE;
-  uint32_t binding = 0;
-  VkDescriptorType type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  // the image view of the texture that the recording bound
-  VkImageView recordedImageView = VK_NULL_HANDLE;
-  // the descriptor now
-  VkDescriptorImageInfo info = {};
-};
-
-/// @brief The uses of an image by the recording of a slot of a reusable command buffer that do not
-/// go through the image descriptors that PlatformDevice::replaceTexture() rewrites
-enum RecordedImageUseBits : uint8_t {
-  kRecordedImageUseBitsAttachment = 1 << 0,
-  // a copy, a blit or a clear
-  kRecordedImageUseBitsTransfer = 1 << 1,
-  kRecordedImageUseBitsBindGroup = 1 << 2,
-  // a layout transition, which a run makes again
-  kRecordedImageUseBitsTransition = 1 << 3,
-};
-
-/// @brief What VulkanContext journals while a slot of a reusable command buffer records: the
-/// layouts that images had before the recording first changed them (see
-/// VulkanContext::journalImageLayout()), which the reusable command buffer puts back if the slot
-/// never runs, except those that changed outside of the recording since, the image descriptors of
-/// the recording (see VulkanContext::journalImageDescriptors()), whose textures
-/// PlatformDevice::replaceTexture() replaces, and the other uses of images (see
-/// VulkanContext::journalImageUse()), which it cannot replace.
-struct RecordingJournal {
+/// @brief The layouts that images had before the recording of a slot of a reusable command buffer
+/// first changed them (see VulkanContext::journalImageLayout()). The reusable command buffer puts
+/// them back if the slot never runs, except those that changed outside of the recording since.
+struct ImageLayoutJournal {
   struct Layout {
     const VulkanImage* image = nullptr;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -62,9 +34,6 @@ struct RecordingJournal {
   // the command buffer that records the slot now
   VkCommandBuffer cmdBuf = VK_NULL_HANDLE;
   std::vector<Layout> layouts;
-  std::vector<ImageDescriptor> imageDescriptors;
-  // the images that the recording uses otherwise, with their RecordedImageUseBits
-  std::vector<std::pair<VkImage, uint8_t>> imageUses;
 };
 
 /// @brief This class implements the igl::ICommandBuffer interface for Vulkan
@@ -156,16 +125,6 @@ class CommandBuffer final : public ICommandBuffer,
   /// be detected; one of another Vulkan device fails with Result::Code::ArgumentInvalid.
   void executeCommands(ICommandBuffer& reusable, Result* IGL_NULLABLE outResult);
 
-  /// @brief Makes the runs of this reusable command buffer read and write `texture` wherever its
-  /// recordings bound `recorded` (see PlatformDevice::replaceTexture()). Each run of a slot checks
-  /// the replacements and then rewrites the image descriptors of its recording whose textures were
-  /// replaced since the slot ran last, after the last run completes. The first run of a slot checks
-  /// them before it ends the recording, which fails if they fail. The slot keeps the textures that
-  /// its descriptors read until they change again.
-  void replaceTexture(const ITexture& recorded,
-                      const std::shared_ptr<ITexture>& texture,
-                      Result* IGL_NULLABLE outResult);
-
   [[nodiscard]] bool isReusable() const {
     return reusable_ != nullptr;
   }
@@ -235,40 +194,20 @@ class CommandBuffer final : public ICommandBuffer,
     // the draws that ICommandBuffer::incrementCurrentDrawCount() counted while the slot recorded,
     // which every run adds to the draw statistics of the queue
     uint32_t numDraws = 0;
-    // the image descriptors that the recording wrote
-    std::vector<ImageDescriptor> imageDescriptors;
-    // the images that the recording uses otherwise, with their RecordedImageUseBits
-    std::vector<std::pair<VkImage, uint8_t>> imageUses;
-    // the textures that replace recorded ones in the image descriptors, which the runs read
-    std::vector<std::shared_ptr<ITexture>> textures;
-    // the layouts that the active replacements must have at every run
-    std::vector<std::pair<const VulkanImage*, VkImageLayout>> replacementLayouts;
-    // the mapping version that the slot's descriptors use
-    uint64_t replacementVersion = 0;
     bool isRecorded = false;
     // Why the recording failed: a command buffer of the recording could not be allocated, begun or
-    // ended, or another slot was the current one when the recording was encoded into or run, or the
-    // first run found a texture that replaces a recorded one but cannot run in the recording
+    // ended, or another slot was the current one when the recording was encoded into or run
     Result recordingFailure;
-    // the last submission that ran the slot, or the last one the queue accepted before a run of the
-    // slot that was not submitted
+    // the last submission that ran the slot
     VulkanImmediateCommands::SubmitHandle lastRun = {};
     // the command buffer that executes the slot and has not been submitted yet
     const CommandBuffer* IGL_NULLABLE executor = nullptr;
   };
 
-  // A texture that replaces a texture that recordings bound
-  struct ReplacedTexture {
-    // the image view of the recorded texture, which the image descriptors of recordings name
-    VkImageView recordedImageView = VK_NULL_HANDLE;
-    VkImage recordedImage = VK_NULL_HANDLE;
-    std::shared_ptr<ITexture> texture;
-  };
-
   // The recordings of a reusable command buffer. The reusable command buffer owns them with every
   // command buffer that executes one of its slots, until that command buffer is submitted or
-  // destroyed. The destructor destroys their command buffers and descriptor sets, and releases the
-  // textures that replace recorded ones, once the last submission that runs one of them completes.
+  // destroyed. The destructor destroys their command buffers and descriptor sets once the last
+  // submission that runs one of them completes.
   struct Reusable {
     Reusable(VulkanContext& ctx, VkCommandPool commandPool, bool executeInCommandBuffer);
     ~Reusable();
@@ -286,29 +225,19 @@ class CommandBuffer final : public ICommandBuffer,
     uint32_t recordingDrawCount = 0;
     // the descriptor pool arenas of every slot, whose descriptor sets live as long as its recording
     std::vector<std::shared_ptr<DescriptorPoolsArenas>> arenas;
-    // what VulkanContext journals while `recordingSlot` records
-    RecordingJournal journal;
-    // the textures that replace the textures that recordings bound
-    std::vector<ReplacedTexture> replacedTextures;
-    uint64_t replacementVersion = 0;
-    // the descriptor writes of a run, which every run reuses
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    // the image layouts that the recording of `recordingSlot` changed, which VulkanContext journals
+    // while the slot records
+    ImageLayoutJournal journal;
     // set while a render pass of the recording of `recordingSlot` is being encoded
     bool isInRenderPass = false;
-    // the last submission that runs one of the recordings, which `waitUntilCompleted()` waits for:
-    // it never completes when that run was not submitted
+    // the last submission that runs one of the recordings
     VulkanImmediateCommands::SubmitHandle lastSubmission = {};
-    // the last submission that the queue accepted when one of the recordings was run, which bounds
-    // every run: what destroying the recordings waits for
-    VulkanImmediateCommands::SubmitHandle lastCarrier = {};
   };
 
   // A slot of a reusable command buffer that this command buffer executes
   struct ExecutedSlot {
     std::shared_ptr<Reusable> reusable;
     uint32_t slot = 0;
-    // VulkanContext::syncEpoch when the slot was executed
-    uint64_t syncEpoch = 0;
   };
 
   /// @brief getVkCommandBuffer() of a reusable command buffer
@@ -330,8 +259,8 @@ class CommandBuffer final : public ICommandBuffer,
   /// never runs, and the image layouts that the recording changed are put back
   void failRecording(Result failure) const;
 
-  /// @brief Stops journaling what the recording of the slot does
-  void stopJournal() const;
+  /// @brief Stops journaling the image layouts that the recording of the slot changes
+  void stopImageLayoutJournal() const;
 
   /// @brief Frees the command buffers and the descriptor sets of a slot that has never run, and
   /// empties the slot
@@ -348,43 +277,7 @@ class CommandBuffer final : public ICommandBuffer,
   /// @brief Hands the slots that this command buffer executes over to `submission`, which runs
   /// them, or, if it is empty, gives them back without running them. Then releases their
   /// recordings.
-  void releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission,
-                            VulkanImmediateCommands::SubmitHandle carrier);
-
-  /// @brief Points the image descriptors of the recording of `slot` at the textures that replace
-  /// the ones that it bound, or back at the ones that it bound, and keeps those textures in the
-  /// slot. Fails, and changes nothing, if checkReplacements() fails.
-  [[nodiscard]] Result replaceTextures(ReusableSlot& slot) const;
-
-  /// @brief Checks that the textures that replace recorded ones can replace them in a recording
-  /// whose image descriptors and other uses of images are `imageDescriptors` and `imageUses` (see
-  /// checkRecordedUse()), and are in the layouts of the image descriptors that they replace
-  [[nodiscard]] Result checkReplacements(
-      const std::vector<ImageDescriptor>& imageDescriptors,
-      const std::vector<std::pair<VkImage, uint8_t>>& imageUses) const;
-
-  [[nodiscard]] static Result checkReplacementLayout(const VulkanImage& image,
-                                                     VkImageLayout layout);
-
-  /// @brief Returns the texture that replaces the one whose image view is `recordedImageView`, or
-  /// null
-  [[nodiscard]] const ReplacedTexture* IGL_NULLABLE
-  findReplacement(VkImageView recordedImageView) const;
-
-  /// @brief Checks that `texture` can replace `recorded`: both belong to this device, and `texture`
-  /// has every shader usage and the number of samples of `recorded`, and an image view of the same
-  /// type, aspect, numbers of mip levels and layers, YCbCr conversion and format
-  [[nodiscard]] Result checkReplacement(const Texture& recorded, const Texture& texture) const;
-
-  /// @brief Checks that a recording whose image descriptors and other uses of images are
-  /// `imageDescriptors` and `imageUses` uses the texture that `replaced` replaces only through
-  /// image descriptors, and not as a storage image if the texture that replaces it can be sampled:
-  /// a run makes no layout transitions of that texture, and passes leave a texture that can be
-  /// sampled ready to be sampled. Replacing a texture with itself always passes.
-  [[nodiscard]] static Result checkRecordedUse(
-      const std::vector<ImageDescriptor>& imageDescriptors,
-      const std::vector<std::pair<VkImage, uint8_t>>& imageUses,
-      const ReplacedTexture& replaced);
+  void releaseExecutedSlots(VulkanImmediateCommands::SubmitHandle submission);
 
   VulkanContext& ctx_;
   // null for a reusable command buffer

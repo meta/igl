@@ -9,7 +9,6 @@
 
 #include "../util/TestDevice.h"
 
-#include <array>
 #include <cstdint>
 #include <future>
 #include <set>
@@ -415,12 +414,7 @@ thread_local PoolFaults gPool;
 
 template<typename T>
 uint64_t keyOf(T handle) {
-  if constexpr (std::is_pointer_v<T>) {
-    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
-  } else {
-    // A non-dispatchable handle is a 64-bit integer on 32-bit platforms.
-    return static_cast<uint64_t>(handle);
-  }
+  return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
 }
 
 template<typename T>
@@ -763,145 +757,6 @@ TEST_F(VulkanContextExtendedTest, DummyTextureUploadFailureFailsContextInit) {
   EXPECT_FALSE(fd.creationResult().isOk());
   EXPECT_NE(fd.creationResult().message.find("dummy texture"), std::string::npos)
       << fd.creationResult().message.c_str();
-}
-
-namespace {
-
-using Faulting = util::device::vulkan::FaultingDevice;
-
-// The destroy calls the fixture counts for the objects the command pools own (their proof of
-// finished work does not depend on `vkQueueWaitIdle()`).
-constexpr std::array kPoolDestroys = {Faulting::Counted::DestroyFence,
-                                      Faulting::Counted::DestroySemaphore,
-                                      Faulting::Counted::DestroyCommandPool};
-
-uint32_t poolDestroysDuringTeardown(const Faulting& fd) {
-  uint32_t total = 0;
-  for (const Faulting::Counted counted : kPoolDestroys) {
-    total += fd.counted(counted) - fd.countedBeforeTeardown(counted);
-  }
-  return total;
-}
-
-igl::vulkan::VulkanContextConfig headlessConfig() {
-  auto config = util::device::vulkan::getContextConfig();
-  config.headless = true;
-  return config;
-}
-
-// Gives the context a headless swapchain, which the teardown has to keep when the queues are not
-// proven idle. Returns false where the driver cannot create one.
-bool initHeadlessSwapchain(const Faulting& fd) {
-  if (fd.device() == nullptr) {
-    return false;
-  }
-  constexpr uint32_t kSize = 64;
-  return fd.context().initSwapchain(kSize, kSize).isOk() && fd.context().hasSwapchain();
-}
-
-} // namespace
-
-TEST_F(VulkanContextExtendedTest, TeardownWithoutFaultsDestroysTheSwapchainAndTheDevice) {
-  Faulting fd(headlessConfig());
-  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
-  if (!initHeadlessSwapchain(fd)) {
-    GTEST_SKIP() << "No headless swapchain on this driver";
-  }
-  fd.resetCounters();
-  fd.destroyDevice();
-  ASSERT_TRUE(fd.teardownObserved());
-  EXPECT_EQ(fd.failed(Faulting::Call::QueueWaitIdle), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySwapchain), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySurface), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDevice), 1u);
-  EXPECT_GT(poolDestroysDuringTeardown(fd), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::BadDestroy), 0u);
-}
-
-TEST_F(VulkanContextExtendedTest, TeardownAfterAnIdleWaitFailureThatPassesDestroysNormally) {
-  Faulting fd(headlessConfig());
-  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
-  if (!initHeadlessSwapchain(fd)) {
-    GTEST_SKIP() << "No headless swapchain on this driver";
-  }
-  fd.resetCounters();
-  // Only the first wait fails: the teardown asks again and the queue proves idle.
-  fd.arm(Faulting::Call::QueueWaitIdle, VK_ERROR_OUT_OF_HOST_MEMORY, /*skip=*/0, /*count=*/1);
-  fd.destroyDevice();
-  ASSERT_TRUE(fd.teardownObserved());
-  EXPECT_EQ(fd.failed(Faulting::Call::QueueWaitIdle), 1u);
-  EXPECT_GT(fd.reached(Faulting::Call::QueueWaitIdle), 2u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySwapchain), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySurface), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDevice), 1u);
-}
-
-TEST_F(VulkanContextExtendedTest, TeardownAfterADeviceLossDestroysTheSwapchainAndTheDevice) {
-  Faulting fd(headlessConfig());
-  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
-  if (!initHeadlessSwapchain(fd)) {
-    GTEST_SKIP() << "No headless swapchain on this driver";
-  }
-  fd.resetCounters();
-  // A lost device presents nothing, which makes destroying the swapchain legal.
-  fd.arm(Faulting::Call::QueueWaitIdle, VK_ERROR_DEVICE_LOST, /*skip=*/0, UINT32_MAX);
-  fd.destroyDevice();
-  ASSERT_TRUE(fd.teardownObserved());
-  EXPECT_GT(fd.failed(Faulting::Call::QueueWaitIdle), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySwapchain), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySurface), 1u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDevice), 1u);
-}
-
-TEST_F(VulkanContextExtendedTest, TeardownWhoseIdleWaitKeepsFailingKeepsTheSwapchainAndTheDevice) {
-  // What a normal teardown does with the debug messenger, whose user data is the context: the
-  // failing teardown must do the same, however long the instance stays alive.
-  uint32_t messengersInANormalTeardown = 0;
-  {
-    Faulting control(headlessConfig());
-    ASSERT_NE(control.device(), nullptr) << control.creationResult().message.c_str();
-    if (!initHeadlessSwapchain(control)) {
-      GTEST_SKIP() << "No headless swapchain on this driver";
-    }
-    control.destroyDevice();
-    messengersInANormalTeardown = control.counted(Faulting::Counted::DestroyDebugMessenger);
-  }
-  Faulting fd(headlessConfig());
-  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
-  if (!initHeadlessSwapchain(fd)) {
-    GTEST_SKIP() << "No headless swapchain on this driver";
-  }
-  fd.resetCounters();
-  // No result proves the queue stopped, so a present may still use the swapchain: it, its surface,
-  // the device and the instance are kept. The command pools prove their own work finished, so
-  // their objects are destroyed as before.
-  fd.arm(Faulting::Call::QueueWaitIdle, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, UINT32_MAX);
-  fd.destroyDevice();
-  ASSERT_TRUE(fd.teardownObserved());
-  // The first wait of `waitIdle()` and the three more the teardown makes on the graphics queue.
-  EXPECT_EQ(fd.failed(Faulting::Call::QueueWaitIdle), 4u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySwapchain), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySurface), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDevice), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDebugMessenger), messengersInANormalTeardown);
-  EXPECT_GT(poolDestroysDuringTeardown(fd), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::BadDestroy), 0u);
-}
-
-TEST_F(VulkanContextExtendedTest, TeardownWithoutASwapchainDestroysTheDeviceAfterAFailedIdleWait) {
-  Faulting fd(util::device::vulkan::getContextConfig());
-  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
-  ASSERT_FALSE(fd.context().hasSwapchain());
-  fd.resetCounters();
-  // Nothing was presented: the pools' proof is what the destruction relies on, as before.
-  fd.arm(Faulting::Call::QueueWaitIdle, VK_ERROR_OUT_OF_DEVICE_MEMORY, /*skip=*/0, UINT32_MAX);
-  fd.destroyDevice();
-  ASSERT_TRUE(fd.teardownObserved());
-  // The first wait of `waitIdle()` and the three more the teardown makes on the graphics queue.
-  EXPECT_EQ(fd.failed(Faulting::Call::QueueWaitIdle), 4u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroySwapchain), 0u);
-  EXPECT_EQ(fd.counted(Faulting::Counted::DestroyDevice), 1u);
-  EXPECT_GT(poolDestroysDuringTeardown(fd), 0u);
 }
 
 } // namespace igl::tests
