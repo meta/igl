@@ -151,6 +151,10 @@ enum Entry : size_t {
   kDestroyImage,
   kDestroyBuffer,
   kFreeMemory,
+  kDestroySwapchain,
+  kDestroySurface,
+  kDestroyDebugMessenger,
+  kDestroyDevice,
   kSetDebugUtilsObjectName,
   kQueueWaitIdle,
   kEntryCount,
@@ -429,6 +433,36 @@ VKAPI_ATTR void VKAPI_CALL stubFreeMemory(VkDevice d,
   reinterpret_cast<PFN_vkFreeMemory>(gFault.real[kFreeMemory])(d, m, a);
 }
 
+VKAPI_ATTR void VKAPI_CALL stubDestroySwapchain(VkDevice d,
+                                                VkSwapchainKHR s,
+                                                const VkAllocationCallbacks* a) {
+  gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroySwapchain)].fetch_add(1);
+  reinterpret_cast<PFN_vkDestroySwapchainKHR>(gFault.real[kDestroySwapchain])(d, s, a);
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroySurface(VkInstance i,
+                                              VkSurfaceKHR s,
+                                              const VkAllocationCallbacks* a) {
+  gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroySurface)].fetch_add(1);
+  reinterpret_cast<PFN_vkDestroySurfaceKHR>(gFault.real[kDestroySurface])(i, s, a);
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroyDebugUtilsMessenger(VkInstance i,
+                                                          VkDebugUtilsMessengerEXT m,
+                                                          const VkAllocationCallbacks* a) {
+  if (m != VK_NULL_HANDLE) {
+    gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyDebugMessenger)].fetch_add(
+        1);
+  }
+  reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(gFault.real[kDestroyDebugMessenger])(
+      i, m, a);
+}
+
+VKAPI_ATTR void VKAPI_CALL stubDestroyDevice(VkDevice d, const VkAllocationCallbacks* a) {
+  gFault.counted[static_cast<size_t>(FaultingDevice::Counted::DestroyDevice)].fetch_add(1);
+  reinterpret_cast<PFN_vkDestroyDevice>(gFault.real[kDestroyDevice])(d, a);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 stubSetDebugUtilsObjectNameEXT(VkDevice d, const VkDebugUtilsObjectNameInfoEXT* i) {
   gFault.counted[static_cast<size_t>(FaultingDevice::Counted::SetDebugUtilsObjectName)].fetch_add(
@@ -443,6 +477,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stubQueueWaitIdle(VkQueue q) {
     for (size_t i = 0; i < kCountedCount; ++i) {
       gFault.countedAtTeardown[i].store(gFault.counted[i].load());
     }
+  }
+  VkResult injected = VK_SUCCESS;
+  if (shouldFail(FaultingDevice::Call::QueueWaitIdle, &injected)) {
+    return injected;
   }
   return reinterpret_cast<PFN_vkQueueWaitIdle>(gFault.real[kQueueWaitIdle])(q);
 }
@@ -480,6 +518,14 @@ const std::array<Hook, kEntryCount> kHooks = {{
     IGL_HOOK("vkDestroyImage", kDestroyImage, stubDestroyImage),
     IGL_HOOK("vkDestroyBuffer", kDestroyBuffer, stubDestroyBuffer),
     IGL_HOOK("vkFreeMemory", kFreeMemory, stubFreeMemory),
+    IGL_HOOK("vkDestroySwapchainKHR", kDestroySwapchain, stubDestroySwapchain),
+    // The instance entries below are never returned by vkGetDeviceProcAddr(): the constructor
+    // installs their stubs in the context's table.
+    IGL_HOOK("vkDestroySurfaceKHR", kDestroySurface, stubDestroySurface),
+    IGL_HOOK("vkDestroyDebugUtilsMessengerEXT",
+             kDestroyDebugMessenger,
+             stubDestroyDebugUtilsMessenger),
+    IGL_HOOK("vkDestroyDevice", kDestroyDevice, stubDestroyDevice),
     IGL_HOOK("vkSetDebugUtilsObjectNameEXT",
              kSetDebugUtilsObjectName,
              stubSetDebugUtilsObjectNameEXT),
@@ -548,6 +594,18 @@ FaultingDevice::FaultingDevice(const igl::vulkan::VulkanContextConfig& config,
     table.vkSetDebugUtilsObjectNameEXT = stubSetDebugUtilsObjectNameEXT;
     namingObservable_ = true;
   }
+  // vkDestroySurfaceKHR is an INSTANCE function too: its counting stub goes into the table.
+  if (table.vkDestroySurfaceKHR != nullptr) {
+    gFault.real[kDestroySurface] = reinterpret_cast<PFN_vkVoidFunction>(table.vkDestroySurfaceKHR);
+    table.vkDestroySurfaceKHR = stubDestroySurface;
+  }
+#if !IGL_PLATFORM_APPLE
+  if (table.vkDestroyDebugUtilsMessengerEXT != nullptr) {
+    gFault.real[kDestroyDebugMessenger] =
+        reinterpret_cast<PFN_vkVoidFunction>(table.vkDestroyDebugUtilsMessengerEXT);
+    table.vkDestroyDebugUtilsMessengerEXT = stubDestroyDebugUtilsMessenger;
+  }
+#endif
 
   if (armBeforeCreate) {
     armBeforeCreate(*this);
@@ -580,6 +638,10 @@ FaultingDevice::~FaultingDevice() {
   device_.reset(); // the stubs stay valid until the device is gone
   disarmAll();
   gFault.live = false;
+}
+
+void FaultingDevice::destroyDevice() {
+  device_.reset();
 }
 
 igl::vulkan::VulkanContext& FaultingDevice::context() const {

@@ -76,6 +76,10 @@ void abandonDeferredTasks(std::deque<igl::vulkan::VulkanContext::DeferredTask>&&
   } while (!abandoned.compare_exchange_weak(head, list));
 }
 
+/// At teardown, after `waitIdle()` failed, how many times the destructor waits again on each queue
+/// before it takes the failure (a result other than success or device loss) as unproven.
+constexpr uint32_t kTeardownIdleAttempts = 3;
+
 [[maybe_unused]] const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 const char* kGfxReconstructLayerName = "VK_LAYER_LUNARG_gfxreconstruct";
 
@@ -719,6 +723,29 @@ struct VulkanContextImpl final {
   TextureHandle dummyTexture = {};
 };
 
+namespace {
+
+/// @brief The swapchain of a context whose queues were not proven idle at teardown. A present that
+/// is still pending may use it, so it is never destroyed, and neither are the surface, the device
+/// and the instance, which must outlive it. Every record stays reachable, so leak checkers do not
+/// report it.
+struct QuarantinedSwapchain {
+  std::unique_ptr<VulkanSwapchain> swapchain;
+  QuarantinedSwapchain* IGL_NULLABLE next = nullptr;
+};
+
+void quarantineSwapchain(std::unique_ptr<VulkanSwapchain>&& swapchain) {
+  static std::atomic<QuarantinedSwapchain*> quarantined{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto* record = new QuarantinedSwapchain{.swapchain = std::move(swapchain)};
+  QuarantinedSwapchain* head = quarantined.load();
+  do {
+    record->next = head;
+  } while (!quarantined.compare_exchange_weak(head, record));
+}
+
+} // namespace
+
 VulkanContext::VulkanContext(VulkanContextConfig config,
                              void* IGL_NULLABLE window,
                              void* IGL_NULLABLE display) :
@@ -785,8 +812,28 @@ VulkanContext::VulkanContext(VulkanContextConfig config,
 VulkanContext::~VulkanContext() {
   IGL_PROFILER_FUNCTION();
 
-  if (vkDevice_) {
-    waitIdle();
+  // An idle wait that is not proven leaves two things open. The work submitted through the two
+  // pools is proven below, through their checkpoints, before anything it uses is destroyed. A
+  // present is not tracked by a pool: it may still use the swapchain, which then outlives the
+  // context together with the surface, the device and the instance.
+  VkResult idleFailure = VK_SUCCESS;
+  const bool queuesIdle = vkDevice_ == nullptr || waitIdleForTeardown(idleFailure);
+  const bool keepSwapchain = !queuesIdle && swapchain_ != nullptr;
+  if (keepSwapchain) {
+    IGL_LOG_ERROR(
+        "VulkanContext: vkQueueWaitIdle() kept failing (VkResult %d); the swapchain, the surface, "
+        "the device and the instance are leaked instead of destroyed\n",
+        static_cast<int>(idleFailure));
+  }
+  if (!queuesIdle) {
+    // The failed wait proves nothing about the work submitted through the two pools: prove it
+    // through them (checkpoints) before anything that work uses is destroyed.
+    if (immediate_) {
+      immediate_->drainSubmitted();
+    }
+    if (stagingDevice_ && stagingDevice_->immediate) {
+      stagingDevice_->immediate->drainSubmitted();
+    }
   }
 
 #if defined(IGL_WITH_TRACY_GPU)
@@ -845,7 +892,11 @@ VulkanContext::~VulkanContext() {
 
   pimpl_->dslBindless.reset(nullptr);
 
-  swapchain_.reset(nullptr); // Swapchain has to be destroyed prior to Surface
+  if (keepSwapchain) {
+    quarantineSwapchain(std::move(swapchain_));
+  } else {
+    swapchain_.reset(nullptr); // Swapchain has to be destroyed prior to Surface
+  }
 
   pimpl_->arenas.arenaCombinedImageSamplers.clear();
   pimpl_->arenas.arenaStorageImages.clear();
@@ -910,7 +961,7 @@ VulkanContext::~VulkanContext() {
     vf_.vkDestroyPipelineCache(vkDevice_, pipelineCache_, nullptr);
   }
 
-  if (vkSurface_ != VK_NULL_HANDLE) {
+  if (vkSurface_ != VK_NULL_HANDLE && !keepSwapchain) {
     vf_.vkDestroySurfaceKHR(vkInstance_, vkSurface_, nullptr);
   }
 
@@ -919,15 +970,16 @@ VulkanContext::~VulkanContext() {
     vmaDestroyAllocator(pimpl_->vma);
   }
 
-  if (vkDevice_) {
+  if (vkDevice_ && !keepSwapchain) {
     vf_.vkDestroyDevice(vkDevice_, nullptr); // Device has to be destroyed prior to Instance
   }
 #if !IGL_PLATFORM_APPLE
+  // The messenger's user data is this context, so it goes even when the instance is kept.
   if (vf_.vkDestroyDebugUtilsMessengerEXT) {
     vf_.vkDestroyDebugUtilsMessengerEXT(vkInstance_, vkDebugUtilsMessenger_, nullptr);
   }
 #endif // !IGL_PLATFORM_APPLE
-  if (vf_.vkDestroyInstance) {
+  if (vf_.vkDestroyInstance && !keepSwapchain) {
     vf_.vkDestroyInstance(vkInstance_, nullptr);
   }
 
@@ -943,7 +995,9 @@ VulkanContext::~VulkanContext() {
 #endif // IGL_LOGGING_ENABLED
 
 #if defined(IGL_CMAKE_BUILD)
-  volkFinalize();
+  if (!keepSwapchain) {
+    volkFinalize();
+  }
 #endif
 
 #if IGL_VULKAN_VALIDATION_LAYER_ERROR_SUMMARY
@@ -1849,27 +1903,54 @@ VkExtent2D VulkanContext::getSwapchainExtent() const {
   return hasSwapchain() ? swapchain_->getExtent() : VkExtent2D{.width = 0, .height = 0};
 }
 
+VkResult VulkanContext::waitQueueIdle(VkQueue queue) const {
+  const VkResult result = vf_.vkQueueWaitIdle(queue);
+  if (queue == deviceQueues_.graphicsQueue &&
+      (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)) {
+    // Both command buffer pools submit only to the graphics queue: everything they submitted
+    // finished, or no longer runs.
+    const bool lost = result == VK_ERROR_DEVICE_LOST;
+    if (immediate_) {
+      immediate_->certifyQueueIdle(lost);
+    }
+    if (stagingDevice_ && stagingDevice_->immediate) {
+      stagingDevice_->immediate->certifyQueueIdle(lost);
+    }
+  }
+  return result;
+}
+
 Result VulkanContext::waitIdle() const {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_WAIT);
 
   for (VkQueue queue : {deviceQueues_.graphicsQueue, deviceQueues_.computeQueue}) {
-    const VkResult result = vf_.vkQueueWaitIdle(queue);
-    if (queue == deviceQueues_.graphicsQueue &&
-        (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)) {
-      // Both command buffer pools submit only to the graphics queue: everything they submitted
-      // finished, or no longer runs.
-      const bool lost = result == VK_ERROR_DEVICE_LOST;
-      if (immediate_) {
-        immediate_->certifyQueueIdle(lost);
-      }
-      if (stagingDevice_ && stagingDevice_->immediate) {
-        stagingDevice_->immediate->certifyQueueIdle(lost);
-      }
-    }
+    const VkResult result = waitQueueIdle(queue);
     VK_ASSERT_RETURN(result);
   }
 
   return getResultFromVkResult(VK_SUCCESS);
+}
+
+bool VulkanContext::waitIdleForTeardown(VkResult& failure) const {
+  if (waitIdle().isOk()) {
+    return true;
+  }
+  // A failed wait proves nothing unless the device is lost: the queue may still be executing.
+  // Ask again, since a failure for lack of memory can pass.
+  for (VkQueue queue : {deviceQueues_.graphicsQueue, deviceQueues_.computeQueue}) {
+    VkResult result = VK_NOT_READY;
+    for (uint32_t attempt = 0; attempt < kTeardownIdleAttempts; ++attempt) {
+      result = waitQueueIdle(queue);
+      if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) {
+        break;
+      }
+    }
+    if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) {
+      failure = result;
+      return false;
+    }
+  }
+  return true;
 }
 
 Result VulkanContext::present() const {

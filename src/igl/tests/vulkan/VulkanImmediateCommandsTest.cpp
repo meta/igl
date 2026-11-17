@@ -917,6 +917,20 @@ VKAPI_ATTR void VKAPI_CALL recordingDestroyPipelineCache(VkDevice device,
   gRealDestroyPipelineCache(device, cache, allocator);
 }
 
+thread_local PFN_vkDestroyRenderPass gRealDestroyRenderPass = nullptr;
+thread_local size_t gRenderPassesDestroyed = 0;
+thread_local size_t gRenderPassesDestroyedBeforeTheProof = 0;
+
+/// Records whether a render pass is destroyed before the checkpoints of the teardown proved the
+/// submitted work finished (`gCheckpointFailures` is spent once they did).
+VKAPI_ATTR void VKAPI_CALL recordingDestroyRenderPass(VkDevice device,
+                                                      VkRenderPass pass,
+                                                      const VkAllocationCallbacks* allocator) {
+  ++gRenderPassesDestroyed;
+  gRenderPassesDestroyedBeforeTheProof += gCheckpointFailures != 0 ? 1 : 0;
+  gRealDestroyRenderPass(device, pass, allocator);
+}
+
 /// Set when the object that the requeueing tasks own is destroyed after the device.
 thread_local bool gOwnedDestroyedAfterTheDevice = false;
 
@@ -5815,9 +5829,9 @@ TEST_F(VulkanImmediateCommandsTest,
                      ranBeforeTheDevice = !gDeviceDestroyed;
                    }),
                    handle);
-  // At teardown the queue idle fails and the first checkpoints run out of memory: the task's work
-  // is not proven finished when the context drains its tasks, only later, when the pool's
-  // destructor submits a checkpoint.
+  // At teardown the queue idle fails and the first three checkpoints run out of memory: the context
+  // drains the pools right after the failed wait, retrying the checkpoint, so the task's work is
+  // proven finished before anything is destroyed and the task runs after the last failure.
   auto& table = const_cast<VulkanFunctionTable&>(ctx.vf_);
   gIdleSeen = false;
   gIdleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -5829,8 +5843,19 @@ TEST_F(VulkanImmediateCommandsTest,
   gDeviceDestroyed = false;
   gRealDestroyDevice = table.vkDestroyDevice;
   table.vkDestroyDevice = recordingDestroyDevice;
+  // A render pass the submitted work may use: the context destroys it after the proof, not before.
+  vulkan::VulkanRenderPassBuilder renderPassBuilder;
+  renderPassBuilder.addColor(
+      VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
+  ASSERT_NE(ctx.findRenderPass(renderPassBuilder).pass, VK_NULL_HANDLE);
+  gRenderPassesDestroyed = 0;
+  gRenderPassesDestroyedBeforeTheProof = 0;
+  gRealDestroyRenderPass = table.vkDestroyRenderPass;
+  table.vkDestroyRenderPass = recordingDestroyRenderPass;
   iglDev_.reset();
   EXPECT_TRUE(gDeviceDestroyed);
+  EXPECT_GT(gRenderPassesDestroyed, 0u);
+  EXPECT_EQ(gRenderPassesDestroyedBeforeTheProof, 0u);
   EXPECT_EQ(gCheckpointFailures, 0u);
   EXPECT_EQ(runs, 1);
   EXPECT_TRUE(ranAfterTheProof);

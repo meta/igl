@@ -501,6 +501,13 @@ class VulkanContext final {
   friend class ComputeCommandEncoder;
   friend class RenderCommandEncoder;
 
+  /// One queue's idle wait. It certifies the command pools on the graphics queue's success or loss.
+  [[nodiscard]] VkResult waitQueueIdle(VkQueue queue) const;
+  /// The destructor's idle wait: whether the graphics and compute queues are idle or lost, asking
+  /// again after a failure that proves neither. When it returns false, `failure` holds the result
+  /// that kept failing, and the destructor keeps what a pending present may still use.
+  [[nodiscard]] bool waitIdleForTeardown(VkResult& failure) const;
+
   // should be kept on the heap, otherwise global Vulkan functions can cause arbitrary crashes.
   std::unique_ptr<VulkanFunctionTable> tableImpl_;
 
