@@ -972,7 +972,9 @@ VulkanImage VulkanImage::createWithExportMemory(const VulkanContext& ctx,
         tiling,
         usageFlags,
         createFlags);
-    return VulkanImage();
+    VulkanImage notCreated;
+    notCreated.initResult_ = result;
+    return notCreated;
   }
   const auto& externalFormatProperties = externalImageFormatProperties.externalMemoryProperties;
   if ((externalFormatProperties.externalMemoryFeatures &
@@ -983,7 +985,9 @@ VulkanImage VulkanImage::createWithExportMemory(const VulkanContext& ctx,
         tiling,
         usageFlags,
         createFlags);
-    return VulkanImage();
+    VulkanImage notCreated;
+    notCreated.initResult_ = VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return notCreated;
   }
 
   IGL_DEBUG_ASSERT((externalFormatProperties.compatibleHandleTypes & kHandleType) != 0);
@@ -1061,7 +1065,14 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
   };
 
   // create VkImage importing external memory cannot use VMA
-  VK_ASSERT(ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_));
+  VkResult stepResult = ctx_->vf_.vkCreateImage(device_, &ci, nullptr, &vkImage_);
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (export): vkCreateImage() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    vkImage_ = VK_NULL_HANDLE;
+    failInit(stepResult);
+    return;
+  }
   VK_ASSERT(ivkSetDebugObjectName(
       &ctx_->vf_, device_, VK_OBJECT_TYPE_IMAGE, (uint64_t)vkImage_, debugName));
 
@@ -1118,7 +1129,15 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
                  memoryRequirements.memoryRequirements.memoryTypeBits,
                  memoryAllocateInfo.memoryTypeIndex);
 
-    VK_ASSERT(ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[p]));
+    stepResult = ctx_->vf_.vkAllocateMemory(device_, &memoryAllocateInfo, nullptr, &vkMemory_[p]);
+    if (stepResult != VK_SUCCESS) {
+      IGL_LOG_ERROR("VulkanImage (export): vkAllocateMemory() failed for plane %u (VkResult %d)\n",
+                    p,
+                    static_cast<int>(stepResult));
+      vkMemory_[p] = VK_NULL_HANDLE; // the planes allocated before it are freed by failInit()
+      failInit(stepResult);
+      return;
+    }
     // Record allocation size so consumers (e.g. test framework swapchains)
     // can advertise it to memory importers.
     allocatedSize += memoryRequirements.memoryRequirements.size;
@@ -1140,7 +1159,13 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
         .memory = vkMemory_[p],
     };
   }
-  VK_ASSERT(ctx_->vf_.vkBindImageMemory2(device_, numPlanes, bindInfo.data()));
+  stepResult = ctx_->vf_.vkBindImageMemory2(device_, numPlanes, bindInfo.data());
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (export): vkBindImageMemory2() failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    failInit(stepResult);
+    return;
+  }
 
 #if IGL_PLATFORM_WINDOWS
   const VkMemoryGetWin32HandleInfoKHR getHandleInfo{
@@ -1148,7 +1173,7 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
       .memory = vkMemory_[0],
       .handleType = kHandleType,
   };
-  VK_ASSERT(ctx_->vf_.vkGetMemoryWin32HandleKHR(device_, &getHandleInfo, &exportedMemoryHandle_));
+  stepResult = ctx_->vf_.vkGetMemoryWin32HandleKHR(device_, &getHandleInfo, &exportedMemoryHandle_);
 #else
 
   const VkMemoryGetFdInfoKHR getFdInfo{
@@ -1156,9 +1181,16 @@ VulkanImage::VulkanImage(const VulkanContext& ctx,
       .memory = vkMemory_[0],
       .handleType = kHandleType,
   };
-  VK_ASSERT(ctx_->vf_.vkGetMemoryFdKHR(device_, &getFdInfo, &exportedFd_));
+  stepResult = ctx_->vf_.vkGetMemoryFdKHR(device_, &getFdInfo, &exportedFd_);
 
 #endif
+  if (stepResult != VK_SUCCESS) {
+    IGL_LOG_ERROR("VulkanImage (export): getting the exported memory handle failed (VkResult %d)\n",
+                  static_cast<int>(stepResult));
+    exportedFd_ = -1;
+    exportedMemoryHandle_ = nullptr;
+    failInit(stepResult);
+  }
 }
 #endif // IGL_PLATFORM_WINDOWS || IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
 

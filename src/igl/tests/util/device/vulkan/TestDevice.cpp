@@ -145,6 +145,7 @@ enum Entry : size_t {
   kAllocateCommandBuffers,
   kCreateCommandPool,
   kGetAndroidHardwareBufferProperties,
+  kGetMemoryFd,
   kDestroyFence,
   kDestroySemaphore,
   kDestroyCommandPool,
@@ -372,6 +373,18 @@ IGL_FAULT_STUB_GARBAGE(CreateCommandPool,
                         const VkAllocationCallbacks* a,
                         VkCommandPool* o),
                        (d, i, a, o))
+// A failed `vkGetMemoryFdKHR()` leaves its output undefined: the fault stub writes a value that is
+// not a descriptor, so a caller that keeps the output of a failed call shows.
+VKAPI_ATTR VkResult VKAPI_CALL stubGetMemoryFdKHR(VkDevice d,
+                                                  const VkMemoryGetFdInfoKHR* i,
+                                                  int* o) {
+  VkResult injected = VK_SUCCESS;
+  if (shouldFail(FaultingDevice::Call::GetMemoryFd, &injected)) {
+    *o = 0x7fffdead;
+    return injected;
+  }
+  return reinterpret_cast<PFN_vkGetMemoryFdKHR>(gFault.real[kGetMemoryFd])(d, i, o);
+}
 #undef IGL_FAULT_STUB
 #undef IGL_FAULT_STUB_GARBAGE
 
@@ -515,6 +528,7 @@ const std::array<Hook, kEntryCount> kHooks = {{
     IGL_HOOK("vkGetAndroidHardwareBufferPropertiesANDROID",
              kGetAndroidHardwareBufferProperties,
              stubGetAndroidHardwareBufferProperties),
+    IGL_HOOK("vkGetMemoryFdKHR", kGetMemoryFd, stubGetMemoryFdKHR),
     IGL_HOOK("vkDestroyImage", kDestroyImage, stubDestroyImage),
     IGL_HOOK("vkDestroyBuffer", kDestroyBuffer, stubDestroyBuffer),
     IGL_HOOK("vkFreeMemory", kFreeMemory, stubFreeMemory),

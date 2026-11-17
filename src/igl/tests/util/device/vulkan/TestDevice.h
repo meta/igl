@@ -72,6 +72,8 @@ class FaultingDevice {
     GetAndroidHardwareBufferProperties,
     /// vkQueueWaitIdle: the context's teardown waits on its queues with it.
     QueueWaitIdle,
+    /// vkGetMemoryFdKHR (only looked up on devices that expose VK_KHR_external_memory_fd).
+    GetMemoryFd,
     Count,
   };
   /// The calls the fixture only counts.

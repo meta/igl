@@ -314,6 +314,37 @@ TEST_F(TextureVulkanExtendedTest,
   EXPECT_EQ(ScopedDebugAbortCounter::count(), 0);
 }
 
+TEST_F(TextureVulkanExtendedTest,
+       AReportedExportableImageCreationFailureIsReturnedWithItsVkResult) {
+#if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
+  util::device::vulkan::FaultingDevice fd(util::device::vulkan::getContextConfig());
+  ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();
+
+  const ScopedDebugAbortCounter aborts;
+  fd.arm(util::device::vulkan::FaultingDevice::Call::CreateImage,
+         VK_ERROR_OUT_OF_DEVICE_MEMORY,
+         /*skip=*/0,
+         /*count=*/UINT32_MAX);
+  TextureDesc desc = TextureDesc::new2D(
+      TextureFormat::RGBA_UNorm8, 64, 64, TextureDesc::TextureUsageBits::Sampled);
+  desc.exportability = TextureDesc::TextureExportability::Exportable;
+  Result ret;
+  const auto texture = fd.device()->createTexture(desc, &ret);
+  if (fd.failed(util::device::vulkan::FaultingDevice::Call::CreateImage) == 0) {
+    GTEST_SKIP() << "The device cannot export image memory as an opaque file descriptor";
+  }
+  EXPECT_EQ(texture, nullptr);
+  EXPECT_EQ(ret.code, Result::Code::ArgumentOutOfRange);
+  EXPECT_NE(ret.message.find("Cannot create VulkanImage"), std::string::npos) << ret.message;
+  EXPECT_NE(ret.message.find(ivkGetVulkanResultString(VK_ERROR_OUT_OF_DEVICE_MEMORY)),
+            std::string::npos)
+      << ret.message;
+  EXPECT_EQ(ScopedDebugAbortCounter::count(), 0);
+#else
+  GTEST_SKIP() << "Exportable textures need Windows, Linux or Android";
+#endif
+}
+
 } // namespace igl::tests
 
 #endif // IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
