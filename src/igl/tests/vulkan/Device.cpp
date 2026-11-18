@@ -14,7 +14,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <numeric>
 #include <vector>
 #include <igl/CommandBuffer.h>
 #include <igl/Shader.h>
@@ -22,6 +24,7 @@
 #include <igl/glslang/GlslCompiler.h>
 #include <igl/glslang/GlslangHelpers.h>
 #if IGL_PLATFORM_WINDOWS || IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || IGL_PLATFORM_LINUX
+#include <igl/tests/util/device/vulkan/TestDevice.h>
 #include <igl/vulkan/Buffer.h>
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/HWDevice.h>
@@ -32,7 +35,14 @@
 #include <igl/vulkan/VulkanBuffer.h>
 #include <igl/vulkan/VulkanContext.h>
 #include <igl/vulkan/VulkanFeatures.h>
+#include <igl/vulkan/VulkanStagingDevice.h>
 #include <igl/vulkan/VulkanTexture.h>
+#endif
+
+#if !IGL_PLATFORM_ANDROID && !IGL_PLATFORM_WINDOWS && !defined(IGL_DISABLE_VALIDATION) && \
+    !defined(IGL_USE_STATIC_KOSMICKRISP) && !defined(FORCE_USE_STATIC_VULKAN_LOADER)
+#include <csignal>
+#include <cstdio>
 #endif
 
 namespace igl::tests {
@@ -220,16 +230,127 @@ TEST_F(DeviceVulkanTest, CurrentThreadIdTest) {
 }
 
 TEST_F(DeviceVulkanTest, EnsureValidation) {
-  GTEST_SKIP() << "Some tests are still running without Validation Layers enabled, so this test "
-                  "has been temporarily disabled.";
-
-#if !defined(IGL_DISABLE_VALIDATION)
   // @fb-only
-  // igl::vulkan::VulkanContext& ctx =
-  //   static_cast<igl::vulkan::Device*>(iglDev_.get())->getVulkanContext();
+  const auto& ctx = static_cast<const vulkan::Device&>(*iglDev_).getVulkanContext();
+#if IGL_PLATFORM_ANDROID || defined(IGL_DISABLE_VALIDATION) || \
+    defined(IGL_USE_STATIC_KOSMICKRISP) ||                     \
+    (defined(FORCE_USE_STATIC_VULKAN_LOADER) && !defined(FORCE_USE_STATIC_VULKAN_LOADER_DISABLED))
+  EXPECT_FALSE(ctx.areValidationLayersEnabled());
+#else
+  EXPECT_TRUE(ctx.areValidationLayersEnabled());
+#endif
+  EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::ValidationLayersEnabled),
+            ctx.areValidationLayersEnabled());
+}
 
-  // ASSERT_TRUE(ctx.areValidationLayersEnabled());
-#endif // !defined(IGL_DISABLE_VALIDATION)
+TEST_F(DeviceVulkanTest, ValidationOptOut) {
+  const auto config = util::device::vulkan::getContextConfig(false);
+  EXPECT_FALSE(config.enableValidation);
+  EXPECT_FALSE(config.terminateOnValidationError);
+  auto device = util::device::vulkan::createTestDevice(config);
+  ASSERT_NE(device, nullptr);
+  EXPECT_FALSE(device->getVulkanContext().areValidationLayersEnabled());
+  EXPECT_FALSE(device->hasFeature(DeviceFeatures::ValidationLayersEnabled));
+}
+
+#if !IGL_PLATFORM_ANDROID && !IGL_PLATFORM_WINDOWS && !defined(IGL_DISABLE_VALIDATION) && \
+    !defined(IGL_USE_STATIC_KOSMICKRISP) && !defined(FORCE_USE_STATIC_VULKAN_LOADER)
+namespace {
+VKAPI_ATTR VkBool32 VKAPI_CALL
+observeInvalidBufferError(VkDebugUtilsMessageSeverityFlagBitsEXT,
+                          VkDebugUtilsMessageTypeFlagsEXT,
+                          const VkDebugUtilsMessengerCallbackDataEXT* data,
+                          void* userData) {
+  if (data->pMessageIdName &&
+      std::strcmp(data->pMessageIdName, "VUID-VkBufferCreateInfo-size-00912") == 0) {
+    *static_cast<bool*>(userData) = true;
+  }
+  return VK_FALSE;
+}
+} // namespace
+
+TEST_F(DeviceVulkanTest, ValidationErrorCallback) {
+  auto& ctx = static_cast<vulkan::Device&>(*iglDev_).getVulkanContext();
+  ASSERT_TRUE(ctx.areValidationLayersEnabled());
+  ctx.config_.terminateOnValidationError = false;
+  bool sawError = false;
+  const VkDebugUtilsMessengerCreateInfoEXT messengerInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+      .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+      .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+      .pfnUserCallback = observeInvalidBufferError,
+      .pUserData = &sawError,
+  };
+  VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+  ASSERT_EQ(ctx.vf_.vkCreateDebugUtilsMessengerEXT(
+                ctx.getVkInstance(), &messengerInfo, nullptr, &messenger),
+            VK_SUCCESS);
+  const VkBufferCreateInfo invalidInfo = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .size = 0,
+      .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+  };
+  VkBuffer buffer = VK_NULL_HANDLE;
+  const VkResult result = ctx.vf_.vkCreateBuffer(ctx.getVkDevice(), &invalidInfo, nullptr, &buffer);
+  if (result == VK_SUCCESS) {
+    ctx.vf_.vkDestroyBuffer(ctx.getVkDevice(), buffer, nullptr);
+  }
+  ctx.vf_.vkDestroyDebugUtilsMessengerEXT(ctx.getVkInstance(), messenger, nullptr);
+  EXPECT_TRUE(sawError);
+}
+
+TEST(VulkanValidationDeathTest, InvalidVulkanCallTerminates) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  const VkBufferCreateInfo invalidInfo = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .size = 0,
+      .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+  };
+  ASSERT_EXIT(
+      {
+        igl::setDebugBreakEnabled(false);
+        auto config = util::device::vulkan::getContextConfig(true);
+        config.terminateOnValidationError = false;
+        auto device = util::device::vulkan::createTestDevice(config);
+        if (!device || !device->getVulkanContext().areValidationLayersEnabled()) {
+          std::_Exit(1);
+        }
+        auto& ctx = device->getVulkanContext();
+        ctx.config_.terminateOnValidationError = true;
+        std::fprintf(stderr, "Triggering VUID-VkBufferCreateInfo-size-00912\n");
+        VkBuffer buffer = VK_NULL_HANDLE;
+        // Deliberately violates VUID-VkBufferCreateInfo-size-00912.
+        const VkResult result =
+            ctx.vf_.vkCreateBuffer(ctx.getVkDevice(), &invalidInfo, nullptr, &buffer);
+        if (result == VK_SUCCESS) {
+          ctx.vf_.vkDestroyBuffer(ctx.getVkDevice(), buffer, nullptr);
+        }
+        std::_Exit(2);
+      },
+      ::testing::KilledBySignal(SIGABRT),
+      "Triggering VUID-VkBufferCreateInfo-size-00912");
+}
+#endif
+
+TEST_F(DeviceVulkanTest, ImageCopyAlignmentIncludesMultiplanarFormats) {
+  const auto& ctx = static_cast<const vulkan::Device&>(*iglDev_).getVulkanContext();
+  const auto& staging = *ctx.stagingDevice_;
+  const VkDeviceSize deviceAlignment =
+      ctx.getVkPhysicalDeviceProperties().limits.optimalBufferCopyOffsetAlignment;
+  for (const TextureFormat format : {TextureFormat::YUV_NV12, TextureFormat::YUV_420p}) {
+    const auto properties = TextureFormatProperties::fromTextureFormat(format);
+    ASSERT_GT(properties.numPlanes, 1);
+    ASSERT_EQ(properties.bytesPerBlock, 0);
+    const VkDeviceSize alignment = staging.getImageCopyAlignment(properties);
+    EXPECT_EQ(alignment, std::lcm(VkDeviceSize{16}, deviceAlignment));
+    ASSERT_GT(alignment, 0u);
+    const VkDeviceSize offset = 448;
+    const VkDeviceSize alignedOffset = (offset + alignment - 1) / alignment * alignment;
+    EXPECT_GE(alignedOffset, offset);
+    EXPECT_EQ(alignedOffset % 4, 0u);
+  }
 }
 
 TEST_F(DeviceVulkanTest, UpdateGlslangResource) {

@@ -147,11 +147,6 @@ class RenderCommandEncoder : public IRenderCommandEncoder {
   /// draw calls.
   bool setDrawCallCountEnabled(bool value);
 
-  void blitColorImage(const VulkanImage& srcImage,
-                      const VulkanImage& destImage,
-                      const TextureRangeDesc& srcRange,
-                      const TextureRangeDesc& destRange);
-
  private:
   RenderCommandEncoder(const std::shared_ptr<CommandBuffer>& commandBuffer, VulkanContext& ctx);
 

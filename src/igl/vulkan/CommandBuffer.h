@@ -164,6 +164,14 @@ class CommandBuffer final : public ICommandBuffer,
   /// cannot be recorded
   VkCommandBuffer IGL_NULLABLE endRenderPass();
 
+  /// @brief Records a linear-filtered blit of `srcRange` of `srcImage` into `destRange` of
+  /// `destImage`. It must be recorded outside of render passes. `destImage` ends in the layout its
+  /// usage reads: sampled, storage, or attachment.
+  void blitColorImage(const VulkanImage& srcImage,
+                      const VulkanImage& destImage,
+                      const TextureRangeDesc& srcRange,
+                      const TextureRangeDesc& destRange);
+
   [[nodiscard]] bool isFromSwapchain() const {
     return isFromSwapchain_;
   }

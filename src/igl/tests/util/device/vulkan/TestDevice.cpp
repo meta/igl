@@ -39,16 +39,9 @@ namespace igl::tests::util::device::vulkan {
 igl::vulkan::VulkanContextConfig getContextConfig(bool enableValidation) {
   igl::vulkan::VulkanContextConfig config;
   config.enableValidation = enableValidation;
-  config.enableGPUAssistedValidation = enableValidation;
+  config.enableGPUAssistedValidation = enableValidation && !IGL_PLATFORM_MACOSX;
 
-#if IGL_PLATFORM_MACOSX
-  config.terminateOnValidationError = false;
-#elif IGL_DEBUG
   config.terminateOnValidationError = enableValidation;
-#else
-  config.enableValidation = false;
-  config.terminateOnValidationError = false;
-#endif
 #ifdef IGL_DISABLE_VALIDATION
   config.enableValidation = false;
   config.terminateOnValidationError = false;

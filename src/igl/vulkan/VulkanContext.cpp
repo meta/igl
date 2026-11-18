@@ -69,7 +69,7 @@ const uint32_t kBinding_SamplerShadow = 5;
 const uint32_t kBinding_StorageImages = 6;
 // NOLINTEND(readability-identifier-naming)
 
-#if !IGL_PLATFORM_APPLE
+#if !IGL_PLATFORM_IOS
 VKAPI_ATTR VkBool32 VKAPI_CALL
 vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT msgSeverity,
                     VkDebugUtilsMessageTypeFlagsEXT msgType,
@@ -139,7 +139,7 @@ vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT msgSeverity,
 
   return VK_FALSE;
 }
-#endif // !IGL_PLATFORM_ANDROID
+#endif // !IGL_PLATFORM_IOS
 
 std::vector<VkFormat> getCompatibleDepthStencilFormats(igl::TextureFormat format) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
@@ -858,11 +858,11 @@ VulkanContext::~VulkanContext() {
   if (vkDevice_) {
     vf_.vkDestroyDevice(vkDevice_, nullptr); // Device has to be destroyed prior to Instance
   }
-#if !IGL_PLATFORM_APPLE
+#if !IGL_PLATFORM_IOS
   if (vf_.vkDestroyDebugUtilsMessengerEXT) {
     vf_.vkDestroyDebugUtilsMessengerEXT(vkInstance_, vkDebugUtilsMessenger_, nullptr);
   }
-#endif // !IGL_PLATFORM_APPLE
+#endif // !IGL_PLATFORM_IOS
   if (vf_.vkDestroyInstance) {
     vf_.vkDestroyInstance(vkInstance_, nullptr);
   }
@@ -938,7 +938,6 @@ void VulkanContext::createInstance() {
 
   std::vector<const char*> layers;
   // @fb-only
-#if !IGL_PLATFORM_MACOSX
 #if IGL_PLATFORM_ANDROID
   if (!config_.enableValidationOnAndroid) {
     config_.enableValidation = false;
@@ -958,12 +957,6 @@ void VulkanContext::createInstance() {
       config_.enableValidation = false;
     }
   }
-#else
-  // No layer is ever requested here, so areValidationLayersEnabled() must report false rather than
-  // what the caller asked for. Must stay below enableCommonInstanceExtensions(), which reads the
-  // requested value to decide on VK_EXT_validation_features.
-  config_.enableValidation = false;
-#endif
   if (config_.enableGfxReconstruct) {
     layers.emplace_back(kGfxReconstructLayerName);
   }
@@ -1021,12 +1014,12 @@ void VulkanContext::createInstance() {
       features_.enable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, VulkanFeatures::ExtensionType::Instance);
   vulkan::functions::loadInstanceFunctions(*tableImpl_, vkInstance_, enableExtDebugUtils);
 
-#if !IGL_PLATFORM_APPLE
+#if !IGL_PLATFORM_IOS
   if (features_.enabled(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
     VK_ASSERT(ivkCreateDebugUtilsMessenger(
         &vf_, vkInstance_, &vulkanDebugCallback, this, &vkDebugUtilsMessenger_));
   }
-#endif // !IGL_PLATFORM_APPLE
+#endif // !IGL_PLATFORM_IOS
 
 #if IGL_LOGGING_ENABLED
   if (config_.enableExtraLogs) {

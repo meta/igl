@@ -252,13 +252,13 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::ExplicitBinding));
       EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::ExplicitBindingExt));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::TextureFormatRG));
-      // createInstance() requests the validation layer on neither Android nor macOS, so the
-      // feature reports false there in every build mode.
-#if IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX || !IGL_DEBUG || defined(IGL_DISABLE_VALIDATION)
+#if IGL_PLATFORM_ANDROID || defined(IGL_DISABLE_VALIDATION) || \
+    defined(IGL_USE_STATIC_KOSMICKRISP) ||                     \
+    (defined(FORCE_USE_STATIC_VULKAN_LOADER) && !defined(FORCE_USE_STATIC_VULKAN_LOADER_DISABLED))
       EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::ValidationLayersEnabled));
 #else
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::ValidationLayersEnabled));
-#endif // IGL_PLATFORM_ANDROID || IGL_PLATFORM_MACOSX
+#endif
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::ExternalMemoryObjects));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::PushConstants));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::FillBuffer));
