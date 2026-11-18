@@ -156,8 +156,8 @@ void Framebuffer::copyBytes(ICommandQueue& cmdQueue,
     const TextureDesc desc{
         .width = iglTexture->getDimensions().width,
         .height = iglTexture->getDimensions().height,
-        .format = iglTexture->getProperties().format,
         .type = iglTexture->getType(),
+        .format = iglTexture->getProperties().format,
         .storage = mtlDevice.isAppleGpu() ? ResourceStorage::Shared : ResourceStorage::Managed,
         .debugName = "stageTexture",
     };
