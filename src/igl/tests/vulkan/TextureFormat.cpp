@@ -10,6 +10,7 @@
 #include <igl/vulkan/util/TextureFormat.h>
 
 #include <igl/vulkan/Common.h>
+#include <igl/vulkan/YcbcrFormat.h>
 
 namespace igl::vulkan::tests {
 TEST(TextureFormatUtilTest, invertRedAndBlue) {
@@ -412,6 +413,99 @@ TEST(TextureFormatUtilTest, vkTextureFormatToTextureFormat) {
             igl::TextureFormat::Z_UNorm32);
   ASSERT_EQ(util::vkTextureFormatToTextureFormat(VK_FORMAT_R8G8B8A8_UNORM),
             igl::TextureFormat::RGBA_UNorm8);
+}
+
+TEST(TextureFormatUtilTest, tryVkTextureFormatToTextureFormatReportsUnmappedFormats) {
+  TextureFormat format = igl::TextureFormat::RGBA_UNorm8;
+  ASSERT_TRUE(util::tryVkTextureFormatToTextureFormat(VK_FORMAT_R8_UNORM, format));
+  ASSERT_EQ(format, igl::TextureFormat::R_UNorm8);
+  ASSERT_TRUE(util::tryVkTextureFormatToTextureFormat(VK_FORMAT_UNDEFINED, format));
+  ASSERT_EQ(format, igl::TextureFormat::Invalid);
+
+  // A format with no TextureFormat is reported, not aborted on, and the output stays as it was.
+  format = igl::TextureFormat::RGBA_UNorm8;
+  ASSERT_FALSE(util::tryVkTextureFormatToTextureFormat(
+      VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, format));
+  ASSERT_EQ(format, igl::TextureFormat::RGBA_UNorm8);
+  ASSERT_FALSE(util::tryVkTextureFormatToTextureFormat(0x7fffffff, format));
+  ASSERT_EQ(format, igl::TextureFormat::RGBA_UNorm8);
+}
+
+TEST(TextureFormatUtilTest, vkFormatRequiresYcbcrConversion) {
+  // Every packed 4:2:2 and multi-planar format of Vulkan 1.1.
+  constexpr VkFormat kNeedsConversion[] = {
+      VK_FORMAT_G8B8G8R8_422_UNORM,
+      VK_FORMAT_B8G8R8G8_422_UNORM,
+      VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM,
+      VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+      VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM,
+      VK_FORMAT_G8_B8R8_2PLANE_422_UNORM,
+      VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM,
+      VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16,
+      VK_FORMAT_B10X6G10X6R10X6G10X6_422_UNORM_4PACK16,
+      VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16,
+      VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16,
+      VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16,
+      VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16,
+      VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16,
+      VK_FORMAT_G12X4B12X4G12X4R12X4_422_UNORM_4PACK16,
+      VK_FORMAT_B12X4G12X4R12X4G12X4_422_UNORM_4PACK16,
+      VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16,
+      VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16,
+      VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16,
+      VK_FORMAT_G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16,
+      VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16,
+      VK_FORMAT_G16B16G16R16_422_UNORM,
+      VK_FORMAT_B16G16R16G16_422_UNORM,
+      VK_FORMAT_G16_B16_R16_3PLANE_420_UNORM,
+      VK_FORMAT_G16_B16R16_2PLANE_420_UNORM,
+      VK_FORMAT_G16_B16_R16_3PLANE_422_UNORM,
+      VK_FORMAT_G16_B16R16_2PLANE_422_UNORM,
+      VK_FORMAT_G16_B16_R16_3PLANE_444_UNORM,
+  };
+  for (const VkFormat format : kNeedsConversion) {
+    ASSERT_TRUE(vkFormatRequiresYcbcrConversion(format)) << static_cast<int>(format);
+  }
+
+  // The R10X6 and R12X4 formats that sit between them in the enum have no chroma and need none.
+  constexpr VkFormat kNoConversion[] = {
+      VK_FORMAT_R10X6_UNORM_PACK16,
+      VK_FORMAT_R10X6G10X6_UNORM_2PACK16,
+      VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16,
+      VK_FORMAT_R12X4_UNORM_PACK16,
+      VK_FORMAT_R12X4G12X4_UNORM_2PACK16,
+      VK_FORMAT_R12X4G12X4B12X4A12X4_UNORM_4PACK16,
+      VK_FORMAT_UNDEFINED,
+      VK_FORMAT_R8G8B8A8_UNORM,
+      VK_FORMAT_R16G16B16A16_SFLOAT,
+      VK_FORMAT_D32_SFLOAT,
+  };
+  for (const VkFormat format : kNoConversion) {
+    ASSERT_FALSE(vkFormatRequiresYcbcrConversion(format)) << static_cast<int>(format);
+  }
+}
+
+TEST(TextureFormatUtilTest, formatFeaturesAllowLinearChromaFilter) {
+  constexpr VkFormatFeatureFlags kLinear =
+      VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT;
+  ASSERT_TRUE(formatFeaturesAllowLinearChromaFilter(kLinear));
+  ASSERT_TRUE(formatFeaturesAllowLinearChromaFilter(kLinear | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT));
+  ASSERT_FALSE(formatFeaturesAllowLinearChromaFilter(0));
+
+  // The features a PowerVR driver lists for the camera's external format: sampled image with a
+  // linear filter, the transfer bits, the midpoint and cosited chroma samples, separate, explicit
+  // and forceable-explicit chroma reconstruction and disjoint planes, but not the linear chroma
+  // filter.
+  constexpr VkFormatFeatureFlags kPowerVrCameraFormat =
+      VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
+      VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT | VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT |
+      VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT |
+      VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_BIT |
+      VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE_BIT |
+      VK_FORMAT_FEATURE_DISJOINT_BIT;
+  ASSERT_FALSE(formatFeaturesAllowLinearChromaFilter(kPowerVrCameraFormat));
+  ASSERT_TRUE(formatFeaturesAllowLinearChromaFilter(kPowerVrCameraFormat | kLinear));
 }
 
 } // namespace igl::vulkan::tests

@@ -21,6 +21,8 @@
 #include <igl/vulkan/VulkanImage.h>
 #include <igl/vulkan/VulkanImmediateCommands.h>
 #include <igl/vulkan/VulkanTexture.h>
+#include <igl/vulkan/YcbcrFormat.h>
+#include <igl/vulkan/util/TextureFormat.h>
 
 #if IGL_LOGGING_ENABLED
 #include <mutex>
@@ -54,39 +56,17 @@ void logFirstAhbImportDiagnostics(const VkAndroidHardwareBufferFormatPropertiesA
   static std::once_flag once;
   std::call_once(once, [&formatProps, &driverProps]() {
     const VkComponentMapping& components = formatProps.samplerYcbcrConversionComponents;
-    if (formatProps.format == VK_FORMAT_UNDEFINED) {
-      IGL_LOG_DEBUG(
-          "[vulkan][ahb][first_frame] Vulkan AHB import\n"
-          "  format=%s (%d) externalFormat=0x%llx\n"
-          "  components r=%s g=%s b=%s a=%s\n"
-          "  ycbcrModel=%s ycbcrRange=%s\n"
-          "  driverID=%s (%d) conformance=%u.%u.%u.%u\n",
-          vkFormatToString(formatProps.format),
-          static_cast<int>(formatProps.format),
-          static_cast<unsigned long long>(formatProps.externalFormat),
-          vkComponentSwizzleToString(components.r),
-          vkComponentSwizzleToString(components.g),
-          vkComponentSwizzleToString(components.b),
-          vkComponentSwizzleToString(components.a),
-          vkSamplerYcbcrModelConversionToString(formatProps.suggestedYcbcrModel),
-          vkSamplerYcbcrRangeToString(formatProps.suggestedYcbcrRange),
-          vkDriverIdToString(driverProps.driverID),
-          static_cast<int>(driverProps.driverID),
-          static_cast<unsigned>(driverProps.conformanceVersion.major),
-          static_cast<unsigned>(driverProps.conformanceVersion.minor),
-          static_cast<unsigned>(driverProps.conformanceVersion.subminor),
-          static_cast<unsigned>(driverProps.conformanceVersion.patch));
-      return;
-    }
-
     IGL_LOG_DEBUG(
         "[vulkan][ahb][first_frame] Vulkan AHB import\n"
-        "  format=%s (%d)\n"
+        "  format=%s (%d) externalFormat=0x%llx formatFeatures=0x%x chromaFilter=%s\n"
         "  components r=%s g=%s b=%s a=%s\n"
         "  ycbcrModel=%s ycbcrRange=%s\n"
         "  driverID=%s (%d) conformance=%u.%u.%u.%u\n",
         vkFormatToString(formatProps.format),
         static_cast<int>(formatProps.format),
+        static_cast<unsigned long long>(formatProps.externalFormat),
+        static_cast<unsigned>(formatProps.formatFeatures),
+        formatFeaturesAllowLinearChromaFilter(formatProps.formatFeatures) ? "LINEAR" : "NEAREST",
         vkComponentSwizzleToString(components.r),
         vkComponentSwizzleToString(components.g),
         vkComponentSwizzleToString(components.b),
@@ -209,6 +189,21 @@ Result NativeHWTextureBuffer::createTextureInternal(AHardwareBuffer* hwBuffer) {
   logFirstAhbImportDiagnostics(ahbFormatProps, ctx.getVkPhysicalDeviceDriverProperties());
 #endif
 
+  // Some drivers map a camera buffer to a concrete multi-planar VkFormat (for example
+  // G8_B8R8_2PLANE_420 for Y8Cb8Cr8_420) and also report an external format. An image view of such
+  // a format needs a sampler YCbCr conversion, which only the external-format path below creates,
+  // so that path is used for it too. Without an external format there is no conversion to build.
+  if (vkFormatRequiresYcbcrConversion(ahbFormatProps.format)) {
+    if (ahbFormatProps.externalFormat == 0) {
+      IGL_LOG_ERROR(
+          "AHB import: format %d needs a YCbCr conversion but the driver gave no external format",
+          static_cast<int>(ahbFormatProps.format));
+      return Result(Result::Code::RuntimeError,
+                    "AHB format needs a YCbCr conversion and has no external format");
+    }
+    ahbFormatProps.format = VK_FORMAT_UNDEFINED;
+  }
+
   VkExternalFormatANDROID externalFormat = {
       .sType = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID,
   };
@@ -226,11 +221,17 @@ Result NativeHWTextureBuffer::createTextureInternal(AHardwareBuffer* hwBuffer) {
       .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID,
   };
 
+  // A driver format with no IGL equivalent (R8G8B8_UNORM, for one) stays Invalid, as a release
+  // build always did; a debug build used to abort here.
+  TextureFormat iglFormat = TextureFormat::Invalid;
+  if (!util::tryVkTextureFormatToTextureFormat(static_cast<int32_t>(ahbFormatProps.format),
+                                               iglFormat)) {
+    IGL_LOG_DEBUG("AHB import: format %d has no IGL texture format\n",
+                  static_cast<int>(ahbFormatProps.format));
+  }
+
   auto desc = TextureDesc::newNativeHWBufferImage(
-      igl::vulkan::vkFormatToTextureFormat(ahbFormatProps.format),
-      importUsage.textureUsage,
-      hwbDesc.width,
-      hwbDesc.height);
+      iglFormat, importUsage.textureUsage, hwbDesc.width, hwbDesc.height);
 
   VkImage vkImage = VK_NULL_HANDLE;
 
@@ -376,6 +377,11 @@ Result NativeHWTextureBuffer::createTextureInternal(AHardwareBuffer* hwBuffer) {
       components.r = VK_COMPONENT_SWIZZLE_B;
       components.b = VK_COMPONENT_SWIZZLE_R;
     }
+    // A driver whose external format lacks the linear-filter feature (PowerVR, for one) accepts
+    // only a nearest chroma filter in the conversion; the context's cache keys on the filter too.
+    const VkFilter chromaFilter =
+        formatFeaturesAllowLinearChromaFilter(ahbFormatProps.formatFeatures) ? VK_FILTER_LINEAR
+                                                                             : VK_FILTER_NEAREST;
     vulkanImage.samplerYcbcrConversionCreateInfo_ = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO,
         .pNext = &externalFormat,
@@ -385,7 +391,7 @@ Result NativeHWTextureBuffer::createTextureInternal(AHardwareBuffer* hwBuffer) {
         .components = components,
         .xChromaOffset = ahbFormatProps.suggestedXChromaOffset,
         .yChromaOffset = ahbFormatProps.suggestedYChromaOffset,
-        .chromaFilter = VK_FILTER_LINEAR,
+        .chromaFilter = chromaFilter,
         .forceExplicitReconstruction = VK_FALSE};
 
     // Reuse the context-owned conversion so AImageReader pool slots share one handle.
@@ -398,9 +404,6 @@ Result NativeHWTextureBuffer::createTextureInternal(AHardwareBuffer* hwBuffer) {
     }
     // Expose the non-owning handle to consumers that need a matching VkSampler.
     vulkanImage.ycbcrConversion_ = conversionInfo.conversion;
-  } else if (igl::vulkan::getNumImagePlanes(ahbFormatProps.format) > 1) {
-    auto createInfo = ctx.getOrCreateYcbcrConversionInfo(VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM);
-    conversionInfo.conversion = createInfo.conversion;
   }
 
   VulkanImageView vulkanImageView(ctx, viewInfo, "Image View: videoTexture");

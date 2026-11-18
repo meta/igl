@@ -98,7 +98,10 @@ namespace igl::vulkan::util {
 #define VK_FORMAT_D32_SFLOAT 126
 // NOLINTEND(readability-identifier-naming)
 
-TextureFormat vkTextureFormatToTextureFormat(int32_t vkFormat) {
+namespace {
+// `outMapped` is false when `vkFormat` has no TextureFormat, in which case the result is Invalid.
+TextureFormat mapVkTextureFormat(int32_t vkFormat, bool& outMapped) {
+  outMapped = true;
   switch (vkFormat) {
   case VK_FORMAT_UNDEFINED:
     return TextureFormat::Invalid;
@@ -258,10 +261,28 @@ TextureFormat vkTextureFormatToTextureFormat(int32_t vkFormat) {
   case VK_FORMAT_D32_SFLOAT:
     return TextureFormat::Z_UNorm32;
   default:
+    outMapped = false;
+    return TextureFormat::Invalid;
+  }
+}
+} // namespace
+
+TextureFormat vkTextureFormatToTextureFormat(int32_t vkFormat) {
+  bool mapped = false;
+  const TextureFormat format = mapVkTextureFormat(vkFormat, mapped);
+  if (!mapped) {
     IGL_DEBUG_ABORT("VkFormat value not handled: %d", static_cast<int>(vkFormat));
   }
+  return format;
+}
 
-  return TextureFormat::Invalid;
+bool tryVkTextureFormatToTextureFormat(int32_t vkFormat, TextureFormat& outFormat) {
+  bool mapped = false;
+  const TextureFormat format = mapVkTextureFormat(vkFormat, mapped);
+  if (mapped) {
+    outFormat = format;
+  }
+  return mapped;
 }
 
 } // namespace igl::vulkan::util
