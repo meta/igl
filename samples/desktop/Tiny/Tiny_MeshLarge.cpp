@@ -20,7 +20,7 @@
 
 // NOLINTNEXTLINE(bugprone-reserved-identifier)
 #if !defined(_USE_MATH_DEFINES)
-#define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES // NOLINT(readability-identifier-naming)
 #endif // _USE_MATH_DEFINES
 #include <Compress.h>
 #include <algorithm>
@@ -364,7 +364,7 @@ void main() {
 }
 )";
 
-const char* kCodeVS_Wireframe = R"(
+const char* kCodeVsWireframe = R"(
 layout (location=0) in vec3 pos;
 
 struct UniformsPerFrame {
@@ -397,7 +397,7 @@ void main() {
 }
 )";
 
-const char* kCodeFS_Wireframe = R"(
+const char* kCodeFsWireframe = R"(
 layout (location=0) out vec4 out_FragColor;
 
 void main() {
@@ -627,52 +627,52 @@ using glm::vec2;
 using glm::vec3;
 using glm::vec4;
 
-int width_ = 1920;
-int height_ = 1080;
-igl::FPSCounter fps_;
+int width = 1920;
+int height = 1080;
+igl::FPSCounter fps;
 
 constexpr uint32_t kNumBufferedFrames = 3;
 
 // NOLINTBEGIN(facebook-static-object-destructor-check)
 std::unique_ptr<IDevice> device_; // NOLINT(readability-identifier-naming)
-std::shared_ptr<ICommandQueue> commandQueue_;
-RenderPassDesc renderPassOffscreen_;
-RenderPassDesc renderPassMain_;
-RenderPassDesc renderPassShadow_;
-std::shared_ptr<IFramebuffer> fbMain_; // swapchain
-std::shared_ptr<IFramebuffer> fbOffscreen_;
-std::shared_ptr<IFramebuffer> fbShadowMap_;
-std::shared_ptr<IComputePipelineState> computePipelineState_Grayscale_;
-std::shared_ptr<IRenderPipelineState> renderPipelineState_Mesh_;
-std::shared_ptr<IRenderPipelineState> renderPipelineState_MeshWireframe_;
-std::shared_ptr<IRenderPipelineState> renderPipelineState_Shadow_;
-std::shared_ptr<IRenderPipelineState> renderPipelineState_Skybox_;
-std::shared_ptr<IRenderPipelineState> renderPipelineState_Fullscreen_;
-std::shared_ptr<IBuffer> vb0_, ib0_; // buffers for vertices and indices
-std::shared_ptr<IBuffer> sbMaterials_; // storage buffer for materials
-std::vector<std::shared_ptr<IBuffer>> ubPerFrame_, ubPerFrameShadow_, ubPerObject_;
-std::shared_ptr<IVertexInputState> vertexInput0_;
-std::shared_ptr<IVertexInputState> vertexInputShadows_;
-std::shared_ptr<IDepthStencilState> depthStencilState_;
-std::shared_ptr<IDepthStencilState> depthStencilStateLEqual_;
+std::shared_ptr<ICommandQueue> commandQueue;
+RenderPassDesc renderPassOffscreen;
+RenderPassDesc renderPassMain;
+RenderPassDesc renderPassShadow;
+std::shared_ptr<IFramebuffer> fbMain; // swapchain
+std::shared_ptr<IFramebuffer> fbOffscreen;
+std::shared_ptr<IFramebuffer> fbShadowMap;
+std::shared_ptr<IComputePipelineState> computePipelineStateGrayscale;
+std::shared_ptr<IRenderPipelineState> renderPipelineStateMesh;
+std::shared_ptr<IRenderPipelineState> renderPipelineStateMeshWireframe;
+std::shared_ptr<IRenderPipelineState> renderPipelineStateShadow;
+std::shared_ptr<IRenderPipelineState> renderPipelineStateSkybox;
+std::shared_ptr<IRenderPipelineState> renderPipelineStateFullscreen;
+std::shared_ptr<IBuffer> vb0, ib0; // buffers for vertices and indices
+std::shared_ptr<IBuffer> sbMaterials; // storage buffer for materials
+std::vector<std::shared_ptr<IBuffer>> ubPerFrame, ubPerFrameShadow, ubPerObject;
+std::shared_ptr<IVertexInputState> vertexInput0;
+std::shared_ptr<IVertexInputState> vertexInputShadows;
+std::shared_ptr<IDepthStencilState> depthStencilState;
+std::shared_ptr<IDepthStencilState> depthStencilStateLEqual;
 std::shared_ptr<ISamplerState> sampler;
 std::shared_ptr<ISamplerState> samplerShadow;
-std::shared_ptr<ITexture> textureDummyWhite_;
+std::shared_ptr<ITexture> textureDummyWhite;
 #if USE_OPENGL_BACKEND
-std::shared_ptr<ITexture> textureDummyBlack_;
+std::shared_ptr<ITexture> textureDummyBlack;
 #endif // USE_OPENGL_BACKEND
-std::shared_ptr<ITexture> skyboxTextureReference_;
-std::shared_ptr<ITexture> skyboxTextureIrradiance_;
+std::shared_ptr<ITexture> skyboxTextureReference;
+std::shared_ptr<ITexture> skyboxTextureIrradiance;
 // scene navigation
-CameraPositioner_FirstPerson positioner_(vec3(-100, 40, -47), vec3(0, 35, 0), vec3(0, 1, 0));
-Camera camera(positioner_);
+CameraPositioner_FirstPerson positioner(vec3(-100, 40, -47), vec3(0, 35, 0), vec3(0, 1, 0));
+Camera camera(positioner);
 // NOLINTEND(facebook-static-object-destructor-check)
-glm::vec2 mousePos_ = glm::vec2(0.0f);
-bool mousePressed_ = false;
-bool enableComputePass_ = false;
-bool enableWireframe_ = false;
+glm::vec2 mousePos = glm::vec2(0.0f);
+bool mousePressed = false;
+bool enableComputePass = false;
+bool enableWireframe = false;
 
-bool isShadowMapDirty_ = true;
+bool isShadowMapDirty = true;
 
 struct VertexData {
   vec3 position;
@@ -682,9 +682,9 @@ struct VertexData {
 };
 
 // NOLINTBEGIN(facebook-static-object-destructor-check)
-std::vector<VertexData> vertexData_;
-std::vector<uint32_t> indexData_;
-std::vector<uint32_t> shapeVertexCnt_;
+std::vector<VertexData> vertexData;
+std::vector<uint32_t> indexData;
+std::vector<uint32_t> shapeVertexCnt;
 // NOLINTEND(facebook-static-object-destructor-check)
 
 struct UniformsPerFrame {
@@ -694,7 +694,7 @@ struct UniformsPerFrame {
   int bDrawNormals = 0;
   int bDebugLines = 0;
   vec2 padding;
-} perFrame_;
+} perFrame;
 
 struct UniformsPerObject {
   mat4 model;
@@ -705,9 +705,9 @@ struct CachedMaterial {
   char name[MAX_MATERIAL_NAME] = {};
   vec3 ambient = vec3(0.0f);
   vec3 diffuse = vec3(0.0f);
-  char ambient_texname[MAX_MATERIAL_NAME] = {};
-  char diffuse_texname[MAX_MATERIAL_NAME] = {};
-  char alpha_texname[MAX_MATERIAL_NAME] = {};
+  char ambientTexname[MAX_MATERIAL_NAME] = {};
+  char diffuseTexname[MAX_MATERIAL_NAME] = {};
+  char alphaTexname[MAX_MATERIAL_NAME] = {};
 };
 
 // this goes into our GLSL shaders
@@ -724,7 +724,7 @@ static_assert(sizeof(GPUMaterial) % 16 == 0);
 
 // NOLINTBEGIN(facebook-static-object-destructor-check)
 std::vector<CachedMaterial> cachedMaterials_;
-std::vector<GPUMaterial> materials_;
+std::vector<GPUMaterial> materials;
 // NOLINTEND(facebook-static-object-destructor-check)
 
 struct MaterialTextures {
@@ -734,7 +734,7 @@ struct MaterialTextures {
 };
 
 // NOLINTNEXTLINE(facebook-static-object-destructor-check)
-std::vector<MaterialTextures> textures_; // same indexing as in materials_
+std::vector<MaterialTextures> textures; // same indexing as in materials
 
 struct LoadedImage {
   int w = 0;
@@ -754,16 +754,16 @@ struct LoadedMaterial {
 
 // file name -> LoadedImage
 // NOLINTBEGIN(facebook-static-object-destructor-check)
-std::mutex imagesCacheMutex_;
-std::unordered_map<std::string, LoadedImage> imagesCache_; // accessible only from the loader thread
-                                                           // pool (multiple threads)
-std::unordered_map<std::string, std::shared_ptr<ITexture>> texturesCache_; // accessible only from
-                                                                           // the main thread
-std::vector<LoadedMaterial> loadedMaterials_;
-std::mutex loadedMaterialsMutex_;
+std::mutex imagesCacheMutex;
+std::unordered_map<std::string, LoadedImage> imagesCache; // accessible only from the loader thread
+                                                          // pool (multiple threads)
+std::unordered_map<std::string, std::shared_ptr<ITexture>> texturesCache; // accessible only from
+                                                                          // the main thread
+std::vector<LoadedMaterial> loadedMaterials;
+std::mutex loadedMaterialsMutex;
 std::atomic<bool> loaderShouldExit_ = false;
-std::atomic<uint32_t> remainingMaterialsToLoad_ = 0;
-std::unique_ptr<tf::Executor> loaderPool_ =
+std::atomic<uint32_t> remainingMaterialsToLoad = 0;
+std::unique_ptr<tf::Executor> loaderPool =
     std::make_unique<tf::Executor>(std::max(2u, std::thread::hardware_concurrency() / 2));
 // NOLINTEND(facebook-static-object-destructor-check)
 
@@ -839,7 +839,7 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
     glfwSetCursorPosCallback(window, [](auto* window, double x, double y) {
       int fbWidth = 0, fbHeight = 0;
       glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
-      mousePos_ = vec2(x / fbWidth, 1.0f - y / fbHeight);
+      mousePos = vec2(x / fbWidth, 1.0f - y / fbHeight);
 #if IGL_WITH_IGLU
       inputDispatcher.queueEvent(igl::shell::MouseMotionEvent(x, y, 0, 0));
 #endif // IGL_WITH_IGLU
@@ -850,12 +850,12 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
       if (!ImGui::GetIO().WantCaptureMouse) {
 #endif // IGL_WITH_IGLU
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
-          mousePressed_ = (action == GLFW_PRESS);
+          mousePressed = (action == GLFW_PRESS);
         }
 #if IGL_WITH_IGLU
       } else {
         // release the mouse
-        mousePressed_ = false;
+        mousePressed = false;
       }
       double xpos = NAN, ypos = NAN;
       glfwGetCursorPos(window, &xpos, &ypos);
@@ -875,50 +875,50 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (key == GLFW_KEY_N && pressed) {
-        perFrame_.bDrawNormals = (perFrame_.bDrawNormals + 1) % 2;
+        perFrame.bDrawNormals = (perFrame.bDrawNormals + 1) % 2;
       }
       if (key == GLFW_KEY_C && pressed) {
-        enableComputePass_ = !enableComputePass_;
+        enableComputePass = !enableComputePass;
       }
       if (key == GLFW_KEY_T && pressed) {
-        enableWireframe_ = !enableWireframe_;
+        enableWireframe = !enableWireframe;
       }
       if (key == GLFW_KEY_ESCAPE && pressed) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (key == GLFW_KEY_W) {
-        positioner_.movement_.forward_ = pressed;
+        positioner.movement_.forward_ = pressed;
       }
       if (key == GLFW_KEY_S) {
-        positioner_.movement_.backward_ = pressed;
+        positioner.movement_.backward_ = pressed;
       }
       if (key == GLFW_KEY_A) {
-        positioner_.movement_.left_ = pressed;
+        positioner.movement_.left_ = pressed;
       }
       if (key == GLFW_KEY_D) {
-        positioner_.movement_.right_ = pressed;
+        positioner.movement_.right_ = pressed;
       }
       if (key == GLFW_KEY_1) {
-        positioner_.movement_.up_ = pressed;
+        positioner.movement_.up_ = pressed;
       }
       if (key == GLFW_KEY_2) {
-        positioner_.movement_.down_ = pressed;
+        positioner.movement_.down_ = pressed;
       }
       if (mods & GLFW_MOD_SHIFT) {
-        positioner_.movement_.fastSpeed_ = pressed;
+        positioner.movement_.fastSpeed_ = pressed;
       }
       if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) {
-        positioner_.movement_.fastSpeed_ = pressed;
+        positioner.movement_.fastSpeed_ = pressed;
       }
       if (key == GLFW_KEY_SPACE) {
-        positioner_.setUpVector(vec3(0.0f, 1.0f, 0.0f));
+        positioner.setUpVector(vec3(0.0f, 1.0f, 0.0f));
       }
       if (key == GLFW_KEY_L && pressed) {
-        perFrame_.bDebugLines = (perFrame_.bDebugLines + 1) % 2;
+        perFrame.bDebugLines = (perFrame.bDebugLines + 1) % 2;
       }
     });
 
-    glfwGetWindowSize(window, &width_, &height_);
+    glfwGetWindowSize(window, &width, &height);
   }
 
   // create a device
@@ -986,10 +986,8 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
         IGL_LOG_ERROR("No suitable Vulkan device.\n");
         return nullptr;
       }
-      device_ = vulkan::HWDevice::create(std::move(ctx),
-                                         devices[0],
-                                         static_cast<uint32_t>(width_),
-                                         static_cast<uint32_t>(height_));
+      device_ = vulkan::HWDevice::create(
+          std::move(ctx), devices[0], static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 #endif
       if (!device_) {
         IGL_LOG_ERROR("Failed to create a device.\n");
@@ -1040,12 +1038,12 @@ bool loadAndCache(const char* cacheFileName) {
   resplitShapes.resize(materials.size());
   int prevIndex = shapes[0].mesh.material_ids[0];
   for (auto& shape : shapes) {
-    size_t index_offset = 0;
+    size_t indexOffset = 0;
     for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
       IGL_DEBUG_ASSERT(shape.mesh.num_face_vertices[f] == 3);
 
       for (size_t v = 0; v < 3; v++) {
-        const tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
+        const tinyobj::index_t idx = shape.mesh.indices[indexOffset + v];
 
         const vec3 pos(attrib.vertices[3 * size_t(idx.vertex_index) + 0],
                        attrib.vertices[3 * size_t(idx.vertex_index) + 1],
@@ -1074,16 +1072,16 @@ bool loadAndCache(const char* cacheFileName) {
           shapeData.clear();
           prevIndex = mtlIndex;
         }
-        vertexData_.push_back({pos,
-                               glm::packSnorm3x10_1x2(vec4(normal, 0)),
-                               glm::packHalf2x16(uv),
-                               static_cast<uint32_t>(mtlIndex)});
+        vertexData.push_back({pos,
+                              glm::packSnorm3x10_1x2(vec4(normal, 0)),
+                              glm::packHalf2x16(uv),
+                              static_cast<uint32_t>(mtlIndex)});
         shapeData.push_back({pos,
                              glm::packSnorm3x10_1x2(vec4(normal, 0)),
                              glm::packHalf2x16(uv),
                              static_cast<uint32_t>(mtlIndex)});
       }
-      index_offset += 3;
+      indexOffset += 3;
     }
   }
   resplitShapes[prevIndex].insert(
@@ -1091,37 +1089,37 @@ bool loadAndCache(const char* cacheFileName) {
   shapeData.clear();
   for (auto shape : resplitShapes) {
     shapeData.insert(shapeData.end(), shape.begin(), shape.end());
-    shapeVertexCnt_.emplace_back(static_cast<uint32_t>(shape.size()));
+    shapeVertexCnt.emplace_back(static_cast<uint32_t>(shape.size()));
   }
 
   // repack the mesh as described in https://github.com/zeux/meshoptimizer
   {
     // 1. Generate an index buffer
-    const size_t indexCount = vertexData_.size();
+    const size_t indexCount = vertexData.size();
     std::vector<uint32_t> remap(indexCount);
     const size_t vertexCount = meshopt_generateVertexRemap(
-        remap.data(), nullptr, indexCount, vertexData_.data(), indexCount, sizeof(VertexData));
+        remap.data(), nullptr, indexCount, vertexData.data(), indexCount, sizeof(VertexData));
     // 2. Remap vertices
     std::vector<VertexData> remappedVertices;
-    indexData_.resize(indexCount);
+    indexData.resize(indexCount);
     remappedVertices.resize(vertexCount);
-    meshopt_remapIndexBuffer(indexData_.data(), nullptr, indexCount, remap.data());
+    meshopt_remapIndexBuffer(indexData.data(), nullptr, indexCount, remap.data());
     meshopt_remapVertexBuffer(
-        remappedVertices.data(), vertexData_.data(), indexCount, sizeof(VertexData), remap.data());
-    vertexData_ = remappedVertices;
+        remappedVertices.data(), vertexData.data(), indexCount, sizeof(VertexData), remap.data());
+    vertexData = remappedVertices;
     // 3. Optimize for the GPU vertex cache reuse and overdraw
-    meshopt_optimizeVertexCache(indexData_.data(), indexData_.data(), indexCount, vertexCount);
-    meshopt_optimizeOverdraw(indexData_.data(),
-                             indexData_.data(),
+    meshopt_optimizeVertexCache(indexData.data(), indexData.data(), indexCount, vertexCount);
+    meshopt_optimizeOverdraw(indexData.data(),
+                             indexData.data(),
                              indexCount,
-                             &vertexData_[0].position.x,
+                             &vertexData[0].position.x,
                              vertexCount,
                              sizeof(VertexData),
                              1.05f);
-    meshopt_optimizeVertexFetch(vertexData_.data(),
-                                indexData_.data(),
+    meshopt_optimizeVertexFetch(vertexData.data(),
+                                indexData.data(),
                                 indexCount,
-                                vertexData_.data(),
+                                vertexData.data(),
                                 vertexCount,
                                 sizeof(VertexData));
   }
@@ -1141,11 +1139,11 @@ bool loadAndCache(const char* cacheFileName) {
     normalizeName(m.diffuse_texname);
     normalizeName(m.alpha_texname);
     // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-    strcat(mtl.ambient_texname, m.ambient_texname.c_str());
+    strcat(mtl.ambientTexname, m.ambient_texname.c_str());
     // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-    strcat(mtl.diffuse_texname, m.diffuse_texname.c_str());
+    strcat(mtl.diffuseTexname, m.diffuse_texname.c_str());
     // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-    strcat(mtl.alpha_texname, m.alpha_texname.c_str());
+    strcat(mtl.alphaTexname, m.alpha_texname.c_str());
     cachedMaterials_.push_back(mtl);
   }
 
@@ -1156,24 +1154,24 @@ bool loadAndCache(const char* cacheFileName) {
     return false;
   }
   const uint32_t numMaterials = static_cast<uint32_t>(cachedMaterials_.size());
-  const uint32_t numVertices = static_cast<uint32_t>(vertexData_.size());
-  const uint32_t numIndices = static_cast<uint32_t>(indexData_.size());
+  const uint32_t numVertices = static_cast<uint32_t>(vertexData.size());
+  const uint32_t numIndices = static_cast<uint32_t>(indexData.size());
   fwrite(&kMeshCacheVersion, sizeof(kMeshCacheVersion), 1, cacheFile);
   fwrite(&numMaterials, sizeof(numMaterials), 1, cacheFile);
   fwrite(&numVertices, sizeof(numVertices), 1, cacheFile);
   fwrite(&numIndices, sizeof(numIndices), 1, cacheFile);
   fwrite(cachedMaterials_.data(), sizeof(CachedMaterial), numMaterials, cacheFile);
-  fwrite(vertexData_.data(), sizeof(VertexData), numVertices, cacheFile);
-  fwrite(indexData_.data(), sizeof(uint32_t), numIndices, cacheFile);
+  fwrite(vertexData.data(), sizeof(VertexData), numVertices, cacheFile);
+  fwrite(indexData.data(), sizeof(uint32_t), numIndices, cacheFile);
   const uint32_t numShapes = static_cast<uint32_t>(shapeData.size());
   fwrite(&numShapes, sizeof(numShapes), 1, cacheFile);
   fwrite(shapeData.data(), sizeof(VertexData), numShapes, cacheFile);
-  const uint32_t numShapeVertices = static_cast<uint32_t>(shapeVertexCnt_.size());
+  const uint32_t numShapeVertices = static_cast<uint32_t>(shapeVertexCnt.size());
   fwrite(&numShapeVertices, sizeof(numShapeVertices), 1, cacheFile);
-  fwrite(shapeVertexCnt_.data(), sizeof(uint32_t), numShapeVertices, cacheFile);
+  fwrite(shapeVertexCnt.data(), sizeof(uint32_t), numShapeVertices, cacheFile);
 #if USE_OPENGL_BACKEND
-  vertexData_.clear();
-  vertexData_.assign(shapeData.begin(), shapeData.end());
+  vertexData.clear();
+  vertexData.assign(shapeData.begin(), shapeData.end());
 #endif
   return fclose(cacheFile) == 0;
 }
@@ -1205,23 +1203,23 @@ bool loadFromCache(const char* cacheFileName) {
   CHECK_READ(1, fread(&numVertices, sizeof(numVertices), 1, cacheFile));
   CHECK_READ(1, fread(&numIndices, sizeof(numIndices), 1, cacheFile));
   cachedMaterials_.resize(numMaterials);
-  vertexData_.resize(numVertices);
-  indexData_.resize(numIndices);
+  vertexData.resize(numVertices);
+  indexData.resize(numIndices);
   CHECK_READ(numMaterials,
              fread(cachedMaterials_.data(), sizeof(CachedMaterial), numMaterials, cacheFile));
 #if !USE_OPENGL_BACKEND
-  CHECK_READ(numVertices, fread(vertexData_.data(), sizeof(VertexData), numVertices, cacheFile));
-  CHECK_READ(numIndices, fread(indexData_.data(), sizeof(uint32_t), numIndices, cacheFile));
+  CHECK_READ(numVertices, fread(vertexData.data(), sizeof(VertexData), numVertices, cacheFile));
+  CHECK_READ(numIndices, fread(indexData.data(), sizeof(uint32_t), numIndices, cacheFile));
 #else
   fseek(cacheFile, sizeof(VertexData) * numVertices + sizeof(uint32_t) * numIndices, SEEK_CUR);
   CHECK_READ(1, fread(&numVertices, sizeof(numVertices), 1, cacheFile));
-  vertexData_.resize(numVertices);
-  CHECK_READ(numVertices, fread(vertexData_.data(), sizeof(VertexData), numVertices, cacheFile));
+  vertexData.resize(numVertices);
+  CHECK_READ(numVertices, fread(vertexData.data(), sizeof(VertexData), numVertices, cacheFile));
   uint32_t numShapeVertices = 0;
   CHECK_READ(1, fread(&numShapeVertices, sizeof(numShapeVertices), 1, cacheFile));
-  shapeVertexCnt_.resize(numShapeVertices);
+  shapeVertexCnt.resize(numShapeVertices);
   CHECK_READ(numShapeVertices,
-             fread(shapeVertexCnt_.data(), sizeof(uint32_t), numShapeVertices, cacheFile));
+             fread(shapeVertexCnt.data(), sizeof(uint32_t), numShapeVertices, cacheFile));
 #endif
 #undef CHECK_READ
   return true;
@@ -1239,9 +1237,9 @@ void initModel(int numSamplesMSAA) {
                                                 1,
                                                 TextureDesc::TextureUsageBits::Sampled,
                                                 "dummy 1x1 (white)");
-    textureDummyWhite_ = device_->createTexture(desc, nullptr);
+    textureDummyWhite = device_->createTexture(desc, nullptr);
     const uint32_t pixel = 0xFFFFFFFF;
-    textureDummyWhite_->upload(TextureRangeDesc::new2D(0, 0, 1, 1), &pixel);
+    textureDummyWhite->upload(TextureRangeDesc::new2D(0, 0, 1, 1), &pixel);
   }
 
   {
@@ -1252,9 +1250,9 @@ void initModel(int numSamplesMSAA) {
                                                   1,
                                                   TextureDesc::TextureUsageBits::Sampled,
                                                   "dummy 1x1 (black)");
-      textureDummyBlack_ = device_->createTexture(desc, nullptr);
+      textureDummyBlack = device_->createTexture(desc, nullptr);
       const uint32_t pixel = 0xFF000000;
-      textureDummyBlack_->upload(TextureRangeDesc::new2D(0, 0, 1, 1), &pixel);
+      textureDummyBlack->upload(TextureRangeDesc::new2D(0, 0, 1, 1), &pixel);
     }
 
     const auto bufType = BufferDesc::BufferTypeBits::Uniform;
@@ -1265,7 +1263,7 @@ void initModel(int numSamplesMSAA) {
 #endif
     // create Uniform buffers to store uniforms for 2 objects
     for (uint32_t i = 0; i != kNumBufferedFrames; i++) {
-      ubPerFrame_.push_back(device_->createBuffer(
+      ubPerFrame.push_back(device_->createBuffer(
           BufferDesc{.type = bufType,
                      .data = nullptr,
                      .length = sizeof(UniformsPerFrame),
@@ -1273,7 +1271,7 @@ void initModel(int numSamplesMSAA) {
                      .hint = hint,
                      .debugName = "uniforms (per frame) " + std::to_string(i)},
           nullptr));
-      ubPerFrameShadow_.push_back(device_->createBuffer(
+      ubPerFrameShadow.push_back(device_->createBuffer(
           BufferDesc{.type = bufType,
                      .data = nullptr,
                      .length = sizeof(UniformsPerFrame),
@@ -1281,7 +1279,7 @@ void initModel(int numSamplesMSAA) {
                      .hint = hint,
                      .debugName = "uniforms (per frame shadow) " + std::to_string(i)},
           nullptr));
-      ubPerObject_.push_back(device_->createBuffer(
+      ubPerObject.push_back(device_->createBuffer(
           BufferDesc{.type = bufType,
                      .data = nullptr,
                      .length = sizeof(UniformsPerObject),
@@ -1325,7 +1323,7 @@ void initModel(int numSamplesMSAA) {
         .numInputBindings = 1,
         .inputBindings = {{.stride = sizeof(VertexData)}},
     };
-    vertexInput0_ = device_->createVertexInputState(desc, nullptr);
+    vertexInput0 = device_->createVertexInputState(desc, nullptr);
   }
 
   {
@@ -1340,13 +1338,13 @@ void initModel(int numSamplesMSAA) {
         .numInputBindings = 1,
         .inputBindings = {{.stride = sizeof(VertexData)}},
     };
-    vertexInputShadows_ = device_->createVertexInputState(desc, nullptr);
+    vertexInputShadows = device_->createVertexInputState(desc, nullptr);
   }
 
-  depthStencilState_ = device_->createDepthStencilState(
+  depthStencilState = device_->createDepthStencilState(
       {.compareFunction = igl::CompareFunction::Less, .isDepthWriteEnabled = true}, nullptr);
 
-  depthStencilStateLEqual_ = device_->createDepthStencilState(
+  depthStencilStateLEqual = device_->createDepthStencilState(
       {.compareFunction = igl::CompareFunction::LessEqual, .isDepthWriteEnabled = true}, nullptr);
 
   {
@@ -1366,34 +1364,34 @@ void initModel(int numSamplesMSAA) {
     samplerShadow = device_->createSamplerState(desc, nullptr);
   }
 
-  commandQueue_ = device_->createCommandQueue({}, nullptr);
+  commandQueue = device_->createCommandQueue({}, nullptr);
 
-  renderPassOffscreen_.colorAttachments.emplace_back();
-  renderPassOffscreen_.colorAttachments.back().loadAction = LoadAction::Clear;
-  renderPassOffscreen_.colorAttachments.back().storeAction =
+  renderPassOffscreen.colorAttachments.emplace_back();
+  renderPassOffscreen.colorAttachments.back().loadAction = LoadAction::Clear;
+  renderPassOffscreen.colorAttachments.back().storeAction =
       numSamplesMSAA > 1 ? StoreAction::MsaaResolve : StoreAction::Store;
-  renderPassOffscreen_.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
-  renderPassOffscreen_.depthAttachment.loadAction = LoadAction::Clear;
-  renderPassOffscreen_.depthAttachment.storeAction = StoreAction::DontCare;
-  renderPassOffscreen_.depthAttachment.clearDepth = 1.0f;
+  renderPassOffscreen.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+  renderPassOffscreen.depthAttachment.loadAction = LoadAction::Clear;
+  renderPassOffscreen.depthAttachment.storeAction = StoreAction::DontCare;
+  renderPassOffscreen.depthAttachment.clearDepth = 1.0f;
 
-  renderPassMain_.colorAttachments.emplace_back();
-  renderPassMain_.colorAttachments.back().loadAction = LoadAction::Clear;
-  renderPassMain_.colorAttachments.back().storeAction = StoreAction::Store;
-  renderPassMain_.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
-  renderPassMain_.depthAttachment.loadAction = LoadAction::Clear;
-  renderPassMain_.depthAttachment.storeAction = StoreAction::DontCare;
-  renderPassMain_.depthAttachment.clearDepth = 1.0f;
+  renderPassMain.colorAttachments.emplace_back();
+  renderPassMain.colorAttachments.back().loadAction = LoadAction::Clear;
+  renderPassMain.colorAttachments.back().storeAction = StoreAction::Store;
+  renderPassMain.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+  renderPassMain.depthAttachment.loadAction = LoadAction::Clear;
+  renderPassMain.depthAttachment.storeAction = StoreAction::DontCare;
+  renderPassMain.depthAttachment.clearDepth = 1.0f;
 
 #if USE_OPENGL_BACKEND
-  renderPassShadow_.colorAttachments.push_back(igl::RenderPassDesc::ColorAttachmentDesc{});
-  renderPassShadow_.colorAttachments.back().loadAction = LoadAction::Clear;
-  renderPassShadow_.colorAttachments.back().storeAction = StoreAction::Store;
-  renderPassShadow_.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+  renderPassShadow.colorAttachments.push_back(igl::RenderPassDesc::ColorAttachmentDesc{});
+  renderPassShadow.colorAttachments.back().loadAction = LoadAction::Clear;
+  renderPassShadow.colorAttachments.back().storeAction = StoreAction::Store;
+  renderPassShadow.colorAttachments.back().clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
 #endif
-  renderPassShadow_.depthAttachment.loadAction = LoadAction::Clear;
-  renderPassShadow_.depthAttachment.storeAction = StoreAction::Store;
-  renderPassShadow_.depthAttachment.clearDepth = 1.0f;
+  renderPassShadow.depthAttachment.loadAction = LoadAction::Clear;
+  renderPassShadow.depthAttachment.storeAction = StoreAction::Store;
+  renderPassShadow.depthAttachment.clearDepth = 1.0f;
 
   const std::string cacheFileName = contentRootFolder + "cache.data";
 
@@ -1406,14 +1404,14 @@ void initModel(int numSamplesMSAA) {
 #if USE_OPENGL_BACKEND
   const uint32_t id = 0;
 #else
-  const uint32_t id = static_cast<uint32_t>(textureDummyWhite_->getTextureId());
+  const uint32_t id = static_cast<uint32_t>(textureDummyWhite->getTextureId());
 #endif
 
   for (const auto& mtl : cachedMaterials_) {
-    materials_.push_back(GPUMaterial{.ambient = vec4(mtl.ambient, 1.0f),
-                                     .diffuse = vec4(mtl.diffuse, 1.0f),
-                                     .texAmbient = id,
-                                     .texDiffuse = id});
+    materials.push_back(GPUMaterial{.ambient = vec4(mtl.ambient, 1.0f),
+                                    .diffuse = vec4(mtl.diffuse, 1.0f),
+                                    .texAmbient = id,
+                                    .texDiffuse = id});
   }
 
   {
@@ -1424,34 +1422,33 @@ void initModel(int numSamplesMSAA) {
     const auto bufType = BufferDesc::BufferTypeBits::Storage;
     const auto hint = 0;
 #endif
-    sbMaterials_ =
-        device_->createBuffer(BufferDesc{.type = bufType,
-                                         .data = materials_.data(),
-                                         .length = sizeof(GPUMaterial) * materials_.size(),
-                                         .storage = ResourceStorage::Private,
-                                         .hint = hint,
-                                         .debugName = "materials"},
-                              nullptr);
+    sbMaterials = device_->createBuffer(BufferDesc{.type = bufType,
+                                                   .data = materials.data(),
+                                                   .length = sizeof(GPUMaterial) * materials.size(),
+                                                   .storage = ResourceStorage::Private,
+                                                   .hint = hint,
+                                                   .debugName = "materials"},
+                                        nullptr);
 
-    vb0_ = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Vertex,
-                                            .data = vertexData_.data(),
-                                            .length = sizeof(VertexData) * vertexData_.size(),
-                                            .storage = ResourceStorage::Private,
-                                            .hint = hint,
-                                            .debugName = "vertex"},
-                                 nullptr);
-    ib0_ = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Index,
-                                            .data = indexData_.data(),
-                                            .length = sizeof(uint32_t) * indexData_.size(),
-                                            .storage = ResourceStorage::Private,
-                                            .hint = hint,
-                                            .debugName = "index"},
-                                 nullptr);
+    vb0 = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Vertex,
+                                           .data = vertexData.data(),
+                                           .length = sizeof(VertexData) * vertexData.size(),
+                                           .storage = ResourceStorage::Private,
+                                           .hint = hint,
+                                           .debugName = "vertex"},
+                                nullptr);
+    ib0 = device_->createBuffer(BufferDesc{.type = BufferDesc::BufferTypeBits::Index,
+                                           .data = indexData.data(),
+                                           .length = sizeof(uint32_t) * indexData.size(),
+                                           .storage = ResourceStorage::Private,
+                                           .hint = hint,
+                                           .debugName = "index"},
+                                nullptr);
   }
 }
 
 void createComputePipeline() {
-  if (computePipelineState_Grayscale_) {
+  if (computePipelineStateGrayscale) {
     return;
   }
 
@@ -1463,27 +1460,27 @@ void createComputePipeline() {
   desc.shaderStages = ShaderStagesCreator::fromModuleStringInput(
       *device_, kCodeComputeTest, "main", "Shader Module: grayscale (comp)", nullptr);
 
-  computePipelineState_Grayscale_ = device_->createComputePipeline(desc, nullptr);
+  computePipelineStateGrayscale = device_->createComputePipeline(desc, nullptr);
 }
 
 void createRenderPipelines(int numSamplesMSAA) {
-  if (renderPipelineState_Mesh_) {
+  if (renderPipelineStateMesh) {
     return;
   }
 
-  IGL_DEBUG_ASSERT(fbMain_);
+  IGL_DEBUG_ASSERT(fbMain);
 
   {
     RenderPipelineDesc desc;
 
     desc.targetDesc.colorAttachments.resize(1);
-    desc.targetDesc.colorAttachments[0].textureFormat = fbMain_->getColorAttachment(0)->getFormat();
+    desc.targetDesc.colorAttachments[0].textureFormat = fbMain->getColorAttachment(0)->getFormat();
 
-    if (fbMain_->getDepthAttachment()) {
-      desc.targetDesc.depthAttachmentFormat = fbMain_->getDepthAttachment()->getFormat();
+    if (fbMain->getDepthAttachment()) {
+      desc.targetDesc.depthAttachmentFormat = fbMain->getDepthAttachment()->getFormat();
     }
 
-    desc.vertexInputState = vertexInput0_;
+    desc.vertexInputState = vertexInput0;
 
 // @fb-only
     // @fb-only
@@ -1568,14 +1565,14 @@ void createRenderPipelines(int numSamplesMSAA) {
     desc.fragmentUnitSamplerMap[3] = IGL_NAMEHANDLE("texAlpha");
     desc.fragmentUnitSamplerMap[4] = IGL_NAMEHANDLE("texSkyboxIrradiance");
 #endif
-    renderPipelineState_Mesh_ = device_->createRenderPipeline(desc, nullptr);
+    renderPipelineStateMesh = device_->createRenderPipeline(desc, nullptr);
     desc.polygonFillMode = igl::PolygonFillMode::Line;
-    desc.vertexInputState = vertexInputShadows_; // positions-only
+    desc.vertexInputState = vertexInputShadows; // positions-only
 #if USE_OPENGL_BACKEND
-    const std::string vsCodeWireframe = std::string("#version 460") + kCodeVS_Wireframe;
-    kCodeVS_Wireframe = vsCodeWireframe.c_str();
-    const std::string fsCodeWireframe = std::string("#version 460") + kCodeFS_Wireframe;
-    kCodeFS_Wireframe = fsCodeWireframe.c_str();
+    const std::string vsCodeWireframe = std::string("#version 460") + kCodeVsWireframe;
+    kCodeVsWireframe = vsCodeWireframe.c_str();
+    const std::string fsCodeWireframe = std::string("#version 460") + kCodeFsWireframe;
+    kCodeFsWireframe = fsCodeWireframe.c_str();
     desc.fragmentUnitSamplerMap.clear();
     desc.uniformBlockBindingMap.clear();
     desc.uniformBlockBindingMap.emplace(
@@ -1589,22 +1586,22 @@ void createRenderPipelines(int numSamplesMSAA) {
 #endif
     desc.shaderStages =
         ShaderStagesCreator::fromModuleStringInput(*device_,
-                                                   kCodeVS_Wireframe,
+                                                   kCodeVsWireframe,
                                                    "main",
                                                    "Shader Module: main wireframe (vert)",
-                                                   kCodeFS_Wireframe,
+                                                   kCodeFsWireframe,
                                                    "main",
                                                    "Shader Module: main wireframe (frag)",
                                                    nullptr);
-    renderPipelineState_MeshWireframe_ = device_->createRenderPipeline(desc, nullptr);
+    renderPipelineStateMeshWireframe = device_->createRenderPipeline(desc, nullptr);
   }
 
   // shadow
   {
     RenderPipelineDesc desc;
     desc.targetDesc.colorAttachments.clear();
-    desc.targetDesc.depthAttachmentFormat = fbShadowMap_->getDepthAttachment()->getFormat();
-    desc.vertexInputState = vertexInputShadows_;
+    desc.targetDesc.depthAttachmentFormat = fbShadowMap->getDepthAttachment()->getFormat();
+    desc.vertexInputState = vertexInputShadows;
 #if USE_OPENGL_BACKEND
     std::string vsCode = std::string("#version 460") + kShadowVS;
     kShadowVS = vsCode.c_str();
@@ -1628,16 +1625,16 @@ void createRenderPipelines(int numSamplesMSAA) {
 #endif
     desc.cullMode = igl::CullMode::Disabled;
     desc.debugName = IGL_NAMEHANDLE("Pipeline: shadow");
-    renderPipelineState_Shadow_ = device_->createRenderPipeline(desc, nullptr);
+    renderPipelineStateShadow = device_->createRenderPipeline(desc, nullptr);
   }
 
   // fullscreen
   {
     RenderPipelineDesc desc;
     desc.targetDesc.colorAttachments.resize(1);
-    desc.targetDesc.colorAttachments[0].textureFormat = fbMain_->getColorAttachment(0)->getFormat();
-    if (fbMain_->getDepthAttachment()) {
-      desc.targetDesc.depthAttachmentFormat = fbMain_->getDepthAttachment()->getFormat();
+    desc.targetDesc.colorAttachments[0].textureFormat = fbMain->getColorAttachment(0)->getFormat();
+    if (fbMain->getDepthAttachment()) {
+      desc.targetDesc.depthAttachmentFormat = fbMain->getDepthAttachment()->getFormat();
     }
 #if USE_OPENGL_BACKEND
     std::string vsCode = std::string("#version 460") + kCodeFullscreenVS;
@@ -1658,23 +1655,23 @@ void createRenderPipelines(int numSamplesMSAA) {
     desc.cullMode = igl::CullMode::Disabled;
     desc.debugName = IGL_NAMEHANDLE("Pipeline: fullscreen");
     desc.fragmentUnitSamplerMap[0] = IGL_NAMEHANDLE("texFullScreen");
-    renderPipelineState_Fullscreen_ = device_->createRenderPipeline(desc, nullptr);
+    renderPipelineStateFullscreen = device_->createRenderPipeline(desc, nullptr);
   }
 }
 
 void createRenderPipelineSkybox(int numSamplesMSAA) {
-  if (renderPipelineState_Skybox_) {
+  if (renderPipelineStateSkybox) {
     return;
   }
 
-  IGL_DEBUG_ASSERT(fbMain_);
+  IGL_DEBUG_ASSERT(fbMain);
 
   RenderPipelineDesc desc;
   desc.targetDesc.colorAttachments.resize(1);
-  desc.targetDesc.colorAttachments[0].textureFormat = fbMain_->getColorAttachment(0)->getFormat();
+  desc.targetDesc.colorAttachments[0].textureFormat = fbMain->getColorAttachment(0)->getFormat();
 
-  if (fbMain_->getDepthAttachment()) {
-    desc.targetDesc.depthAttachmentFormat = fbMain_->getDepthAttachment()->getFormat();
+  if (fbMain->getDepthAttachment()) {
+    desc.targetDesc.depthAttachmentFormat = fbMain->getDepthAttachment()->getFormat();
   }
 
 // @fb-only
@@ -1746,7 +1743,7 @@ void createRenderPipelineSkybox(int numSamplesMSAA) {
 #if USE_OPENGL_BACKEND
   desc.fragmentUnitSamplerMap[1] = IGL_NAMEHANDLE("texSkybox");
 #endif
-  renderPipelineState_Skybox_ = device_->createRenderPipeline(desc, nullptr);
+  renderPipelineStateSkybox = device_->createRenderPipeline(desc, nullptr);
 }
 
 std::shared_ptr<ITexture> getNativeDrawable() {
@@ -1761,7 +1758,7 @@ std::shared_ptr<ITexture> getNativeDrawable() {
 #elif IGL_PLATFORM_LINUX
   const auto& platformDevice = device_->getPlatformDevice<opengl::glx::PlatformDevice>();
   IGL_DEBUG_ASSERT(platformDevice != nullptr);
-  drawable = platformDevice->createTextureFromNativeDrawable(width_, height_, &ret);
+  drawable = platformDevice->createTextureFromNativeDrawable(width, height, &ret);
 #endif
 #else
   const auto& platformDevice = device_->getPlatformDevice<igl::vulkan::PlatformDevice>();
@@ -1781,16 +1778,16 @@ std::shared_ptr<ITexture> getNativeDepthDrawable() {
 #if IGL_PLATFORM_WINDOWS
   const auto& platformDevice = device_->getPlatformDevice<opengl::wgl::PlatformDevice>();
   IGL_DEBUG_ASSERT(platformDevice != nullptr);
-  drawable = platformDevice->createTextureFromNativeDepth(width_, height_, &ret);
+  drawable = platformDevice->createTextureFromNativeDepth(width, height, &ret);
 #elif IGL_PLATFORM_LINUX
   const auto& platformDevice = device_->getPlatformDevice<opengl::glx::PlatformDevice>();
   IGL_DEBUG_ASSERT(platformDevice != nullptr);
-  drawable = platformDevice->createTextureFromNativeDepth(width_, height_, &ret);
+  drawable = platformDevice->createTextureFromNativeDepth(width, height, &ret);
 #endif
 #else
   const auto& platformDevice = device_->getPlatformDevice<igl::vulkan::PlatformDevice>();
   IGL_DEBUG_ASSERT(platformDevice != nullptr);
-  drawable = platformDevice->createTextureFromNativeDepth(width_, height_, &ret);
+  drawable = platformDevice->createTextureFromNativeDepth(width, height, &ret);
 #endif
   IGL_DEBUG_ASSERT(ret.isOk(), ret.message.c_str());
   IGL_DEBUG_ASSERT(drawable != nullptr);
@@ -1800,8 +1797,8 @@ std::shared_ptr<ITexture> getNativeDepthDrawable() {
 void createFramebuffer(const std::shared_ptr<ITexture>& nativeDrawable) {
   const FramebufferDesc framebufferDesc{.colorAttachments = {{.texture = nativeDrawable}},
                                         .depthAttachment = {.texture = getNativeDepthDrawable()}};
-  fbMain_ = device_->createFramebuffer(framebufferDesc, nullptr);
-  IGL_DEBUG_ASSERT(fbMain_);
+  fbMain = device_->createFramebuffer(framebufferDesc, nullptr);
+  IGL_DEBUG_ASSERT(fbMain);
 }
 
 void createShadowMap() {
@@ -1820,13 +1817,13 @@ void createShadowMap() {
 
   FramebufferDesc framebufferDesc;
   framebufferDesc.depthAttachment.texture = shadowMap;
-  fbShadowMap_ = device_->createFramebuffer(framebufferDesc, nullptr);
-  IGL_DEBUG_ASSERT(fbShadowMap_);
+  fbShadowMap = device_->createFramebuffer(framebufferDesc, nullptr);
+  IGL_DEBUG_ASSERT(fbShadowMap);
 }
 
 void createOffscreenFramebuffer(int numSamplesMSAA) {
-  const uint32_t w = width_;
-  const uint32_t h = height_;
+  const uint32_t w = width;
+  const uint32_t h = height;
   Result ret;
   auto descDepth = TextureDesc::new2D(igl::TextureFormat::Z_UNorm24,
                                       w,
@@ -1874,8 +1871,8 @@ void createOffscreenFramebuffer(int numSamplesMSAA) {
     IGL_DEBUG_ASSERT(ret.isOk());
     framebufferDesc.colorAttachments[0].resolveTexture = texResolveColor;
   }
-  fbOffscreen_ = device_->createFramebuffer(framebufferDesc, nullptr);
-  IGL_DEBUG_ASSERT(fbOffscreen_);
+  fbOffscreen = device_->createFramebuffer(framebufferDesc, nullptr);
+  IGL_DEBUG_ASSERT(fbOffscreen);
 }
 
 void render(const std::shared_ptr<ITexture>& nativeDrawable,
@@ -1883,11 +1880,11 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
             int numSamplesMSAA) {
   IGL_PROFILER_FUNCTION();
 
-  fbMain_->updateDrawable(nativeDrawable);
+  fbMain->updateDrawable(nativeDrawable);
 
   // from igl/shell/renderSessions/Textured3DCubeSession.cpp
   const float fov = float(45.0f * (M_PI / 180.0f));
-  const float aspectRatio = static_cast<float>(width_) / static_cast<float>(height_);
+  const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
 
   const mat4 shadowProj = glm::perspective(float(60.0f * (M_PI / 180.0f)), 1.0f, 10.0f, 4000.0f);
   const mat4 shadowView = mat4(vec4(0.772608519f, 0.532385886f, -0.345892131f, 0),
@@ -1902,41 +1899,41 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
       mat4(0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0);
 #endif
 
-  perFrame_.proj = glm::perspective(fov, aspectRatio, 0.5f, 500.0f);
-  perFrame_.view = camera.getViewMatrix();
-  perFrame_.light = scaleBias * shadowProj * shadowView;
+  perFrame.proj = glm::perspective(fov, aspectRatio, 0.5f, 500.0f);
+  perFrame.view = camera.getViewMatrix();
+  perFrame.light = scaleBias * shadowProj * shadowView;
 
-  ubPerFrame_[frameIndex]->upload(&perFrame_, igl::BufferRange(sizeof(perFrame_), 0));
+  ubPerFrame[frameIndex]->upload(&perFrame, igl::BufferRange(sizeof(perFrame), 0));
 
   {
     UniformsPerFrame perFrameShadow;
     perFrameShadow.proj = shadowProj;
     perFrameShadow.view = shadowView;
-    ubPerFrameShadow_[frameIndex]->upload(&perFrameShadow,
-                                          igl::BufferRange(sizeof(perFrameShadow), 0));
+    ubPerFrameShadow[frameIndex]->upload(&perFrameShadow,
+                                         igl::BufferRange(sizeof(perFrameShadow), 0));
   }
 
   UniformsPerObject perObject;
 
   perObject.model = glm::scale(mat4(1.0f), vec3(0.05f));
 
-  ubPerObject_[frameIndex]->upload(&perObject, igl::BufferRange(sizeof(perObject), 0));
+  ubPerObject[frameIndex]->upload(&perObject, igl::BufferRange(sizeof(perObject), 0));
 
   // Command buffers (1-N per thread): create, submit and forget
 
   // Pass 1: shadows
-  if (isShadowMapDirty_) {
-    const std::shared_ptr<ICommandBuffer> buffer = commandQueue_->createCommandBuffer({}, nullptr);
+  if (isShadowMapDirty) {
+    const std::shared_ptr<ICommandBuffer> buffer = commandQueue->createCommandBuffer({}, nullptr);
 
-    auto commands = buffer->createRenderCommandEncoder(renderPassShadow_, fbShadowMap_);
+    auto commands = buffer->createRenderCommandEncoder(renderPassShadow, fbShadowMap);
 
-    commands->bindRenderPipelineState(renderPipelineState_Shadow_);
+    commands->bindRenderPipelineState(renderPipelineStateShadow);
     commands->pushDebugGroupLabel("Render Shadows", igl::Color(1, 0, 0));
-    commands->bindDepthStencilState(depthStencilState_);
-    commands->bindVertexBuffer(0, *vb0_);
+    commands->bindDepthStencilState(depthStencilState);
+    commands->bindVertexBuffer(0, *vb0);
 #if USE_OPENGL_BACKEND
     const auto& glPipelineState =
-        static_cast<const igl::opengl::RenderPipelineState*>(renderPipelineState_Shadow_.get());
+        static_cast<const igl::opengl::RenderPipelineState*>(renderPipelineStateShadow.get());
     const int ubPerFrameShadowIdx =
         glPipelineState->getUniformBlockBindingPoint(IGL_NAMEHANDLE(("ShadowFrameUniforms")));
 
@@ -1946,46 +1943,46 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
     const int ubPerFrameShadowIdx = 0;
     const int ubPerObjectIdx = 1;
 #endif
-    commands->bindBuffer(ubPerFrameShadowIdx, ubPerFrameShadow_[frameIndex].get());
-    commands->bindBuffer(ubPerObjectIdx, ubPerObject_[frameIndex].get());
+    commands->bindBuffer(ubPerFrameShadowIdx, ubPerFrameShadow[frameIndex].get());
+    commands->bindBuffer(ubPerObjectIdx, ubPerObject[frameIndex].get());
 
 #if USE_OPENGL_BACKEND
     int start = 0;
-    for (auto numVertices : shapeVertexCnt_) {
+    for (auto numVertices : shapeVertexCnt) {
       commands->draw(numVertices, 1, start);
       start += numVertices;
     }
 #else
-    commands->bindIndexBuffer(*ib0_, igl::IndexFormat::UInt32);
-    commands->drawIndexed(indexData_.size());
+    commands->bindIndexBuffer(*ib0, igl::IndexFormat::UInt32);
+    commands->drawIndexed(indexData.size());
 #endif
     commands->popDebugGroupLabel();
     commands->endEncoding();
 
-    buffer->present(fbShadowMap_->getDepthAttachment());
+    buffer->present(fbShadowMap->getDepthAttachment());
 
-    commandQueue_->submit(*buffer);
+    commandQueue->submit(*buffer);
 
-    fbShadowMap_->getDepthAttachment()->generateMipmap(*commandQueue_);
+    fbShadowMap->getDepthAttachment()->generateMipmap(*commandQueue);
 
-    isShadowMapDirty_ = false;
+    isShadowMapDirty = false;
   }
 
   // Pass 2: mesh
   {
-    const std::shared_ptr<ICommandBuffer> buffer = commandQueue_->createCommandBuffer({}, nullptr);
+    const std::shared_ptr<ICommandBuffer> buffer = commandQueue->createCommandBuffer({}, nullptr);
 
     // This will clear the framebuffer
-    auto commands = buffer->createRenderCommandEncoder(renderPassOffscreen_, fbOffscreen_);
+    auto commands = buffer->createRenderCommandEncoder(renderPassOffscreen, fbOffscreen);
     // Scene
-    commands->bindRenderPipelineState(renderPipelineState_Mesh_);
+    commands->bindRenderPipelineState(renderPipelineStateMesh);
     commands->pushDebugGroupLabel("Render Mesh", igl::Color(1, 0, 0));
-    commands->bindDepthStencilState(depthStencilState_);
-    commands->bindVertexBuffer(0, *vb0_);
+    commands->bindDepthStencilState(depthStencilState);
+    commands->bindVertexBuffer(0, *vb0);
 
 #if USE_OPENGL_BACKEND
     const auto& glPipelineState =
-        static_cast<const igl::opengl::RenderPipelineState*>(renderPipelineState_Mesh_.get());
+        static_cast<const igl::opengl::RenderPipelineState*>(renderPipelineStateMesh.get());
     const int ubPerFrameIdx =
         glPipelineState->getUniformBlockBindingPoint(IGL_NAMEHANDLE(("PerFrame")));
 
@@ -1999,11 +1996,11 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
     const int ubPerObjectIdx = 1;
     const int sbIdx = 2;
 #endif
-    commands->bindBuffer(ubPerFrameIdx, ubPerFrame_[frameIndex].get());
-    commands->bindBuffer(ubPerObjectIdx, ubPerObject_[frameIndex].get());
-    commands->bindBuffer(sbIdx, sbMaterials_.get());
-    commands->bindTexture(0, igl::BindTarget::kFragment, fbShadowMap_->getDepthAttachment().get());
-    commands->bindTexture(4, igl::BindTarget::kFragment, skyboxTextureIrradiance_.get());
+    commands->bindBuffer(ubPerFrameIdx, ubPerFrame[frameIndex].get());
+    commands->bindBuffer(ubPerObjectIdx, ubPerObject[frameIndex].get());
+    commands->bindBuffer(sbIdx, sbMaterials.get());
+    commands->bindTexture(0, igl::BindTarget::kFragment, fbShadowMap->getDepthAttachment().get());
+    commands->bindTexture(4, igl::BindTarget::kFragment, skyboxTextureIrradiance.get());
     commands->bindSamplerState(0, igl::BindTarget::kFragment, samplerShadow.get());
     commands->bindSamplerState(1, igl::BindTarget::kFragment, sampler.get());
     commands->bindSamplerState(2, igl::BindTarget::kFragment, sampler.get());
@@ -2011,106 +2008,106 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
     commands->bindSamplerState(4, igl::BindTarget::kFragment, sampler.get());
 
 #if USE_OPENGL_BACKEND
-    commands->bindVertexBuffer(0, *vb0_);
+    commands->bindVertexBuffer(0, *vb0);
     int shapeStart = 0;
-    for (auto numVertices : shapeVertexCnt_) {
-      const uint32_t imageIdx = static_cast<uint32_t>(vertexData_[shapeStart].mtlIndex);
-      const auto ambientTextureReference =
-          strstr(cachedMaterials_[imageIdx].name, "MASTER_Glass_") ? textureDummyWhite_
-          : textures_[imageIdx].ambient                            ? textures_[imageIdx].ambient
-                                                                   : textureDummyBlack_;
+    for (auto numVertices : shapeVertexCnt) {
+      const uint32_t imageIdx = static_cast<uint32_t>(vertexData[shapeStart].mtlIndex);
+      const auto ambientTextureReference = strstr(cachedMaterials_[imageIdx].name, "MASTER_Glass_")
+                                               ? textureDummyWhite
+                                           : textures[imageIdx].ambient ? textures[imageIdx].ambient
+                                                                        : textureDummyBlack;
       const auto diffuseTextureReference =
-          strstr(cachedMaterials_[imageIdx].name, "MASTER_Glass_Clean") ? textureDummyWhite_
-          : textures_[imageIdx].diffuse ? textures_[imageIdx].diffuse
-                                        : textureDummyBlack_;
+          strstr(cachedMaterials_[imageIdx].name, "MASTER_Glass_Clean") ? textureDummyWhite
+          : textures[imageIdx].diffuse                                  ? textures[imageIdx].diffuse
+                                                                        : textureDummyBlack;
       const auto alphaTextureReference = strstr(cachedMaterials_[imageIdx].name, "MASTER_Glass_")
-                                             ? textureDummyWhite_
-                                         : textures_[imageIdx].alpha ? textures_[imageIdx].alpha
-                                                                     : textureDummyBlack_;
+                                             ? textureDummyWhite
+                                         : textures[imageIdx].alpha ? textures[imageIdx].alpha
+                                                                    : textureDummyBlack;
 
       commands->bindTexture(1, igl::BindTarget::kFragment, ambientTextureReference.get());
       commands->bindTexture(2, igl::BindTarget::kFragment, diffuseTextureReference.get());
       commands->bindTexture(3, igl::BindTarget::kFragment, alphaTextureReference.get());
       commands->draw(numVertices, 1, shapeStart);
-      if (enableWireframe_) {
-        commands->bindRenderPipelineState(renderPipelineState_MeshWireframe_);
-        commands->bindVertexBuffer(0, *vb0_);
+      if (enableWireframe) {
+        commands->bindRenderPipelineState(renderPipelineStateMeshWireframe);
+        commands->bindVertexBuffer(0, *vb0);
         commands->draw(numVertices, 1, shapeStart);
 
         // Bind the non-wireframe pipeline and the vertex buffer
-        commands->bindRenderPipelineState(renderPipelineState_Mesh_);
-        commands->bindVertexBuffer(0, *vb0_);
+        commands->bindRenderPipelineState(renderPipelineStateMesh);
+        commands->bindVertexBuffer(0, *vb0);
       }
 
       shapeStart += numVertices;
     }
 #else
-    commands->bindTexture(0, igl::BindTarget::kFragment, fbShadowMap_->getDepthAttachment().get());
-    commands->bindTexture(1, igl::BindTarget::kFragment, skyboxTextureIrradiance_.get());
+    commands->bindTexture(0, igl::BindTarget::kFragment, fbShadowMap->getDepthAttachment().get());
+    commands->bindTexture(1, igl::BindTarget::kFragment, skyboxTextureIrradiance.get());
     commands->bindSamplerState(0, igl::BindTarget::kFragment, samplerShadow.get());
     commands->bindSamplerState(1, igl::BindTarget::kFragment, sampler.get());
-    commands->bindIndexBuffer(*ib0_, IndexFormat::UInt32);
-    commands->drawIndexed(indexData_.size());
-    if (enableWireframe_) {
-      commands->bindRenderPipelineState(renderPipelineState_MeshWireframe_);
-      commands->drawIndexed(indexData_.size());
+    commands->bindIndexBuffer(*ib0, IndexFormat::UInt32);
+    commands->drawIndexed(indexData.size());
+    if (enableWireframe) {
+      commands->bindRenderPipelineState(renderPipelineStateMeshWireframe);
+      commands->drawIndexed(indexData.size());
     }
 #endif
     commands->popDebugGroupLabel();
 
     // Skybox
-    commands->bindRenderPipelineState(renderPipelineState_Skybox_);
-    commands->bindTexture(1, igl::BindTarget::kFragment, skyboxTextureReference_.get());
+    commands->bindRenderPipelineState(renderPipelineStateSkybox);
+    commands->bindTexture(1, igl::BindTarget::kFragment, skyboxTextureReference.get());
     commands->bindSamplerState(1, igl::BindTarget::kFragment, sampler.get());
     commands->pushDebugGroupLabel("Render Skybox", igl::Color(0, 1, 0));
-    commands->bindDepthStencilState(depthStencilStateLEqual_);
+    commands->bindDepthStencilState(depthStencilStateLEqual);
     commands->draw(3u * 6u * 2u);
     commands->popDebugGroupLabel();
     commands->endEncoding();
 
 #if !USE_OPENGL_BACKEND
-    buffer->present(fbOffscreen_->getColorAttachment(0));
+    buffer->present(fbOffscreen->getColorAttachment(0));
 #endif
-    commandQueue_->submit(*buffer);
+    commandQueue->submit(*buffer);
 #if USE_OPENGL_BACKEND
     if (kNumSamplesMSAA == 1) {
-      fbOffscreen_->getColorAttachment(0)->generateMipmap(*commandQueue_.get());
+      fbOffscreen->getColorAttachment(0)->generateMipmap(*commandQueue.get());
     }
 #endif
   }
 
   // Pass 3: compute shader post-processing
-  if (enableComputePass_) {
-    const std::shared_ptr<ICommandBuffer> buffer = commandQueue_->createCommandBuffer(
-        CommandBufferDesc{.debugName = "computeBuffer"}, nullptr);
+  if (enableComputePass) {
+    const std::shared_ptr<ICommandBuffer> buffer =
+        commandQueue->createCommandBuffer(CommandBufferDesc{.debugName = "computeBuffer"}, nullptr);
 
     auto commands = buffer->createComputeCommandEncoder();
-    commands->bindComputePipelineState(computePipelineState_Grayscale_);
-    ITexture* tex = numSamplesMSAA > 1 ? fbOffscreen_->getResolveColorAttachment(0).get()
-                                       : fbOffscreen_->getColorAttachment(0).get();
+    commands->bindComputePipelineState(computePipelineStateGrayscale);
+    ITexture* tex = numSamplesMSAA > 1 ? fbOffscreen->getResolveColorAttachment(0).get()
+                                       : fbOffscreen->getColorAttachment(0).get();
 #if !USE_OPENGL_BACKEND
     const uint32_t textureId = tex->getTextureId();
     commands->bindPushConstants(&textureId, sizeof(textureId));
 #endif
     commands->bindTexture(0, tex);
-    commands->dispatchThreadGroups(igl::Dimensions(width_, height_, 1), igl::Dimensions());
+    commands->dispatchThreadGroups(igl::Dimensions(width, height, 1), igl::Dimensions());
     commands->endEncoding();
 
-    commandQueue_->submit(*buffer);
+    commandQueue->submit(*buffer);
   }
 
   // Pass 4: render into the swapchain image
   {
-    const std::shared_ptr<ICommandBuffer> buffer = commandQueue_->createCommandBuffer({}, nullptr);
+    const std::shared_ptr<ICommandBuffer> buffer = commandQueue->createCommandBuffer({}, nullptr);
 
     // This will clear the framebuffer
-    auto commands = buffer->createRenderCommandEncoder(renderPassMain_, fbMain_);
-    commands->bindRenderPipelineState(renderPipelineState_Fullscreen_);
+    auto commands = buffer->createRenderCommandEncoder(renderPassMain, fbMain);
+    commands->bindRenderPipelineState(renderPipelineStateFullscreen);
     commands->pushDebugGroupLabel("Swapchain Output", igl::Color(1, 0, 0));
     commands->bindTexture(0,
                           igl::BindTarget::kFragment,
-                          numSamplesMSAA > 1 ? fbOffscreen_->getResolveColorAttachment(0).get()
-                                             : fbOffscreen_->getColorAttachment(0).get());
+                          numSamplesMSAA > 1 ? fbOffscreen->getResolveColorAttachment(0).get()
+                                             : fbOffscreen->getColorAttachment(0).get());
     commands->bindSamplerState(0, igl::BindTarget::kFragment, sampler.get());
     commands->draw(3);
     commands->popDebugGroupLabel();
@@ -2121,13 +2118,13 @@ void render(const std::shared_ptr<ITexture>& nativeDrawable,
 
     commands->endEncoding();
 
-    buffer->present(fbMain_->getColorAttachment(0));
+    buffer->present(fbMain->getColorAttachment(0));
 
-    commandQueue_->submit(*buffer);
+    commandQueue->submit(*buffer);
   }
 
 #if !USE_OPENGL_BACKEND
-  fbMain_->getDepthAttachment()->generateMipmap(*commandQueue_);
+  fbMain->getDepthAttachment()->generateMipmap(*commandQueue);
 #endif
 }
 
@@ -2207,11 +2204,11 @@ LoadedImage loadImage(const char* fileName, int channels) {
   const std::string debugName = IGL_FORMAT("{} ({})", fileName, channels).c_str();
 
   {
-    const std::lock_guard lock(imagesCacheMutex_);
+    const std::lock_guard lock(imagesCacheMutex);
 
-    const auto it = imagesCache_.find(debugName);
+    const auto it = imagesCache.find(debugName);
 
-    if (it != imagesCache_.end()) {
+    if (it != imagesCache.end()) {
       IGL_DEBUG_ASSERT(channels == it->second.channels);
       return it->second;
     }
@@ -2228,9 +2225,9 @@ LoadedImage loadImage(const char* fileName, int channels) {
     generateCompressedTexture(img);
   }
 
-  const std::lock_guard lock(imagesCacheMutex_);
+  const std::lock_guard lock(imagesCacheMutex);
 
-  imagesCache_[fileName] = img;
+  imagesCache[fileName] = img;
 
   return img;
 }
@@ -2240,7 +2237,7 @@ void loadMaterial(size_t i) {
   static const std::string pathPrefix = contentRootFolder + "src/bistro/Exterior/";
 
   IGL_SCOPE_EXIT {
-    remainingMaterialsToLoad_.fetch_sub(1u, std::memory_order_release);
+    remainingMaterialsToLoad.fetch_sub(1u, std::memory_order_release);
   };
 
 #define LOAD_TEX(result, tex, channels)                                                     \
@@ -2253,9 +2250,9 @@ void loadMaterial(size_t i) {
     return;                                                                                 \
   }
 
-  LOAD_TEX(ambient, ambient_texname, 4);
-  LOAD_TEX(diffuse, diffuse_texname, 4);
-  LOAD_TEX(alpha, alpha_texname, 1);
+  LOAD_TEX(ambient, ambientTexname, 4);
+  LOAD_TEX(diffuse, diffuseTexname, 4);
+  LOAD_TEX(alpha, alphaTexname, 1);
 
 #undef LOAD_TEX
 
@@ -2263,23 +2260,23 @@ void loadMaterial(size_t i) {
 
   if (!mtl.ambient.pixels && !mtl.diffuse.pixels) {
     // skip missing textures
-    materials_[i].texDiffuse = 0;
+    materials[i].texDiffuse = 0;
   } else {
-    const std::lock_guard guard(loadedMaterialsMutex_);
-    loadedMaterials_.push_back(mtl);
-    remainingMaterialsToLoad_.fetch_add(1u, std::memory_order_release);
+    const std::lock_guard guard(loadedMaterialsMutex);
+    loadedMaterials.push_back(mtl);
+    remainingMaterialsToLoad.fetch_add(1u, std::memory_order_release);
   }
 }
 
 void loadMaterials(bool isHeadless) {
   stbi_set_flip_vertically_on_load(1);
 
-  textures_.resize(cachedMaterials_.size());
+  textures.resize(cachedMaterials_.size());
 
-  remainingMaterialsToLoad_ = static_cast<uint32_t>(cachedMaterials_.size());
+  remainingMaterialsToLoad = static_cast<uint32_t>(cachedMaterials_.size());
 
   for (size_t i = 0; i != cachedMaterials_.size(); i++) {
-    loaderPool_->silent_async([i]() { loadMaterial(i); });
+    loaderPool->silent_async([i]() { loadMaterial(i); });
   }
 }
 
@@ -2289,7 +2286,7 @@ void loadCubemapTexture(const std::string& fileNameKTX, std::shared_ptr<ITexture
   }
 
 #if USE_TEXTURE_LOADER
-  loadKtxTexture(*device_, *commandQueue_, fileNameKTX, tex, !kEnableCompression);
+  loadKtxTexture(*device_, *commandQueue, fileNameKTX, tex, !kEnableCompression);
 #else
   ktxTexture2* texture = nullptr;
   auto error = ktxTexture2_CreateFromNamedFile(
@@ -2333,7 +2330,7 @@ void loadCubemapTexture(const std::string& fileNameKTX, std::shared_ptr<ITexture
   }
 
   if (!kEnableCompression) {
-    tex->generateMipmap(*commandQueue_);
+    tex->generateMipmap(*commandQueue);
   }
 #endif // IGL_WITH_IGLU
 }
@@ -2488,27 +2485,27 @@ void processCubemap(const std::string& inFilename,
 
 void loadSkyboxTexture() {
   // NOLINTBEGIN(facebook-static-object-destructor-check)
-  static const std::string skyboxFileName{"immenstadter_horn_2k"};
-  static const std::string skyboxSubdir{"src/skybox_hdr/"};
+  static const std::string kSkyboxFileName{"immenstadter_horn_2k"};
+  static const std::string kSkyboxSubdir{"src/skybox_hdr/"};
 
   // NOLINTNEXTLINE(facebook-static-object-destructor-check)
-  static const std::string fileNameRefKTX =
-      contentRootFolder + skyboxFileName + "_ReferenceMap.ktx2";
-  static const std::string fileNameIrrKTX =
-      contentRootFolder + skyboxFileName + "_IrradianceMap.ktx2";
+  static const std::string kFileNameRefKtx =
+      contentRootFolder + kSkyboxFileName + "_ReferenceMap.ktx2";
+  static const std::string kFileNameIrrKtx =
+      contentRootFolder + kSkyboxFileName + "_IrradianceMap.ktx2";
   // NOLINTEND(facebook-static-object-destructor-check)
 
-  if (!std::filesystem::exists(fileNameRefKTX) || !std::filesystem::exists(fileNameIrrKTX)) {
+  if (!std::filesystem::exists(kFileNameRefKtx) || !std::filesystem::exists(kFileNameIrrKtx)) {
     IGL_LOG_INFO("Cubemap in KTX format not found. Extracting from HDR file...\n");
     // NOLINTNEXTLINE(facebook-static-object-destructor-check)
-    static const std::string inFilename =
-        contentRootFolder + skyboxSubdir + skyboxFileName + ".hdr";
+    static const std::string kInFilename =
+        contentRootFolder + kSkyboxSubdir + kSkyboxFileName + ".hdr";
 
-    processCubemap(inFilename, fileNameRefKTX, fileNameIrrKTX);
+    processCubemap(kInFilename, kFileNameRefKtx, kFileNameIrrKtx);
   }
 
-  loadCubemapTexture(fileNameRefKTX, skyboxTextureReference_);
-  loadCubemapTexture(fileNameIrrKTX, skyboxTextureIrradiance_);
+  loadCubemapTexture(kFileNameRefKtx, skyboxTextureReference);
+  loadCubemapTexture(kFileNameIrrKtx, skyboxTextureIrradiance);
 }
 
 std::shared_ptr<ITexture> createTexture(const LoadedImage& img) {
@@ -2516,9 +2513,9 @@ std::shared_ptr<ITexture> createTexture(const LoadedImage& img) {
     return nullptr;
   }
 
-  const auto it = texturesCache_.find(img.debugName);
+  const auto it = texturesCache.find(img.debugName);
 
-  if (it != texturesCache_.end()) {
+  if (it != texturesCache.end()) {
     return it->second;
   }
 
@@ -2538,7 +2535,7 @@ std::shared_ptr<ITexture> createTexture(const LoadedImage& img) {
   if (kEnableCompression && img.channels == 4 &&
       std::filesystem::exists(img.compressedFileName.c_str())) {
 #if USE_TEXTURE_LOADER
-    loadKtxTexture(*device_, *commandQueue_, img.compressedFileName, tex, false);
+    loadKtxTexture(*device_, *commandQueue, img.compressedFileName, tex, false);
 #else
     // Uploading the texture
     const auto rangeDesc = TextureRangeDesc::new2D(0, 0, img.w, img.h, 0, desc.numMipLevels);
@@ -2562,9 +2559,9 @@ std::shared_ptr<ITexture> createTexture(const LoadedImage& img) {
 #endif // USE_TEXTURE_LOADER
   } else {
     tex->upload(TextureRangeDesc::new2D(0, 0, img.w, img.h), img.pixels);
-    tex->generateMipmap(*commandQueue_);
+    tex->generateMipmap(*commandQueue);
   }
-  texturesCache_[img.debugName] = tex;
+  texturesCache[img.debugName] = tex;
   return tex;
 }
 
@@ -2577,13 +2574,13 @@ void processLoadedMaterials() {
     LoadedMaterial mtl;
 
     {
-      const std::lock_guard guard(loadedMaterialsMutex_);
-      if (loadedMaterials_.empty()) {
+      const std::lock_guard guard(loadedMaterialsMutex);
+      if (loadedMaterials.empty()) {
         break;
       } else {
-        mtl = loadedMaterials_.back();
-        loadedMaterials_.pop_back();
-        remainingMaterialsToLoad_.fetch_sub(1u, std::memory_order_release);
+        mtl = loadedMaterials.back();
+        loadedMaterials.pop_back();
+        remainingMaterialsToLoad.fetch_sub(1u, std::memory_order_release);
       }
     }
 
@@ -2594,20 +2591,20 @@ void processLoadedMaterials() {
     tex.alpha = createTexture(mtl.alpha);
 
     // update GPU materials
-    textures_[mtl.idx] = tex;
+    textures[mtl.idx] = tex;
 #if !USE_OPENGL_BACKEND
-    materials_[mtl.idx].texAmbient =
-        tex.ambient ? static_cast<uint32_t>(tex.ambient->getTextureId()) : 0;
-    materials_[mtl.idx].texDiffuse =
-        tex.diffuse ? static_cast<uint32_t>(tex.diffuse->getTextureId()) : 0;
-    materials_[mtl.idx].texAlpha = tex.alpha ? static_cast<uint32_t>(tex.alpha->getTextureId()) : 0;
-    IGL_DEBUG_ASSERT(materials_[mtl.idx].texAmbient >= 0);
-    IGL_DEBUG_ASSERT(materials_[mtl.idx].texDiffuse >= 0);
-    IGL_DEBUG_ASSERT(materials_[mtl.idx].texAlpha >= 0);
+    materials[mtl.idx].texAmbient = tex.ambient ? static_cast<uint32_t>(tex.ambient->getTextureId())
+                                                : 0;
+    materials[mtl.idx].texDiffuse = tex.diffuse ? static_cast<uint32_t>(tex.diffuse->getTextureId())
+                                                : 0;
+    materials[mtl.idx].texAlpha = tex.alpha ? static_cast<uint32_t>(tex.alpha->getTextureId()) : 0;
+    IGL_DEBUG_ASSERT(materials[mtl.idx].texAmbient >= 0);
+    IGL_DEBUG_ASSERT(materials[mtl.idx].texDiffuse >= 0);
+    IGL_DEBUG_ASSERT(materials[mtl.idx].texAlpha >= 0);
 #endif
   }
   if (numLoaded) {
-    sbMaterials_->upload(materials_.data(), BufferRange(sizeof(GPUMaterial) * materials_.size()));
+    sbMaterials->upload(materials.data(), BufferRange(sizeof(GPUMaterial) * materials.size()));
   }
 }
 
@@ -2690,7 +2687,7 @@ int main(int argc, char* argv[]) {
   // In headless mode, wait for all textures to be loaded before rendering
   if (isHeadless) {
     printf("Waiting for all textures to load...\n");
-    while (remainingMaterialsToLoad_.load(std::memory_order_acquire) > 0) {
+    while (remainingMaterialsToLoad.load(std::memory_order_acquire) > 0) {
       processLoadedMaterials();
       // NOLINTNEXTLINE(facebook-hte-BadCall-sleep_for)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -2722,13 +2719,13 @@ int main(int argc, char* argv[]) {
       ImGui::Text("T - toggle wireframe");
       ImGui::End();
 
-      if (textures_[1].diffuse) {
+      if (textures[1].diffuse) {
         ImGui::Begin("Texture Viewer", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Image(ImTextureID(textures_[1].diffuse.get()), ImVec2(256, 256));
+        ImGui::Image(ImTextureID(textures[1].diffuse.get()), ImVec2(256, 256));
         ImGui::End();
       }
 
-      if (const uint32_t num = remainingMaterialsToLoad_.load(std::memory_order_acquire)) {
+      if (const uint32_t num = remainingMaterialsToLoad.load(std::memory_order_acquire)) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::Begin(
             "Loading...", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
@@ -2737,15 +2734,15 @@ int main(int argc, char* argv[]) {
         ImGui::End();
       }
 
-      imguiSession->drawFPS(fps_.getAverageFPS());
+      imguiSession->drawFPS(fps.getAverageFPS());
 #endif // IGL_WITH_IGLU
     }
 
     processLoadedMaterials();
     const double newTime = glfwGetTime();
     const double delta = newTime - prevTime;
-    fps_.updateFPS(delta);
-    positioner_.update(delta, mousePos_, mousePressed_);
+    fps.updateFPS(delta);
+    positioner.update(delta, mousePos, mousePressed);
     prevTime = newTime;
 #if IGL_WITH_IGLU
     inputDispatcher.processEvents();
@@ -2756,14 +2753,14 @@ int main(int argc, char* argv[]) {
       glfwPollEvents();
     } else {
       printf("We are running headless - breaking after 1 frame\n");
-      std::shared_ptr<ITexture> texture = fbMain_->getColorAttachment(0);
+      std::shared_ptr<ITexture> texture = fbMain->getColorAttachment(0);
       const Dimensions dim = texture->getDimensions();
       std::vector<uint8_t> pixelsRGBA(dim.width * dim.height * 4);
       std::vector<uint8_t> pixelsRGB(dim.width * dim.height * 3);
-      fbMain_->copyBytesColorAttachment(*commandQueue_,
-                                        0,
-                                        pixelsRGBA.data(),
-                                        TextureRangeDesc::new2D(0, 0, dim.width, dim.height));
+      fbMain->copyBytesColorAttachment(*commandQueue,
+                                       0,
+                                       pixelsRGBA.data(),
+                                       TextureRangeDesc::new2D(0, 0, dim.width, dim.height));
       if (texture->getFormat() == igl::TextureFormat::BGRA_UNorm8 ||
           texture->getFormat() == igl::TextureFormat::BGRA_SRGB) {
         // swap R-B
@@ -2796,31 +2793,31 @@ int main(int argc, char* argv[]) {
   imguiSession = nullptr;
 #endif // IGL_WITH_IGLU
   // destroy all the Vulkan stuff before closing the window
-  vb0_ = nullptr;
-  ib0_ = nullptr;
-  sbMaterials_ = nullptr;
-  ubPerFrame_.clear();
-  ubPerFrameShadow_.clear();
-  ubPerObject_.clear();
-  renderPipelineState_Mesh_ = nullptr;
-  renderPipelineState_MeshWireframe_ = nullptr;
-  renderPipelineState_Shadow_ = nullptr;
-  renderPipelineState_Skybox_ = nullptr;
-  renderPipelineState_Fullscreen_ = nullptr;
-  computePipelineState_Grayscale_ = nullptr;
-  textureDummyWhite_ = nullptr;
+  vb0 = nullptr;
+  ib0 = nullptr;
+  sbMaterials = nullptr;
+  ubPerFrame.clear();
+  ubPerFrameShadow.clear();
+  ubPerObject.clear();
+  renderPipelineStateMesh = nullptr;
+  renderPipelineStateMeshWireframe = nullptr;
+  renderPipelineStateShadow = nullptr;
+  renderPipelineStateSkybox = nullptr;
+  renderPipelineStateFullscreen = nullptr;
+  computePipelineStateGrayscale = nullptr;
+  textureDummyWhite = nullptr;
 #if USE_OPENGL_BACKEND
-  textureDummyBlack_ = nullptr;
+  textureDummyBlack = nullptr;
 #endif // USE_OPENGL_BACKEND
-  skyboxTextureReference_ = nullptr;
-  skyboxTextureIrradiance_ = nullptr;
-  textures_.clear();
-  texturesCache_.clear();
+  skyboxTextureReference = nullptr;
+  skyboxTextureIrradiance = nullptr;
+  textures.clear();
+  texturesCache.clear();
   sampler = nullptr;
   samplerShadow = nullptr;
-  fbMain_ = nullptr;
-  fbShadowMap_ = nullptr;
-  fbOffscreen_ = nullptr;
+  fbMain = nullptr;
+  fbShadowMap = nullptr;
+  fbOffscreen = nullptr;
   device_.reset(nullptr);
 
   // NOLINTNEXTLINE(facebook-hte-NullableDereference)
@@ -2829,7 +2826,7 @@ int main(int argc, char* argv[]) {
 
   printf("Waiting for the loader thread to exit...\n");
 
-  loaderPool_ = nullptr;
+  loaderPool = nullptr;
 
   return 0;
 }
