@@ -970,11 +970,16 @@ bool Texture::toFormatDescGL(const IContext& ctx,
 
   case TextureFormat::Z_UNorm32:
     format = GL_DEPTH_COMPONENT;
+#if IGL_OPENGL_ES
+    type = GL_FLOAT;
+    internalFormat = GL_DEPTH_COMPONENT32F;
+#else
     type = GL_UNSIGNED_INT;
     internalFormat = GL_DEPTH_COMPONENT32;
     if (texImage && deviceFeatures.hasInternalRequirement(InternalRequirement::Depth32Unsized)) {
       internalFormat = GL_DEPTH_COMPONENT;
     }
+#endif
     return true;
 
   case TextureFormat::Z_UNorm24:
