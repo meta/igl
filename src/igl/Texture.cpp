@@ -205,18 +205,18 @@ Result TextureRangeDesc::validate() const noexcept {
                   "`face` must be less than 6 and `numFaces` must not exceed 6."};
   }
 
-  constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
+  constexpr uint64_t kMax = std::numeric_limits<uint32_t>::max();
   if (IGL_DEBUG_VERIFY_NOT(
-          static_cast<size_t>(mipLevel) > kMax || static_cast<size_t>(x) + width > kMax ||
-          static_cast<size_t>(y) + height > kMax || static_cast<size_t>(z) + depth > kMax ||
-          static_cast<size_t>(layer) + numLayers > kMax)) {
+          static_cast<uint64_t>(mipLevel) > kMax || static_cast<uint64_t>(x) + width > kMax ||
+          static_cast<uint64_t>(y) + height > kMax || static_cast<uint64_t>(z) + depth > kMax ||
+          static_cast<uint64_t>(layer) + numLayers > kMax)) {
     return Result{
         Result::Code::ArgumentInvalid,
         "mipLevel, x + width, y + height, z + depth, and layer + numLayers must all not exceed "
         "std::numeric_limits<uint32_t>::max()."};
   };
 
-  size_t product = (static_cast<size_t>(x) + width) * (static_cast<size_t>(y) + height);
+  uint64_t product = (static_cast<uint64_t>(x) + width) * (static_cast<uint64_t>(y) + height);
   if (product <= kMax) {
     product *= z + depth;
     if (product <= kMax) {

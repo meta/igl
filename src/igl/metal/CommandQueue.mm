@@ -8,7 +8,7 @@
 #include <igl/metal/CommandQueue.h>
 
 #include <Foundation/Foundation.h>
-#include <igl/IGLFolly.h>
+#include <utility>
 #include <igl/Macros.h>
 #include <igl/metal/BufferSynchronizationManager.h>
 #include <igl/metal/CommandBuffer.h>
@@ -113,13 +113,7 @@ SubmitHandle CommandQueue::submit(const ICommandBuffer& commandBuffer, bool endO
     if ((currentCommandBuffer + 1) == kIGLMetalBeginCommandBufferToCapture) {
       // Start capturing one command buffer earlier
       startCapture(value_);
-      FOLLY_PUSH_WARNING
-      FOLLY_CLANG_DISABLE_WARNING("-Wtautological-compare")
-      // Disable warning; local debug builds may set kIGLMetalEndCommandBufferToCapture to a
-      // non-zero value
-      // NOLINTNEXTLINE(clang-diagnostic-tautological-unsigned-zero-compare)
-    } else if (currentCommandBuffer >= kIGLMetalEndCommandBufferToCapture) {
-      FOLLY_POP_WARNING
+    } else if (std::cmp_greater_equal(currentCommandBuffer, kIGLMetalEndCommandBufferToCapture)) {
       stopCapture();
     }
     ++currentCommandBuffer;
