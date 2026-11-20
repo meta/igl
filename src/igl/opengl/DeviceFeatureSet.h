@@ -231,6 +231,34 @@ inline constexpr const char* IGL_NONNULL kGpuTimerTierOverrideEnvVar =
 /// them.
 [[nodiscard]] std::optional<GpuTimerTier> getGpuTimerTierDebugOverride();
 
+/// Returns true if applyGpuTimerTierOverride() keeps the GPU with these raw GL_RENDERER /
+/// GL_VENDOR strings Disabled, in every build. These are the GPUs whose timer queries kept
+/// crashing in production after classifyGpuTimerTier() was in place: Mali-T (SEV S647462; it fell
+/// through to the 64-slot tier), Samsung Xclipse (crashed at 32 slots) and Mali-G600 and newer,
+/// Immortalis and Mali-G1 (crashed at 64 slots after the later root-cause fixes). PowerVR Rogue
+/// GE8, Rogue GX and SGX are also excluded, as a precaution that this crash record does not
+/// require: Rogue GE8's recorded crashes predate the classification, and Rogue GX and SGX were
+/// disabled with no recorded crash. A null `renderer` or `vendor` is excluded too, because the GPU
+/// cannot be identified.
+///
+/// The override reaches the other GPUs that classifyGpuTimerTier() disables, Mali-G31 to Mali-G68
+/// and Adreno below 620. Their timer queries also crashed in production (SEV S638750: with about
+/// 128 timer queries allocated, the driver corrupted its state and the next draw crashed), and the
+/// classification has disabled them since. A caller that creates two 64-slot pools at the Full
+/// tier allocates that many queries again, so a run on these GPUs can crash. The override is for
+/// lab performance runs only: it is off unless the caller opts in, and a caller must not let a
+/// release build turn it on. Exposed as a free function for unit testing without a GL context.
+[[nodiscard]] bool isExcludedFromGpuTimerTierOverride(const char* IGL_NULLABLE renderer,
+                                                      const char* IGL_NULLABLE vendor);
+
+/// The timer tier for a caller that opts in to `tierOverride` for on-device GPU performance
+/// measurement, on the GPU with these raw GL_RENDERER / GL_VENDOR strings: `tierOverride`, except
+/// Disabled when isExcludedFromGpuTimerTierOverride() is true. Exposed as a free function for unit
+/// testing without a GL context.
+[[nodiscard]] GpuTimerTier applyGpuTimerTierOverride(GpuTimerTier tierOverride,
+                                                     const char* IGL_NULLABLE renderer,
+                                                     const char* IGL_NULLABLE vendor);
+
 /// Returns true if the GPU with these raw GL_RENDERER / GL_VENDOR strings advertises
 /// GL_EXT_shader_framebuffer_fetch but its driver breaks it, as the Adreno 500 series does.
 /// Exposed as a free function for unit testing without a GL context.
@@ -279,6 +307,11 @@ class DeviceFeatureSet final {
   /// Returns the GPU timer tier based on GL_RENDERER / GL_VENDOR, or the debug override from
   /// getGpuTimerTierDebugOverride() when one is set. Disabled without a timer query extension.
   [[nodiscard]] GpuTimerTier getGpuTimerTier() const;
+
+  /// getGpuTimerTier() for a caller that opts in to `tierOverride`: applyGpuTimerTierOverride() in
+  /// place of the classification and of the debug override. Disabled without a timer query
+  /// extension.
+  [[nodiscard]] GpuTimerTier getGpuTimerTierWithOverride(GpuTimerTier tierOverride) const;
 
   /// Convenience: static_cast<uint32_t>(getGpuTimerTier()).
   [[nodiscard]] uint32_t getTimerQueryMaxSlots() const;

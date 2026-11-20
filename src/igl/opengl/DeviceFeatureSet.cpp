@@ -155,6 +155,22 @@ std::optional<GpuTimerTier> classifyAdrenoTimerTier(const char* renderer, const 
   return GpuTimerTier::Full; // 640+: 64 slots
 }
 
+bool isMaliTRenderer(const char* renderer) {
+  int maliTNumber = 0;
+  return std::sscanf(renderer, "Mali-T%d", &maliTNumber) == 1;
+}
+
+// Mali-G600 and newer, Immortalis and Mali-G1 (any suffix, such as "Mali-G1-Ultra"): their timer
+// queries crashed Edits Android in production even with the root-cause fixes in place.
+bool isModernMaliRenderer(const char* renderer) {
+  if (std::strncmp(renderer, "Immortalis-", 11) == 0) {
+    return true;
+  }
+  int maliGNumber = 0;
+  return std::sscanf(renderer, "Mali-G%d", &maliGNumber) == 1 &&
+         (maliGNumber == 1 || maliGNumber >= 600);
+}
+
 // Classify Mali (ARM) timer tier from renderer string.
 // Returns nullopt if renderer is not a recognized Mali string.
 // Accepts the same three ARM vendor string variants ("ARM", "ARM Limited", "Arm") —
@@ -165,16 +181,14 @@ std::optional<GpuTimerTier> classifyMaliTimerTier(const char* renderer, const ch
   if (renderer == nullptr || vendor == nullptr || !isArmVendor(vendor)) {
     return std::nullopt;
   }
-  if (std::strncmp(renderer, "Immortalis-", 11) == 0 ||
-      std::strncmp(renderer, "Mali-G1-", 8) == 0) {
+  if (isModernMaliRenderer(renderer)) {
     return GpuTimerTier::Disabled;
   }
   // Mali-T series: all are budget GPUs with broken timer query implementations.
   // Common models: T720, T760, T820, T830, T860, T880.
   // SEV S647462: these were not covered by the Mali-G pattern and fell through
   // to the Full tier default, causing SIGSEGV on driver-internal resource overflow.
-  int maliTNumber = 0;
-  if (std::sscanf(renderer, "Mali-T%d", &maliTNumber) == 1) {
+  if (isMaliTRenderer(renderer)) {
     return GpuTimerTier::Disabled;
   }
   // Mali-G series: numeric range determines tier.
@@ -182,8 +196,8 @@ std::optional<GpuTimerTier> classifyMaliTimerTier(const char* renderer, const ch
   if (std::sscanf(renderer, "Mali-G%d", &maliGNumber) != 1) {
     return std::nullopt;
   }
-  if (maliGNumber <= 68 || maliGNumber >= 600) {
-    return GpuTimerTier::Disabled; // G31–G68, G600+: 0 slots
+  if (maliGNumber <= 68) {
+    return GpuTimerTier::Disabled; // G31–G68: 0 slots
   }
   if (maliGNumber <= 76) {
     return GpuTimerTier::Conservative; // G72, G76: 32 slots
@@ -204,6 +218,13 @@ std::optional<GpuTimerTier> classifyPowerVrTimerTier(const char* renderer, const
     return std::nullopt;
   }
   return GpuTimerTier::Disabled;
+}
+
+// Samsung Xclipse (RDNA). The vendor substring covers Samsung's multiple vendor string variants
+// ("Samsung", "Samsung Electronics Co., Ltd.", "Samsung Mobile").
+bool isXclipseGpu(const char* renderer, const char* IGL_NULLABLE vendor) {
+  return vendor != nullptr && std::strstr(vendor, "Samsung") != nullptr &&
+         std::strstr(renderer, "Xclipse") != nullptr;
 }
 
 // One bit of a lazily filled cache. Threads that race on the same bit compute the same answer, so
@@ -256,6 +277,27 @@ std::optional<GpuTimerTier> getGpuTimerTierDebugOverride() {
 #endif
 }
 
+bool isExcludedFromGpuTimerTierOverride(const char* IGL_NULLABLE renderer,
+                                        const char* IGL_NULLABLE vendor) {
+  if (renderer == nullptr || vendor == nullptr) {
+    return true;
+  }
+  if (isArmVendor(vendor)) {
+    return isMaliTRenderer(renderer) || isModernMaliRenderer(renderer);
+  }
+  if (isImaginationVendor(vendor)) {
+    return isBrokenPowerVrRenderer(renderer);
+  }
+  return isXclipseGpu(renderer, vendor);
+}
+
+GpuTimerTier applyGpuTimerTierOverride(GpuTimerTier tierOverride,
+                                       const char* IGL_NULLABLE renderer,
+                                       const char* IGL_NULLABLE vendor) {
+  return isExcludedFromGpuTimerTierOverride(renderer, vendor) ? GpuTimerTier::Disabled
+                                                              : tierOverride;
+}
+
 GpuTimerTier classifyGpuTimerTier(const char* renderer, const char* vendor) {
   if (renderer == nullptr) {
     return GpuTimerTier::Disabled;
@@ -277,12 +319,8 @@ GpuTimerTier classifyGpuTimerTier(const char* renderer, const char* vendor) {
     return *tier;
   }
 
-  // Samsung Xclipse (RDNA): SEV S647462 — Conservative (32 slots) was
-  // insufficient; must be Disabled. Vendor substring covers Samsung's
-  // multiple vendor string variants ("Samsung", "Samsung Electronics Co.,
-  // Ltd.", "Samsung Mobile").
-  if (vendor != nullptr && std::strstr(vendor, "Samsung") != nullptr &&
-      std::strstr(renderer, "Xclipse") != nullptr) {
+  // Samsung Xclipse: SEV S647462 — Conservative (32 slots) was insufficient; must be Disabled.
+  if (isXclipseGpu(renderer, vendor)) {
     return GpuTimerTier::Disabled;
   }
 
@@ -528,6 +566,16 @@ GpuTimerTier DeviceFeatureSet::getGpuTimerTier() const {
   const auto* renderer = reinterpret_cast<const char*>(glContext_.getString(GL_RENDERER));
   const auto* vendor = reinterpret_cast<const char*>(glContext_.getString(GL_VENDOR));
   return classifyGpuTimerTier(renderer, vendor);
+}
+
+GpuTimerTier DeviceFeatureSet::getGpuTimerTierWithOverride(GpuTimerTier tierOverride) const {
+  IGL_PROFILER_FUNCTION();
+  if (!hasExtension(Extensions::TimerQuery)) {
+    return GpuTimerTier::Disabled;
+  }
+  const auto* renderer = reinterpret_cast<const char*>(glContext_.getString(GL_RENDERER));
+  const auto* vendor = reinterpret_cast<const char*>(glContext_.getString(GL_VENDOR));
+  return applyGpuTimerTierOverride(tierOverride, renderer, vendor);
 }
 
 uint32_t DeviceFeatureSet::getTimerQueryMaxSlots() const {

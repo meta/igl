@@ -6,13 +6,18 @@
  */
 
 #include "util/Common.h"
+
+#include <igl/TimestampQueries.h>
 #if IGL_BACKEND_OPENGL
+#include <igl/opengl/Device.h>
 #include <igl/opengl/DeviceFeatureSet.h>
 #include <igl/opengl/IContext.h>
 #include <igl/opengl/PlatformDevice.h>
 #endif // IGL_BACKEND_OPENGL
+#include <algorithm>
 #include <cstdlib>
 #include <string>
+#include <utility>
 
 namespace igl::tests {
 
@@ -756,6 +761,187 @@ TEST_F(GpuTimerTierTest, ParseOverride) {
   EXPECT_EQ(opengl::parseGpuTimerTierOverride("64"), std::nullopt);
 }
 
+namespace {
+using RendererAndVendor = std::pair<const char*, const char*>;
+
+// GPUs the override excludes, with the vendor strings classifyGpuTimerTier() accepts for them.
+constexpr RendererAndVendor kGpusExcludedFromTheOverride[] = {
+    {"Mali-T880 MP12", "ARM"},
+    {"Mali-T760", "Arm"},
+    {"Mali-T830", "ARM Limited"},
+    {"Mali-G610 MC6", "ARM"},
+    {"Mali-G715", "ARM Limited"},
+    {"Immortalis-G720 MC6", "ARM"},
+    {"Mali-G1-Ultra", "Arm"},
+    {"Mali-G1", "ARM"},
+    {"Mali-G1 Ultra", "ARM Limited"},
+    {"PowerVR Rogue GE8320", "Imagination Technologies"},
+    {"PowerVR Rogue GX6250", "Imagination"},
+    {"PowerVR SGX 540", "Imagination Technologies"},
+    {"Samsung Xclipse 920", "Samsung"},
+    {"Samsung Xclipse 940", "Samsung Electronics Co., Ltd."},
+    {"Samsung Xclipse 540", "Samsung Mobile"},
+    {"Xclipse 960", "Samsung Electronics"},
+};
+
+// GPUs the override reaches: GPUs classifyGpuTimerTier() disables but the override does not exclude
+// (Mali-G31 to G68 and Adreno below 620, whose timer queries crashed in SEV S638750), GPUs it
+// enables, and excluded GPU names with vendor strings it does not accept for them.
+constexpr RendererAndVendor kGpusTheOverrideReaches[] = {
+    {"Mali-G57 MC2", "ARM"},
+    {"Mali-G31", "Arm"},
+    {"Mali-G52", "ARM Limited"},
+    {"Mali-G68", "ARM"},
+    {"Mali-G76", "ARM"},
+    {"Mali-G599", "ARM"},
+    {"Adreno (TM) 505", "Qualcomm"},
+    {"Adreno (TM) 610", "Qualcomm"},
+    {"Adreno (TM) 740", "Qualcomm"},
+    {"PowerVR D-Series DXT-48-1536", "Imagination Technologies"},
+    {"Mali-T880", "Qualcomm"},
+    {"Mali-G610", "Qualcomm"},
+    {"PowerVR Rogue GE8320", "ARM"},
+    {"Samsung Xclipse 920", "ARM"},
+    {"Samsung Xclipse 920", "Qualcomm"},
+};
+
+// Null GL_RENDERER or GL_VENDOR strings: the override excludes them, because the GPU cannot be
+// identified.
+constexpr RendererAndVendor kNullGpuStrings[] = {
+    {"Mali-G57 MC2", nullptr},
+    {"Samsung Xclipse 920", nullptr},
+    {nullptr, "ARM"},
+    {nullptr, "Samsung"},
+    {nullptr, nullptr},
+};
+
+std::string describe(const RendererAndVendor& gpu) {
+  return std::string(gpu.first != nullptr ? gpu.first : "null") + " / " +
+         (gpu.second != nullptr ? gpu.second : "null");
+}
+} // namespace
+
+TEST_F(GpuTimerTierTest, OverrideExcludesTheListedGpusAndNoOthers) {
+  for (const auto& gpu : kGpusExcludedFromTheOverride) {
+    EXPECT_TRUE(opengl::isExcludedFromGpuTimerTierOverride(gpu.first, gpu.second)) << describe(gpu);
+    EXPECT_EQ(opengl::classifyGpuTimerTier(gpu.first, gpu.second), opengl::GpuTimerTier::Disabled)
+        << describe(gpu);
+  }
+  for (const auto& gpu : kGpusTheOverrideReaches) {
+    EXPECT_FALSE(opengl::isExcludedFromGpuTimerTierOverride(gpu.first, gpu.second))
+        << describe(gpu);
+  }
+}
+
+TEST_F(GpuTimerTierTest, OverrideExcludesNullRendererOrVendor) {
+  for (const auto& gpu : kNullGpuStrings) {
+    EXPECT_TRUE(opengl::isExcludedFromGpuTimerTierOverride(gpu.first, gpu.second)) << describe(gpu);
+  }
+  EXPECT_EQ(opengl::classifyGpuTimerTier(nullptr, "ARM"), opengl::GpuTimerTier::Disabled);
+  EXPECT_EQ(opengl::classifyGpuTimerTier(nullptr, nullptr), opengl::GpuTimerTier::Disabled);
+}
+
+TEST_F(GpuTimerTierTest, OptInOverrideReplacesTheClassification) {
+  for (const auto& gpu : kGpusTheOverrideReaches) {
+    for (const auto tier : {opengl::GpuTimerTier::Disabled,
+                            opengl::GpuTimerTier::Conservative,
+                            opengl::GpuTimerTier::Full}) {
+      EXPECT_EQ(opengl::applyGpuTimerTierOverride(tier, gpu.first, gpu.second), tier)
+          << describe(gpu);
+    }
+  }
+}
+
+TEST_F(GpuTimerTierTest, OptInOverrideKeepsExcludedGpusDisabledInEveryBuild) {
+  const auto expectDisabled = [](const auto& gpus) {
+    for (const auto& gpu : gpus) {
+      for (const auto tier : {opengl::GpuTimerTier::Conservative, opengl::GpuTimerTier::Full}) {
+        EXPECT_EQ(opengl::applyGpuTimerTierOverride(tier, gpu.first, gpu.second),
+                  opengl::GpuTimerTier::Disabled)
+            << describe(gpu);
+      }
+    }
+  };
+  expectDisabled(kGpusExcludedFromTheOverride);
+  expectDisabled(kNullGpuStrings);
+}
+
+namespace {
+// Requests below and above every enabled tier's slot count.
+constexpr uint32_t kTimestampRequests[] = {8, 128};
+
+// Expects `queries` and `result` from a request for `maxTimestamps` slots at `tier`: no queries and
+// Unsupported for Disabled, otherwise min(maxTimestamps, tier) slots and Ok.
+void expectTimestampQueriesAtTier(const std::shared_ptr<ITimestampQueries>& queries,
+                                  const Result& result,
+                                  opengl::GpuTimerTier tier,
+                                  uint32_t maxTimestamps) {
+  if (tier == opengl::GpuTimerTier::Disabled) {
+    EXPECT_EQ(queries, nullptr);
+    EXPECT_EQ(result.code, Result::Code::Unsupported);
+    return;
+  }
+  ASSERT_NE(queries, nullptr) << result.message;
+  EXPECT_EQ(result.code, Result::Code::Ok) << result.message;
+  EXPECT_EQ(queries->capacity(), std::min(maxTimestamps, static_cast<uint32_t>(tier)));
+}
+} // namespace
+
+TEST_F(DeviceFeatureSetTest, TimestampQueriesWithoutOptInFollowTheClassification) {
+  if (iglDev_->getBackendType() != igl::BackendType::OpenGL) {
+    GTEST_SKIP() << "OpenGL only";
+  }
+  const auto& device = static_cast<const opengl::Device&>(*iglDev_);
+  const auto& context = device.getContext();
+  const auto expected =
+      context.deviceFeatures().hasExtension(opengl::Extensions::TimerQuery)
+          ? opengl::getGpuTimerTierDebugOverride().value_or(opengl::classifyGpuTimerTier(
+                reinterpret_cast<const char*>(context.getString(GL_RENDERER)),
+                reinterpret_cast<const char*>(context.getString(GL_VENDOR))))
+          : opengl::GpuTimerTier::Disabled;
+  for (const uint32_t maxTimestamps : kTimestampRequests) {
+    Result result;
+    const auto queries = device.createTimestampQueries(maxTimestamps, &result);
+    expectTimestampQueriesAtTier(queries, result, expected, maxTimestamps);
+    if (HasFatalFailure()) {
+      return;
+    }
+  }
+  if (expected == opengl::GpuTimerTier::Disabled) {
+    GTEST_SKIP() << "The test context's timer tier is Disabled, so only that tier was checked";
+  }
+}
+
+TEST_F(DeviceFeatureSetTest, TimestampQueriesWithOptInUseTheOverrideTier) {
+  if (iglDev_->getBackendType() != igl::BackendType::OpenGL) {
+    GTEST_SKIP() << "OpenGL only";
+  }
+  const auto& device = static_cast<const opengl::Device&>(*iglDev_);
+  const auto& featureSet = device.getContext().deviceFeatures();
+  const auto* renderer = reinterpret_cast<const char*>(device.getContext().getString(GL_RENDERER));
+  const auto* vendor = reinterpret_cast<const char*>(device.getContext().getString(GL_VENDOR));
+  const bool hasTimerQuery = featureSet.hasExtension(opengl::Extensions::TimerQuery);
+  for (const auto tier : {opengl::GpuTimerTier::Disabled,
+                          opengl::GpuTimerTier::Conservative,
+                          opengl::GpuTimerTier::Full}) {
+    const auto expected = hasTimerQuery ? opengl::applyGpuTimerTierOverride(tier, renderer, vendor)
+                                        : opengl::GpuTimerTier::Disabled;
+    EXPECT_EQ(featureSet.getGpuTimerTierWithOverride(tier), expected);
+    for (const uint32_t maxTimestamps : kTimestampRequests) {
+      Result result;
+      const auto queries =
+          device.createTimestampQueriesWithLabOnlyTierOverride(maxTimestamps, tier, &result);
+      expectTimestampQueriesAtTier(queries, result, expected, maxTimestamps);
+      if (HasFatalFailure()) {
+        return;
+      }
+    }
+  }
+  if (!hasTimerQuery) {
+    GTEST_SKIP() << "The test context has no timer query extension, so only Disabled was checked";
+  }
+}
+
 #if !IGL_PLATFORM_WINDOWS
 namespace {
 // Sets or clears kGpuTimerTierOverrideEnvVar for one test and restores its previous value.
@@ -813,15 +999,19 @@ TEST_F(DeviceFeatureSetTest, GpuTimerTierHonorsTheDebugOverride) {
   if (platformDevice == nullptr) {
     GTEST_SKIP() << "OpenGL only";
   }
-  const auto& featureSet = platformDevice->getContext().deviceFeatures();
+  const auto& context = platformDevice->getContext();
+  const auto& featureSet = context.deviceFeatures();
   const bool hasTimerQuery = featureSet.hasExtension(opengl::Extensions::TimerQuery);
+  [[maybe_unused]] const auto classified =
+      opengl::classifyGpuTimerTier(reinterpret_cast<const char*>(context.getString(GL_RENDERER)),
+                                   reinterpret_cast<const char*>(context.getString(GL_VENDOR)));
   for (const char* value : {"disabled", "conservative", "full"}) {
     const ScopedTimerTierOverride scoped(value);
     const auto expected = !hasTimerQuery ? opengl::GpuTimerTier::Disabled
 #if IGL_DEBUG
                                          : *opengl::parseGpuTimerTierOverride(value);
 #else
-                                         : featureSet.getGpuTimerTier();
+                                         : classified;
 #endif
     EXPECT_EQ(featureSet.getGpuTimerTier(), expected) << value;
     EXPECT_EQ(featureSet.getTimerQueryMaxSlots(), static_cast<uint32_t>(expected)) << value;

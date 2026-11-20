@@ -102,6 +102,22 @@ class Device : public IDevice {
                                                             Result* IGL_NULLABLE
                                                                 outResult) const noexcept override;
 
+  /// createTimestampQueries() at the timer tier from
+  /// DeviceFeatureSet::getGpuTimerTierWithOverride(), for a lab performance run that opts in to
+  /// measuring GPU time on a GPU whose classified tier is lower.
+  ///
+  /// Lab only. It is off unless the caller opts in, and a release build must never call it. IGL
+  /// cannot tell a lab build from a release build, so the caller must gate the call. It reaches
+  /// GPUs whose timer queries crashed in production: Mali-G31 to Mali-G68 and Adreno below 620 (SEV
+  /// S638750, with about 128 timer queries allocated, which two 64-slot pools at the Full tier
+  /// allocate again), so a run on them can crash. The GPUs whose timer queries kept crashing after
+  /// the classification (SEV S647462 and later), and a GPU with a null GL_RENDERER or GL_VENDOR,
+  /// stay Disabled in every build; see isExcludedFromGpuTimerTierOverride().
+  [[nodiscard]] std::shared_ptr<ITimestampQueries> createTimestampQueriesWithLabOnlyTierOverride(
+      uint32_t maxTimestamps,
+      GpuTimerTier tierOverride,
+      Result* IGL_NULLABLE outResult) const noexcept;
+
   // debug markers useful in GPU captures
   void pushMarker(int len, const char* IGL_NULLABLE name);
   void popMarker();
@@ -140,6 +156,11 @@ class Device : public IDevice {
   }
 
  private:
+  [[nodiscard]] std::shared_ptr<ITimestampQueries> createTimestampQueriesForTier(
+      uint32_t maxTimestamps,
+      GpuTimerTier tier,
+      Result* IGL_NULLABLE outResult) const noexcept;
+
   GLint defaultFrameBufferID_{};
   GLint defaultFrameBufferWidth_{};
   GLint defaultFrameBufferHeight_{};

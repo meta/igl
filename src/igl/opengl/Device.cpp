@@ -455,7 +455,23 @@ std::shared_ptr<ITimestampQueries> Device::createTimestampQueries(uint32_t maxTi
                                                                       outResult) const noexcept {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   // Tier-based limit from GL_RENDERER / GL_VENDOR classification.
-  const GpuTimerTier tier = deviceFeatureSet_.getGpuTimerTier();
+  return createTimestampQueriesForTier(
+      maxTimestamps, deviceFeatureSet_.getGpuTimerTier(), outResult);
+}
+
+std::shared_ptr<ITimestampQueries> Device::createTimestampQueriesWithLabOnlyTierOverride(
+    uint32_t maxTimestamps,
+    GpuTimerTier tierOverride,
+    Result* IGL_NULLABLE outResult) const noexcept {
+  IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
+  return createTimestampQueriesForTier(
+      maxTimestamps, deviceFeatureSet_.getGpuTimerTierWithOverride(tierOverride), outResult);
+}
+
+std::shared_ptr<ITimestampQueries> Device::createTimestampQueriesForTier(
+    uint32_t maxTimestamps,
+    GpuTimerTier tier,
+    Result* IGL_NULLABLE outResult) const noexcept {
   if (tier == GpuTimerTier::Disabled) {
     Result::setResult(outResult,
                       Result::Code::Unsupported,
