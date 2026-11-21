@@ -12,6 +12,7 @@
 #include "../util/TestDevice.h"
 
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -633,6 +634,83 @@ TEST_F(VulkanImmediateCommandsTest, InjectedSemaphoreCapacityFailureIsReported) 
   const auto& recoveredWrapper = ctx.immediate_->acquire();
   EXPECT_TRUE(ctx.immediate_->waitSemaphore(VK_NULL_HANDLE));
   ctx.immediate_->discard(recoveredWrapper);
+}
+
+TEST_F(VulkanImmediateCommandsTest, EveryInjectedSemaphoreReachesTheQueueOnEachSubmitPath) {
+  auto& ctx = getVulkanContext();
+  constexpr uint32_t kCapacity = vulkan::VulkanImmediateCommands::kMaxInjectedSemaphores;
+  constexpr VkPipelineStageFlags kStages[] = {
+      VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+      VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+  };
+  const auto stageOf = [&kStages](uint32_t index) { return kStages[index % std::size(kStages)]; };
+  const bool timelineAvailable = ctx.features().has_VK_KHR_timeline_semaphore;
+  const bool synchronization2Available = ctx.features().has_VK_KHR_synchronization2;
+  struct SubmitPath {
+    bool timeline;
+    bool synchronization2;
+    const char* name;
+  };
+  const SubmitPath paths[] = {
+      {.timeline = true, .synchronization2 = true, .name = "Injected payload: synchronization2"},
+      {.timeline = true, .synchronization2 = false, .name = "Injected payload: timeline values"},
+      {.timeline = false, .synchronization2 = false, .name = "Injected payload: binary only"},
+  };
+  for (const SubmitPath& path : paths) {
+    if ((path.timeline && !timelineAvailable) ||
+        (path.synchronization2 && !synchronization2Available)) {
+      continue;
+    }
+    SCOPED_TRACE(path.name);
+    std::vector<std::unique_ptr<vulkan::VulkanSemaphore>> semaphores;
+    semaphores.reserve(kCapacity);
+    for (uint32_t index = 0; index < kCapacity; ++index) {
+      semaphores.push_back(
+          std::make_unique<vulkan::VulkanSemaphore>(ctx.vf_, ctx.getVkDevice(), false, path.name));
+    }
+    const VulkanFunctionTable vf = captureSubmits();
+    vulkan::VulkanImmediateCommands captured(vf,
+                                             ctx.getVkDevice(),
+                                             ctx.deviceQueues_.graphicsQueueFamilyIndex,
+                                             false,
+                                             path.timeline,
+                                             path.synchronization2,
+                                             path.name);
+    ASSERT_TRUE(captured.valid());
+    const auto& wrapper = captured.acquire();
+    for (uint32_t index = 0; index < kCapacity; ++index) {
+      ASSERT_TRUE(
+          captured.waitSemaphore(semaphores[index]->getVkSemaphore(), index + 1, stageOf(index)));
+      ASSERT_TRUE(captured.signalSemaphore(semaphores[index]->getVkSemaphore(), 100 + index));
+    }
+    // Refusals past the capacity leave the queued entries in place.
+    EXPECT_FALSE(captured.waitSemaphore(VK_NULL_HANDLE));
+    EXPECT_FALSE(captured.signalSemaphore(VK_NULL_HANDLE, 0));
+    captured.submit(wrapper);
+    EXPECT_EQ(submitPayload.synchronization2, path.synchronization2);
+    ASSERT_EQ(submitPayload.waits.size(), kCapacity);
+    ASSERT_EQ(submitPayload.waitStages.size(), kCapacity);
+    ASSERT_GE(submitPayload.signals.size(), kCapacity);
+    if (path.timeline) {
+      ASSERT_EQ(submitPayload.waitValues.size(), kCapacity);
+      ASSERT_GE(submitPayload.signalValues.size(), kCapacity);
+    }
+    for (uint32_t index = 0; index < kCapacity; ++index) {
+      EXPECT_EQ(submitPayload.waits[index], semaphores[index]->getVkSemaphore()) << index;
+      EXPECT_EQ(submitPayload.waitStages[index], stageOf(index)) << index;
+      EXPECT_EQ(submitPayload.signals[index], semaphores[index]->getVkSemaphore()) << index;
+      if (path.timeline) {
+        EXPECT_EQ(submitPayload.waitValues[index], index + 1) << index;
+        EXPECT_EQ(submitPayload.signalValues[index], 100 + index) << index;
+      }
+    }
+  }
 }
 
 TEST_F(VulkanImmediateCommandsTest, PresentationSignalPreservesInjectedSignalCapacity) {
