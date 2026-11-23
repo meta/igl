@@ -22,7 +22,7 @@
 #define EGLNativeWindowType void*
 #endif
 
-#if IGL_PLATFORM_LINUX
+#if IGL_PLATFORM_LINUX || IGL_PLATFORM_EMSCRIPTEN
 #define IGL_EGL_NULL_WINDOW 0L
 #else
 #define IGL_EGL_NULL_WINDOW nullptr
