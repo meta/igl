@@ -42,7 +42,7 @@ class TextureTargetOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     ASSERT_TRUE(device_ != nullptr);
@@ -64,8 +64,8 @@ class TextureTargetOGLTest : public ::testing::Test {
 // This is a sanity test that override specs are defined correctly.
 //
 TEST_F(TextureTargetOGLTest, Specifications) {
-  std::unique_ptr<igl::opengl::TextureTarget> textureTarget =
-      std::make_unique<igl::opengl::TextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
+  std::unique_ptr<opengl::TextureTarget> textureTarget =
+      std::make_unique<opengl::TextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
   ASSERT_EQ(textureTarget->getType(), TextureType::TwoD);
   ASSERT_EQ(textureTarget->getUsage(), TextureDesc::TextureUsageBits::Attachment);
 }
@@ -79,7 +79,7 @@ TEST_F(TextureTargetOGLTest, Specifications) {
 // See tests for Texture.cpp for cases covering cases specific to base class.
 //
 TEST_F(TextureTargetOGLTest, TextureCreation) {
-  std::shared_ptr<igl::opengl::TextureTarget> textureTarget;
+  std::shared_ptr<opengl::TextureTarget> textureTarget;
   Result ret;
   TextureDesc texDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                            OFFSCREEN_TEX_WIDTH,
@@ -87,27 +87,27 @@ TEST_F(TextureTargetOGLTest, TextureCreation) {
                                            TextureDesc::TextureUsageBits::Sampled);
 
   // kShaderRead not supported by TextureTarget
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Unsupported);
 
   texDesc.usage = TextureDesc::TextureUsageBits::Attachment;
 
   // TextureTarget only supports TwoD
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   texDesc.type = TextureType::ThreeD;
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Unsupported);
 
   // TextureTarget only supports a single mip level
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   texDesc.type = TextureType::TwoD;
   texDesc.numMipLevels = 2;
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Unsupported);
 
   // TextureTarget only supports a layer
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   texDesc.type = TextureType::TwoD;
   texDesc.numMipLevels = 1;
   texDesc.numLayers = 2;
@@ -116,7 +116,7 @@ TEST_F(TextureTargetOGLTest, TextureCreation) {
 
   // Unsupported texture format
   texDesc.format = TextureFormat::Invalid;
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   texDesc.numLayers = 1;
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::ArgumentInvalid);
@@ -124,7 +124,7 @@ TEST_F(TextureTargetOGLTest, TextureCreation) {
   // Correct usage of TextureTarget::create with > 1 samples
   texDesc.format = TextureFormat::RGBA_UNorm8;
   texDesc.numSamples = 2;
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 }
@@ -140,7 +140,7 @@ TEST_F(TextureTargetOGLTest, TextureCreation) {
 //                           attachAsStencil()
 //
 TEST_F(TextureTargetOGLTest, TextureBindAndAttachAndDetach) {
-  const std::unique_ptr<igl::opengl::TextureTarget> textureTarget;
+  const std::unique_ptr<opengl::TextureTarget> textureTarget;
   Result ret;
   const TextureDesc texDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                                  OFFSCREEN_TEX_WIDTH,
@@ -148,9 +148,9 @@ TEST_F(TextureTargetOGLTest, TextureBindAndAttachAndDetach) {
                                                  TextureDesc::TextureUsageBits::Attachment);
 
   // Create 3 types of targets
-  auto colorTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
-  auto depthTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
-  auto stencilTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  auto colorTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
+  auto depthTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
+  auto stencilTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
 
   // calling create() so that renderBufferID_ is set
   ret = colorTarget->create(texDesc, false);
@@ -260,7 +260,7 @@ TEST_F(TextureTargetOGLTest, TextureBindAndAttachAndDetach) {
 }
 
 TEST_F(TextureTargetOGLTest, CreateWithDebugName) {
-  const std::unique_ptr<igl::opengl::TextureTarget> textureTarget;
+  const std::unique_ptr<opengl::TextureTarget> textureTarget;
   Result ret;
   TextureDesc texDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                            OFFSCREEN_TEX_WIDTH,
@@ -269,7 +269,7 @@ TEST_F(TextureTargetOGLTest, CreateWithDebugName) {
   texDesc.debugName = "test";
 
   // Create 3 types of targets
-  auto target = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  auto target = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
 
   // calling create() so that renderBufferID_ is set
   ret = target->create(texDesc, false);

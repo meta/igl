@@ -38,7 +38,7 @@ std::shared_ptr<ITexture> TextureBufferIosTest::createCVPixelBufferTextureWithSi
   CVPixelBufferRef pixelBuffer = nullptr;
   NSDictionary* bufferAttributes = @{
     (NSString*)kCVPixelBufferIOSurfacePropertiesKey : @{},
-    (NSString*)kCVPixelFormatOpenGLESCompatibility : @(backend == igl::BackendType::OpenGL),
+    (NSString*)kCVPixelFormatOpenGLESCompatibility : @(backend == BackendType::OpenGL),
   };
 
   const CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault,
@@ -54,8 +54,8 @@ std::shared_ptr<ITexture> TextureBufferIosTest::createCVPixelBufferTextureWithSi
     return nullptr;
   }
 
-  auto* platformDevice = iglDev_->getPlatformDevice<igl::opengl::ios::PlatformDevice>();
-  auto& context = static_cast<igl::opengl::ios::Context&>(platformDevice->getContext());
+  auto* platformDevice = iglDev_->getPlatformDevice<opengl::ios::PlatformDevice>();
+  auto& context = static_cast<opengl::ios::Context&>(platformDevice->getContext());
   auto* textureCache = context.getTextureCache();
   std::shared_ptr<ITexture> texture = platformDevice->createTextureFromNativePixelBuffer(
       pixelBuffer, textureCache, 0, usage, &outResult);

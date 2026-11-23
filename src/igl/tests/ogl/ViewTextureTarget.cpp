@@ -27,7 +27,7 @@ class ViewTextureTargetOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     ASSERT_TRUE(device_ != nullptr);
@@ -52,8 +52,8 @@ class ViewTextureTargetOGLTest : public ::testing::Test {
 // test will need to be updated as well.
 //
 TEST_F(ViewTextureTargetOGLTest, Specifications) {
-  std::unique_ptr<igl::opengl::ViewTextureTarget> viewTextureTarget =
-      std::make_unique<igl::opengl::ViewTextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
+  std::unique_ptr<opengl::ViewTextureTarget> viewTextureTarget =
+      std::make_unique<opengl::ViewTextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
   ASSERT_EQ(viewTextureTarget->getType(), TextureType::TwoD);
   ASSERT_EQ(viewTextureTarget->getUsage(), TextureDesc::TextureUsageBits::Attachment);
   ASSERT_TRUE(viewTextureTarget->isImplicitStorage());
@@ -65,8 +65,8 @@ TEST_F(ViewTextureTargetOGLTest, Specifications) {
 // This test calls no-op functions just to satisfy code coverage.
 //
 TEST_F(ViewTextureTargetOGLTest, NoOpFunctions) {
-  std::unique_ptr<igl::opengl::ViewTextureTarget> viewTextureTarget =
-      std::make_unique<igl::opengl::ViewTextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
+  std::unique_ptr<opengl::ViewTextureTarget> viewTextureTarget =
+      std::make_unique<opengl::ViewTextureTarget>(*context_, TextureFormat::RGBA_UNorm8);
   viewTextureTarget->bind();
   viewTextureTarget->unbind();
   viewTextureTarget->attachAsColor(0, opengl::Texture::AttachmentParams{});

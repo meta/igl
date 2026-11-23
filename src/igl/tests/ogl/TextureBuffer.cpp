@@ -53,7 +53,7 @@ class TextureBufferOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     ASSERT_TRUE(device_ != nullptr);
@@ -77,7 +77,7 @@ class TextureBufferOGLTest : public ::testing::Test {
 // See tests for Texture.cpp for cases covering cases specific to base class.
 //
 TEST_F(TextureBufferOGLTest, TextureCreation) {
-  std::unique_ptr<igl::opengl::TextureBuffer> textureBuffer;
+  std::unique_ptr<opengl::TextureBuffer> textureBuffer;
   Result ret;
   TextureDesc texDesc = TextureDesc::new2D(TextureFormat::ABGR_UNorm4,
                                            OFFSCREEN_TEX_WIDTH,
@@ -85,13 +85,13 @@ TEST_F(TextureBufferOGLTest, TextureCreation) {
                                            TextureDesc::TextureUsageBits::Sampled);
 
   // Correct usage of TextureBuffer::create
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 
   // kRenderTarget not supported by TextureBuffer
   texDesc.usage = TextureDesc::TextureUsageBits::Attachment;
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, false);
   ASSERT_FALSE(ret.isOk());
 
@@ -99,7 +99,7 @@ TEST_F(TextureBufferOGLTest, TextureCreation) {
 
   // Incorrect texture format
   texDesc.format = TextureFormat::Invalid;
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::ArgumentInvalid);
 }
@@ -111,7 +111,7 @@ TEST_F(TextureBufferOGLTest, TextureCreation) {
 // Test paths are tested through TextureBuffer::create
 //
 TEST_F(TextureBufferOGLTest, TextureMipmapGen) {
-  std::unique_ptr<igl::opengl::TextureBuffer> textureBuffer;
+  std::unique_ptr<opengl::TextureBuffer> textureBuffer;
   Result ret;
   // Generate mipmap and correct query of initial count
   TextureDesc texDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
@@ -123,11 +123,11 @@ TEST_F(TextureBufferOGLTest, TextureMipmapGen) {
   const int targetlevel = std::floor(std::log2(maxDim)) + 1;
 
   texDesc.numMipLevels = targetlevel; // log(16) + 1
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 
-  igl::opengl::CommandQueue queue;
+  opengl::CommandQueue queue;
   textureBuffer->generateMipmap(queue);
   ASSERT_EQ(textureBuffer->getNumMipLevels(), targetlevel);
 }

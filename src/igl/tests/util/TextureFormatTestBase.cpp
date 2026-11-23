@@ -40,7 +40,7 @@ void TextureFormatTestBase::SetUp() {
   ASSERT_EQ(ret.code, Result::Code::Ok) << ret.message;
   ASSERT_TRUE(sampledTexture_ != nullptr);
 
-  const auto attachmentFormat = iglDev_->getBackendType() == igl::BackendType::OpenGL
+  const auto attachmentFormat = iglDev_->getBackendType() == BackendType::OpenGL
                                     ? TextureFormat::ABGR_UNorm4
                                     : TextureFormat::RGBA_UNorm8;
   texDesc = TextureDesc::new2D(attachmentFormat,
@@ -123,7 +123,7 @@ void TextureFormatTestBase::SetUp() {
   renderPipelineDesc_.targetDesc.colorAttachments.resize(1);
   renderPipelineDesc_.fragmentUnitSamplerMap[textureUnit_] =
       IGL_NAMEHANDLE(data::shader::kSimpleSampler);
-  renderPipelineDesc_.cullMode = igl::CullMode::Disabled;
+  renderPipelineDesc_.cullMode = CullMode::Disabled;
 }
 
 std::shared_ptr<IFramebuffer> TextureFormatTestBase::createFramebuffer(
@@ -414,9 +414,9 @@ void TextureFormatTestBase::testUsage(std::shared_ptr<ITexture> texture,
   // Non-normalized integer formats cannot be sampled with `float` GLSL samplers `sampler2D` on
   // Vulkan (need `usampler2D` etc)
   const bool isIntegerFormat = (properties.flags & TextureFormatProperties::Flags::Integer) != 0;
-  const bool isVulkan = iglDev_->getBackendType() == igl::BackendType::Vulkan;
+  const bool isVulkan = iglDev_->getBackendType() == BackendType::Vulkan;
   // WGSL cannot bind integer formats to `texture_2d<f32>` declarations either.
-  const bool isWgsl = iglDev_->getShaderVersion().family == igl::ShaderFamily::Wgsl;
+  const bool isWgsl = iglDev_->getShaderVersion().family == ShaderFamily::Wgsl;
   const bool shouldSkip = (isVulkan || isWgsl) && isIntegerFormat;
   if (!shouldSkip && (usage & TextureDesc::TextureUsageBits::Sampled) != 0) {
     const bool linearSampling =

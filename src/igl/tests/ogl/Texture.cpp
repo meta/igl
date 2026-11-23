@@ -46,7 +46,7 @@ class TextureOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     device_ = util::createTestDevice();
     context_ = &static_cast<opengl::Device&>(*device_).getContext();
     ASSERT_TRUE(context_ != nullptr);
@@ -69,8 +69,8 @@ class B10G11R11UFloatOGLTest : public util::TextureFormatTestBase {};
 // to the base class igl::opengl::Texture.
 //
 TEST_F(TextureOGLTest, TextureCreation) {
-  std::unique_ptr<igl::opengl::TextureTarget> textureTarget;
-  std::unique_ptr<igl::opengl::TextureBuffer> textureBuffer;
+  std::unique_ptr<opengl::TextureTarget> textureTarget;
+  std::unique_ptr<opengl::TextureBuffer> textureBuffer;
   Result ret;
   TextureDesc texDesc = TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                            OFFSCREEN_TEX_WIDTH,
@@ -78,18 +78,17 @@ TEST_F(TextureOGLTest, TextureCreation) {
                                            TextureDesc::TextureUsageBits::Storage);
 
   { // Storage not supported by OGL Texture via TextureTarget API
-    textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+    textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
     ret = textureTarget->create(texDesc, false);
     ASSERT_EQ(ret.code, Result::Code::Unsupported);
     Result::setOk(&ret);
   }
   { // Storage supported by OGL Texture via igl::Device API only if TexStorage is supported.
     auto texture = device_->createTexture(texDesc, &ret);
-    ASSERT_EQ(
-        ret.isOk(),
-        context_->deviceFeatures().hasInternalFeature(igl::opengl::InternalFeatures::TexStorage));
+    ASSERT_EQ(ret.isOk(),
+              context_->deviceFeatures().hasInternalFeature(opengl::InternalFeatures::TexStorage));
     Result::setOk(&ret);
-    if (context_->deviceFeatures().hasInternalFeature(igl::opengl::InternalFeatures::TexStorage)) {
+    if (context_->deviceFeatures().hasInternalFeature(opengl::InternalFeatures::TexStorage)) {
       ASSERT_NE(texture, nullptr);
     } else {
       ASSERT_EQ(texture, nullptr);
@@ -99,12 +98,12 @@ TEST_F(TextureOGLTest, TextureCreation) {
   texDesc.usage = TextureDesc::TextureUsageBits::Sampled;
 
   // Sampled and hasStorageAlready not supported in OGL Texture
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, true);
   ASSERT_EQ(ret.code, Result::Code::Unsupported);
 
   // Correct usage of TextureBuffer::create
-  textureBuffer = std::make_unique<igl::opengl::TextureBuffer>(*context_, texDesc.format);
+  textureBuffer = std::make_unique<opengl::TextureBuffer>(*context_, texDesc.format);
   ret = textureBuffer->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 
@@ -115,7 +114,7 @@ TEST_F(TextureOGLTest, TextureCreation) {
   texDesc.usage = TextureDesc::TextureUsageBits::Attachment;
 
   // Correct usage of TextureTarget::create
-  textureTarget = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+  textureTarget = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
   ret = textureTarget->create(texDesc, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 
@@ -678,7 +677,7 @@ TEST_F(TextureOGLTest, TextureFormats) {
   };
 
   for (auto data : texFormats) {
-    const TextureFormat output = igl::opengl::Texture::glInternalFormatToTextureFormat(
+    const TextureFormat output = opengl::Texture::glInternalFormatToTextureFormat(
         data.glTexInternalFormat, data.glTexFormat, data.glTexType);
     ASSERT_EQ(output, data.texFormatOutput)
         << "IGL Format: "
@@ -702,7 +701,7 @@ TEST_F(TextureOGLTest, TextureAlignment) {
     const TextureDesc texDesc = TextureDesc::new2D(
         TextureFormat::RGBA_UNorm8, width, width, TextureDesc::TextureUsageBits::Sampled);
 
-    auto texture = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+    auto texture = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
     ret = texture->create(texDesc, false);
 
     ASSERT_EQ(texture->getAlignment((width >> 0) * bytesPerPixel), 8);
@@ -742,7 +741,7 @@ TEST_F(TextureOGLTest, TextureAlignment) {
     const TextureDesc texDesc = TextureDesc::new2D(
         TextureFormat::RGBA_UNorm8, width, width, TextureDesc::TextureUsageBits::Sampled);
 
-    auto texture = std::make_unique<igl::opengl::TextureTarget>(*context_, texDesc.format);
+    auto texture = std::make_unique<opengl::TextureTarget>(*context_, texDesc.format);
     ret = texture->create(texDesc, false);
 
     ASSERT_EQ(texture->getAlignment((width >> 0) * bytesPerPixel), 8);

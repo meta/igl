@@ -43,7 +43,7 @@ class TextureBufferBaseOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     ASSERT_TRUE(device_ != nullptr);
@@ -59,10 +59,10 @@ class TextureBufferBaseOGLTest : public ::testing::Test {
   std::shared_ptr<IDevice> device_;
 };
 
-class TextureBufferBaseMock : public igl::opengl::TextureBufferBase {
+class TextureBufferBaseMock : public opengl::TextureBufferBase {
  public:
-  explicit TextureBufferBaseMock(igl::opengl::IContext& context) :
-    igl::opengl::TextureBufferBase(context, TextureFormat::RGBA_UNorm8) {}
+  explicit TextureBufferBaseMock(opengl::IContext& context) :
+    opengl::TextureBufferBase(context, TextureFormat::RGBA_UNorm8) {}
 
   using igl::opengl::TextureBufferBase::setTextureBufferProperties;
   using igl::opengl::TextureBufferBase::setUsage;
@@ -74,7 +74,7 @@ class TextureBufferBaseMock : public igl::opengl::TextureBufferBase {
 
   // NOLINTBEGIN(bugprone-easily-swappable-parameters)
   bool getFormatDetails(TextureFormat textureFormat,
-                        igl::TextureDesc::TextureUsage usage,
+                        TextureDesc::TextureUsage usage,
                         GLint& internalFormat,
                         GLenum& format,
                         GLenum& type) const {
@@ -271,7 +271,7 @@ TEST_F(TextureBufferBaseOGLTest, TextureMipmapGen) {
   Result ret = textureBufferBase->create(texDesc16, false);
   ASSERT_EQ(ret.code, Result::Code::Ok);
 
-  igl::opengl::CommandQueue queue;
+  opengl::CommandQueue queue;
   textureBufferBase->generateMipmap(queue);
   ASSERT_EQ(textureBufferBase->getNumMipLevels(), targetlevel);
 

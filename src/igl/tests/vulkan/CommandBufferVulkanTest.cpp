@@ -29,7 +29,7 @@ class CommandBufferVulkanTest : public ::testing::Test {
   CommandBufferVulkanTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -53,7 +53,7 @@ TEST_F(CommandBufferVulkanTest, GetVkCommandBuffer) {
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_NE(cmdBuf, nullptr);
 
-  auto* vulkanCmdBuf = static_cast<igl::vulkan::CommandBuffer*>(cmdBuf.get());
+  auto* vulkanCmdBuf = static_cast<vulkan::CommandBuffer*>(cmdBuf.get());
   EXPECT_TRUE(vulkanCmdBuf->getVkCommandBuffer() != nullptr);
 
   cmdQueue_->submit(*cmdBuf);
@@ -96,7 +96,7 @@ TEST_F(CommandBufferVulkanTest, CopyBuffer) {
   cmdBuf->copyBuffer(*srcBuffer, *dstBuffer, 0, 0, 128);
   cmdQueue_->submit(*cmdBuf);
 
-  auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  auto& device = static_cast<vulkan::Device&>(*iglDev_);
   device.getVulkanContext().waitIdle();
 
   const auto* downloadedData = static_cast<uint32_t*>(dstBuffer->map(BufferRange(128, 0), &ret));
@@ -307,7 +307,7 @@ TEST_F(CommandBufferVulkanTest, GetNextSubmitHandle) {
   auto cmdBuf = cmdQueue_->createCommandBuffer({}, &ret);
   ASSERT_TRUE(ret.isOk());
 
-  auto* vulkanCmdBuf = static_cast<igl::vulkan::CommandBuffer*>(cmdBuf.get());
+  auto* vulkanCmdBuf = static_cast<vulkan::CommandBuffer*>(cmdBuf.get());
   auto handle = vulkanCmdBuf->getNextSubmitHandle();
   EXPECT_FALSE(handle.empty());
 

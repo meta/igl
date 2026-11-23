@@ -39,7 +39,7 @@ class ComputeCommandEncoderVulkanTest : public ::testing::Test {
   ComputeCommandEncoderVulkanTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -109,8 +109,8 @@ TEST_F(ComputeCommandEncoderVulkanTest, BindTextureSampledStorageTransitionsToSh
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_NE(texture, nullptr);
 
-  const auto* vkTexture = static_cast<igl::vulkan::Texture*>(texture.get());
-  const igl::vulkan::VulkanImage& vkImage = vkTexture->getVulkanTexture().image;
+  const auto* vkTexture = static_cast<vulkan::Texture*>(texture.get());
+  const vulkan::VulkanImage& vkImage = vkTexture->getVulkanTexture().image;
   ASSERT_TRUE(vkImage.isSampledImage());
   ASSERT_TRUE(vkImage.isStorageImage());
 

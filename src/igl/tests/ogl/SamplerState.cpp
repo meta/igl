@@ -30,7 +30,7 @@ class SamplerStateOGLTest : public ::testing::Test {
   // Set up common resources.
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     context_ = &static_cast<opengl::Device&>(*device_).getContext();
@@ -51,7 +51,7 @@ class SamplerStateOGLTest : public ::testing::Test {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMinFilter) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertGLMinFilter(GL_NEAREST), SamplerMinMagFilter::Nearest);
   ASSERT_EQ(dummySamplerState->convertGLMinFilter(GL_NEAREST_MIPMAP_NEAREST),
             SamplerMinMagFilter::Nearest);
@@ -73,7 +73,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMinFilter) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMipFilter) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertGLMipFilter(GL_NEAREST), SamplerMipFilter::Disabled);
   ASSERT_EQ(dummySamplerState->convertGLMipFilter(GL_NEAREST_MIPMAP_NEAREST),
             SamplerMipFilter::Nearest);
@@ -95,7 +95,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMipFilter) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertMinMipFilter) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertMinMipFilter(SamplerMinMagFilter::Nearest,
                                                    SamplerMipFilter::Disabled),
             GL_NEAREST);
@@ -116,7 +116,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertMinMipFilter) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertMinMipFilterLinear) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertMinMipFilter(SamplerMinMagFilter::Linear,
                                                    SamplerMipFilter::Disabled),
             GL_LINEAR);
@@ -136,7 +136,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertMinMipFilterLinear) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMagFilter) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertGLMagFilter(GL_NEAREST), SamplerMinMagFilter::Nearest);
   ASSERT_EQ(dummySamplerState->convertGLMagFilter(GL_NEAREST_MIPMAP_NEAREST),
             SamplerMinMagFilter::Linear);
@@ -158,7 +158,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertGLMagFilter) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertMagFilter) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertMagFilter(SamplerMinMagFilter::Nearest), GL_NEAREST);
   ASSERT_EQ(dummySamplerState->convertMagFilter(SamplerMinMagFilter::Linear), GL_LINEAR);
 }
@@ -171,7 +171,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertMagFilter) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertGLAddressMode) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertGLAddressMode(GL_REPEAT), SamplerAddressMode::Repeat);
   ASSERT_EQ(dummySamplerState->convertGLAddressMode(GL_CLAMP_TO_EDGE), SamplerAddressMode::Clamp);
   ASSERT_EQ(dummySamplerState->convertGLAddressMode(GL_MIRRORED_REPEAT),
@@ -188,7 +188,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertGLAddressMode) {
 //
 TEST_F(SamplerStateOGLTest, SamplerStateConvertAddressMode) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   ASSERT_EQ(dummySamplerState->convertAddressMode(SamplerAddressMode::Repeat), GL_REPEAT);
   ASSERT_EQ(dummySamplerState->convertAddressMode(SamplerAddressMode::Clamp), GL_CLAMP_TO_EDGE);
   ASSERT_EQ(dummySamplerState->convertAddressMode(SamplerAddressMode::MirrorRepeat),
@@ -199,7 +199,7 @@ TEST_F(SamplerStateOGLTest, SamplerStateConvertAddressMode) {
 
 TEST_F(SamplerStateOGLTest, BindNullTexture) {
   auto dummySamplerState =
-      std::make_unique<igl::opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
+      std::make_unique<opengl::SamplerState>(*context_, SamplerStateDesc::newLinear());
   dummySamplerState->bind(nullptr);
   EXPECT_TRUE(true); // Expect no crash
 }

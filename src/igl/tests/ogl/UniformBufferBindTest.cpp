@@ -84,7 +84,7 @@ const char kFragShaderWithUniformArrays[] =
 class UniformBufferBindTest : public ::testing::Test {
  public:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_NE(cmdQueue_, nullptr);
@@ -126,7 +126,7 @@ class UniformBufferBindTest : public ::testing::Test {
 
   [[nodiscard]] GLint getLocation(const std::shared_ptr<IRenderPipelineState>& pipeline,
                                   const char* name) const {
-    return pipeline->getIndexByName(igl::genNameHandle(name), igl::ShaderStage::Fragment);
+    return pipeline->getIndexByName(genNameHandle(name), ShaderStage::Fragment);
   }
 
   [[nodiscard]] GLuint usePipeline(const std::shared_ptr<IRenderPipelineState>& pipeline) {

@@ -481,11 +481,11 @@ class CommonWithDeviceTest : public ::testing::Test {
   // Set up common resources.
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
-    device_ = igl::tests::util::device::createTestDevice(igl::BackendType::Vulkan);
+    device_ = igl::tests::util::device::createTestDevice(BackendType::Vulkan);
     ASSERT_TRUE(device_ != nullptr);
-    auto& device = static_cast<igl::vulkan::Device&>(*device_);
+    auto& device = static_cast<vulkan::Device&>(*device_);
     context_ = &device.getVulkanContext();
     ASSERT_TRUE(context_ != nullptr);
   }
@@ -516,10 +516,10 @@ TEST_F(CommonWithDeviceTest, TransitionToGeneralTest) {
   EXPECT_TRUE(result.isOk());
 
   igl::vulkan::transitionToGeneral(
-      static_cast<const igl::vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
+      static_cast<const vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
       texture.get());
 
-  const igl::vulkan::Texture& tex = static_cast<igl::vulkan::Texture&>(*texture);
+  const vulkan::Texture& tex = static_cast<vulkan::Texture&>(*texture);
   const vulkan::VulkanImage& img = tex.getVulkanTexture().image;
 
   EXPECT_EQ(img.imageLayout_, VK_IMAGE_LAYOUT_GENERAL);
@@ -543,10 +543,10 @@ TEST_F(CommonWithDeviceTest, TransitionToColorAttachmentTest) {
   EXPECT_TRUE(result.isOk());
 
   igl::vulkan::transitionToColorAttachment(
-      static_cast<const igl::vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
+      static_cast<const vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
       texture.get());
 
-  const igl::vulkan::Texture& tex = static_cast<igl::vulkan::Texture&>(*texture);
+  const vulkan::Texture& tex = static_cast<vulkan::Texture&>(*texture);
   const vulkan::VulkanImage& img = tex.getVulkanTexture().image;
 
   EXPECT_EQ(img.imageLayout_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -570,10 +570,10 @@ TEST_F(CommonWithDeviceTest, TransitionToShaderReadOnlyTest) {
   EXPECT_TRUE(result.isOk());
 
   igl::vulkan::transitionToShaderReadOnly(
-      static_cast<const igl::vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
+      static_cast<const vulkan::CommandBuffer*>(cmdBuffer.get())->getVkCommandBuffer(),
       texture.get());
 
-  const igl::vulkan::Texture& tex = static_cast<igl::vulkan::Texture&>(*texture);
+  const vulkan::Texture& tex = static_cast<vulkan::Texture&>(*texture);
   const vulkan::VulkanImage& img = tex.getVulkanTexture().image;
 
   EXPECT_EQ(img.imageLayout_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -663,7 +663,7 @@ TEST_F(CommonWithDeviceTest, OverrideImageLayoutTest) {
 
   igl::vulkan::overrideImageLayout(texture.get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-  const igl::vulkan::Texture& tex = static_cast<igl::vulkan::Texture&>(*texture);
+  const vulkan::Texture& tex = static_cast<vulkan::Texture&>(*texture);
   const vulkan::VulkanImage& img = tex.getVulkanTexture().image;
 
   EXPECT_EQ(img.imageLayout_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
