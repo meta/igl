@@ -974,6 +974,10 @@ bool Texture::toFormatDescGL(const IContext& ctx,
     internalFormat = GL_DEPTH_COMPONENT32;
     if (texImage && deviceFeatures.hasInternalRequirement(InternalRequirement::Depth32Unsized)) {
       internalFormat = GL_DEPTH_COMPONENT;
+    } else if (DeviceFeatureSet::usesOpenGLES() &&
+               deviceFeatures.getGLVersion() >= GLVersion::v3_0_ES) {
+      type = GL_FLOAT;
+      internalFormat = GL_DEPTH_COMPONENT32F;
     }
     return true;
 

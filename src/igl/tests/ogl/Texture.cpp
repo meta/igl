@@ -124,6 +124,92 @@ TEST_F(TextureOGLTest, TextureCreation) {
   ASSERT_EQ(ret.code, Result::Code::InvalidOperation);
 }
 
+TEST_F(TextureOGLTest, Depth32Formats) {
+  class FormatContext final : public opengl::IContext {
+   public:
+    void setCurrent() override {}
+    void clearCurrentContext() const override {}
+    bool isCurrentContext() const override {
+      return false;
+    }
+    bool isCurrentSharegroup() const override {
+      return false;
+    }
+    void present(std::shared_ptr<ITexture> /*surface*/) const override {}
+    std::unique_ptr<opengl::IContext> createShareContext(
+        Result* IGL_NULLABLE /*outResult*/) override {
+      return nullptr;
+    }
+  };
+
+  const bool usesOpenGLES = opengl::DeviceFeatureSet::usesOpenGLES();
+  const auto legacyVersion = usesOpenGLES ? opengl::GLVersion::v2_0_ES : opengl::GLVersion::v4_2;
+  const auto modernVersion = usesOpenGLES ? opengl::GLVersion::v3_0_ES : opengl::GLVersion::v4_2;
+  const GLenum modernInternalFormat = usesOpenGLES ? GL_DEPTH_COMPONENT32F : GL_DEPTH_COMPONENT32;
+  const GLenum unsizedInternalFormat = usesOpenGLES ? GL_DEPTH_COMPONENT : GL_DEPTH_COMPONENT32;
+  const GLenum modernType = usesOpenGLES ? GL_FLOAT : GL_UNSIGNED_INT;
+  struct TestCase {
+    const char* name;
+    opengl::GLVersion version;
+    const char* extensions;
+    TextureDesc::TextureUsage usage;
+    GLenum internalFormat;
+    GLenum type;
+  };
+  const std::array<TestCase, 6> cases = {{
+      {.name = "Legacy sized texture",
+       .version = legacyVersion,
+       .extensions = "GL_OES_depth32 GL_OES_required_internalformat",
+       .usage = TextureDesc::TextureUsageBits::Sampled,
+       .internalFormat = GL_DEPTH_COMPONENT32,
+       .type = GL_UNSIGNED_INT},
+      {.name = "Legacy unsized texture",
+       .version = legacyVersion,
+       .extensions = "GL_OES_depth_texture",
+       .usage = TextureDesc::TextureUsageBits::Sampled,
+       .internalFormat = unsizedInternalFormat,
+       .type = GL_UNSIGNED_INT},
+      {.name = "Modern sized texture",
+       .version = modernVersion,
+       .extensions = "GL_OES_depth32 GL_OES_required_internalformat",
+       .usage = TextureDesc::TextureUsageBits::Sampled,
+       .internalFormat = modernInternalFormat,
+       .type = modernType},
+      {.name = "Modern unsized texture",
+       .version = modernVersion,
+       .extensions = "GL_OES_depth_texture",
+       .usage = TextureDesc::TextureUsageBits::Sampled,
+       .internalFormat = unsizedInternalFormat,
+       .type = GL_UNSIGNED_INT},
+      {.name = "Modern renderbuffer ignores unsized requirement",
+       .version = modernVersion,
+       .extensions = "GL_OES_depth_texture GL_OES_depth32",
+       .usage = TextureDesc::TextureUsageBits::Attachment,
+       .internalFormat = modernInternalFormat,
+       .type = modernType},
+      {.name = "Modern immutable storage ignores unsized requirement",
+       .version = modernVersion,
+       .extensions = "GL_OES_depth_texture GL_EXT_texture_storage",
+       .usage = TextureDesc::TextureUsageBits::Storage,
+       .internalFormat = modernInternalFormat,
+       .type = modernType},
+  }};
+
+  for (const auto& testCase : cases) {
+    SCOPED_TRACE(testCase.name);
+    FormatContext context;
+    auto& features = const_cast<opengl::DeviceFeatureSet&>(context.deviceFeatures());
+    features.initializeVersion(testCase.version);
+    features.initializeExtensions(testCase.extensions, {});
+    opengl::Texture::FormatDescGL formatDesc;
+    ASSERT_TRUE(opengl::Texture::toFormatDescGL(
+        context, TextureFormat::Z_UNorm32, testCase.usage, formatDesc));
+    EXPECT_EQ(formatDesc.internalFormat, testCase.internalFormat);
+    EXPECT_EQ(formatDesc.format, GL_DEPTH_COMPONENT);
+    EXPECT_EQ(formatDesc.type, testCase.type);
+  }
+}
+
 TEST_F(TextureOGLTest, B10G11R11UFloatSupport) {
   const auto& deviceFeatures = context_->deviceFeatures();
   const auto version = deviceFeatures.getGLVersion();
