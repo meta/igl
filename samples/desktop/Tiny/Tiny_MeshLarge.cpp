@@ -823,12 +823,12 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
 
     int posX = 0;
     int posY = 0;
-    int width = mode->width;
-    int height = mode->height;
+    int windowWidth = mode->width;
+    int windowHeight = mode->height;
 
-    glfwGetMonitorWorkarea(monitor, &posX, &posY, &width, &height);
+    glfwGetMonitorWorkarea(monitor, &posX, &posY, &windowWidth, &windowHeight);
 
-    window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    window = glfwCreateWindow(windowWidth, windowHeight, title, nullptr, nullptr);
 
     glfwSetWindowPos(window, posX, posY);
 
@@ -918,7 +918,7 @@ GLFWwindow* FOLLY_NULLABLE initIGL(bool isHeadless, bool enableVulkanValidationL
       }
     });
 
-    glfwGetWindowSize(window, &width, &height);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
   }
 
   // create a device
@@ -1013,7 +1013,7 @@ bool loadAndCache(const char* cacheFileName) {
 
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
-  std::vector<tinyobj::material_t> materials;
+  std::vector<tinyobj::material_t> objMaterials;
 
   std::string warn;
   std::string err;
@@ -1021,7 +1021,7 @@ bool loadAndCache(const char* cacheFileName) {
   const bool ret =
       tinyobj::LoadObj(&attrib,
                        &shapes,
-                       &materials,
+                       &objMaterials,
                        &warn,
                        &err,
                        (contentRootFolder + "src/bistro/Exterior/exterior.obj").c_str(),
@@ -1035,7 +1035,7 @@ bool loadAndCache(const char* cacheFileName) {
   // loop over shapes as described in https://github.com/tinyobjloader/tinyobjloader
   std::vector<std::vector<VertexData>> resplitShapes;
   std::vector<VertexData> shapeData;
-  resplitShapes.resize(materials.size());
+  resplitShapes.resize(objMaterials.size());
   int prevIndex = shapes[0].mesh.material_ids[0];
   for (auto& shape : shapes) {
     size_t indexOffset = 0;
@@ -1064,7 +1064,7 @@ bool loadAndCache(const char* cacheFileName) {
 
         const int mtlIndex = shape.mesh.material_ids[f];
 
-        IGL_DEBUG_ASSERT(mtlIndex >= 0 && mtlIndex < materials.size());
+        IGL_DEBUG_ASSERT(mtlIndex >= 0 && mtlIndex < objMaterials.size());
 
         if (prevIndex != mtlIndex) {
           resplitShapes[prevIndex].insert(
@@ -1125,7 +1125,7 @@ bool loadAndCache(const char* cacheFileName) {
   }
 
   // loop over materials
-  for (auto& m : materials) {
+  for (auto& m : objMaterials) {
     CachedMaterial mtl;
     mtl.ambient = vec3(m.ambient[0], m.ambient[1], m.ambient[2]);
     mtl.diffuse = vec3(m.diffuse[0], m.diffuse[1], m.diffuse[2]);
@@ -2402,8 +2402,8 @@ void generateMipmaps(const std::string& outFilename, ktxTexture2* cubemap) {
     IGL_LOG_INFO(".");
     for (size_t miplevel = 1; miplevel < cubemap->numLevels; ++miplevel) {
       IGL_LOG_INFO(":");
-      const auto width = prevWidth > 1 ? prevWidth >> 1 : 1;
-      const auto height = prevHeight > 1 ? prevWidth >> 1 : 1;
+      const auto mipWidth = prevWidth > 1 ? prevWidth >> 1 : 1;
+      const auto mipHeight = prevHeight > 1 ? prevWidth >> 1 : 1;
 
       size_t prevOffset = 0;
       auto error =
@@ -2415,8 +2415,8 @@ void generateMipmaps(const std::string& outFilename, ktxTexture2* cubemap) {
                          prevHeight,
                          0,
                          buffer.get(),
-                         width,
-                         height,
+                         mipWidth,
+                         mipHeight,
                          0,
                          4);
 
@@ -2425,10 +2425,10 @@ void generateMipmaps(const std::string& outFilename, ktxTexture2* cubemap) {
                                     0,
                                     face,
                                     reinterpret_cast<const uint8_t*>(buffer.get()),
-                                    sizeof(float) * width * height * 4);
+                                    sizeof(float) * mipWidth * mipHeight * 4);
 
-      prevWidth = width;
-      prevHeight = height;
+      prevWidth = mipWidth;
+      prevHeight = mipHeight;
     }
     prevWidth = cubemap->baseWidth;
     prevHeight = cubemap->baseHeight;
