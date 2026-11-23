@@ -32,7 +32,7 @@ class RenderPipelineReflectionTest : public ::testing::Test {
   //
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_TRUE(iglDev_ != nullptr);
@@ -151,7 +151,7 @@ TEST_F(RenderPipelineReflectionTest, VerifySamplers) {
 
 TEST_F(RenderPipelineReflectionTest, UniformBlocks) {
   bool useBlocks = iglDev_->hasFeature(DeviceFeatures::UniformBlocks);
-  const bool isGles3 = iglDev_->getBackendVersion().flavor == igl::BackendFlavor::OpenGL_ES &&
+  const bool isGles3 = iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES &&
                        iglDev_->getBackendVersion().majorVersion >= 3;
 
 #if defined(IGL_PLATFORM_LINUX) && IGL_PLATFORM_LINUX

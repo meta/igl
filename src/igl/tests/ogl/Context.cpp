@@ -34,7 +34,7 @@ class ContextOGLTest : public ::testing::Test {
 
   void SetUp() override {
     // We will be purposely tripping a few ASSERT conditions
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     device_ = util::createTestDevice();
     ASSERT_TRUE(device_ != nullptr);
@@ -341,8 +341,8 @@ TEST_F(ContextOGLTest, BasicSharedContexts) {
   ASSERT_TRUE(sharedContext->isCurrentSharegroup());
   ASSERT_FALSE(unsharedContext->isCurrentSharegroup());
 
-  const TextureDesc textureDesc = igl::TextureDesc::new2D(
-      igl::TextureFormat::RGBA_UNorm8, 16, 16, igl::TextureDesc::TextureUsageBits::Sampled);
+  const TextureDesc textureDesc = TextureDesc::new2D(
+      TextureFormat::RGBA_UNorm8, 16, 16, TextureDesc::TextureUsageBits::Sampled);
   auto texture = device_->createTexture(textureDesc, &result);
   ASSERT_TRUE(result.isOk());
 

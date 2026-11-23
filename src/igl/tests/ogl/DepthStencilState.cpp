@@ -43,7 +43,7 @@ class DepthStencilStateTest : public ::testing::Test {
   // so it is ready to render a simple quad with an input texture to an
   // offscreen texture.
   void SetUp() override {
-    igl::setDebugBreakEnabled(false); // only use in debug mode
+    setDebugBreakEnabled(false); // only use in debug mode
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_TRUE(iglDev_ != nullptr);
     ASSERT_TRUE(cmdQueue_ != nullptr);
@@ -76,7 +76,7 @@ class DepthStencilStateTest : public ::testing::Test {
 
     // Initialize shader stages
     std::unique_ptr<IShaderStages> stages;
-    igl::tests::util::createSimpleShaderStages(iglDev_, stages);
+    util::createSimpleShaderStages(iglDev_, stages);
     shaderStages_ = std::move(stages);
 
     // Initialize input to vertex shader
@@ -116,7 +116,7 @@ class DepthStencilStateTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
   }
 
@@ -163,7 +163,7 @@ TEST_F(DepthStencilStateTest, Passthrough) {
   auto cmdEncoder = cmdBuf_->createRenderCommandEncoder(renderPass_, framebuffer_);
   // No asserts, just test the passthroughs are successful
   cmdEncoder->bindDepthStencilState(idss);
-  auto* dss = static_cast<igl::opengl::DepthStencilState*>(idss.get());
+  auto* dss = static_cast<opengl::DepthStencilState*>(idss.get());
   dss->bind(0, 0); // Test bind passthrough
   dss->unbind();
 }
@@ -175,23 +175,23 @@ TEST_F(DepthStencilStateTest, Passthrough) {
 //
 TEST_F(DepthStencilStateTest, CompareFunctionToOGL) {
   struct CompareFuncConversion {
-    CompareFunction igl = igl::CompareFunction::Never;
+    CompareFunction igl = CompareFunction::Never;
     GLenum ogl = GL_NEVER;
   };
 
   const std::vector<CompareFuncConversion> conversions{
-      CompareFuncConversion{.igl = igl::CompareFunction::Never, .ogl = GL_NEVER},
-      CompareFuncConversion{.igl = igl::CompareFunction::Less, .ogl = GL_LESS},
-      CompareFuncConversion{.igl = igl::CompareFunction::Equal, .ogl = GL_EQUAL},
-      CompareFuncConversion{.igl = igl::CompareFunction::LessEqual, .ogl = GL_LEQUAL},
-      CompareFuncConversion{.igl = igl::CompareFunction::Greater, .ogl = GL_GREATER},
-      CompareFuncConversion{.igl = igl::CompareFunction::NotEqual, .ogl = GL_NOTEQUAL},
-      CompareFuncConversion{.igl = igl::CompareFunction::GreaterEqual, .ogl = GL_GEQUAL},
-      CompareFuncConversion{.igl = igl::CompareFunction::AlwaysPass, .ogl = GL_ALWAYS},
+      CompareFuncConversion{.igl = CompareFunction::Never, .ogl = GL_NEVER},
+      CompareFuncConversion{.igl = CompareFunction::Less, .ogl = GL_LESS},
+      CompareFuncConversion{.igl = CompareFunction::Equal, .ogl = GL_EQUAL},
+      CompareFuncConversion{.igl = CompareFunction::LessEqual, .ogl = GL_LEQUAL},
+      CompareFuncConversion{.igl = CompareFunction::Greater, .ogl = GL_GREATER},
+      CompareFuncConversion{.igl = CompareFunction::NotEqual, .ogl = GL_NOTEQUAL},
+      CompareFuncConversion{.igl = CompareFunction::GreaterEqual, .ogl = GL_GEQUAL},
+      CompareFuncConversion{.igl = CompareFunction::AlwaysPass, .ogl = GL_ALWAYS},
   };
 
   for (auto data : conversions) {
-    const GLenum ogl = igl::opengl::DepthStencilState::convertCompareFunction(data.igl);
+    const GLenum ogl = opengl::DepthStencilState::convertCompareFunction(data.igl);
     ASSERT_EQ(ogl, data.ogl);
   }
 }
@@ -203,23 +203,23 @@ TEST_F(DepthStencilStateTest, CompareFunctionToOGL) {
 //
 TEST_F(DepthStencilStateTest, StencilOperationToOGL) {
   struct StencilOpConversion {
-    StencilOperation igl = igl::StencilOperation::Keep;
+    StencilOperation igl = StencilOperation::Keep;
     GLenum ogl = GL_KEEP;
   };
 
   const std::vector<StencilOpConversion> conversions{
-      StencilOpConversion{.igl = igl::StencilOperation::Keep, .ogl = GL_KEEP},
-      StencilOpConversion{.igl = igl::StencilOperation::Zero, .ogl = GL_ZERO},
-      StencilOpConversion{.igl = igl::StencilOperation::Replace, .ogl = GL_REPLACE},
-      StencilOpConversion{.igl = igl::StencilOperation::IncrementClamp, .ogl = GL_INCR},
-      StencilOpConversion{.igl = igl::StencilOperation::DecrementClamp, .ogl = GL_DECR},
-      StencilOpConversion{.igl = igl::StencilOperation::Invert, .ogl = GL_INVERT},
-      StencilOpConversion{.igl = igl::StencilOperation::IncrementWrap, .ogl = GL_INCR_WRAP},
-      StencilOpConversion{.igl = igl::StencilOperation::DecrementWrap, .ogl = GL_DECR_WRAP},
+      StencilOpConversion{.igl = StencilOperation::Keep, .ogl = GL_KEEP},
+      StencilOpConversion{.igl = StencilOperation::Zero, .ogl = GL_ZERO},
+      StencilOpConversion{.igl = StencilOperation::Replace, .ogl = GL_REPLACE},
+      StencilOpConversion{.igl = StencilOperation::IncrementClamp, .ogl = GL_INCR},
+      StencilOpConversion{.igl = StencilOperation::DecrementClamp, .ogl = GL_DECR},
+      StencilOpConversion{.igl = StencilOperation::Invert, .ogl = GL_INVERT},
+      StencilOpConversion{.igl = StencilOperation::IncrementWrap, .ogl = GL_INCR_WRAP},
+      StencilOpConversion{.igl = StencilOperation::DecrementWrap, .ogl = GL_DECR_WRAP},
   };
 
   for (auto data : conversions) {
-    const GLenum ogl = igl::opengl::DepthStencilState::convertStencilOperation(data.igl);
+    const GLenum ogl = opengl::DepthStencilState::convertStencilOperation(data.igl);
     ASSERT_EQ(ogl, data.ogl);
   }
 }
@@ -263,7 +263,7 @@ TEST_F(DepthStencilStateTest, SetStencilReferenceValueAndCheck) {
 
   // Read back default reference value here
   opengl::IContext* ctx = nullptr;
-  ctx = &static_cast<igl::opengl::Device&>(*iglDev_).getContext();
+  ctx = &static_cast<opengl::Device&>(*iglDev_).getContext();
   GLboolean origIsDepthWriteEnabled = 0, newIsDepthWriteEnabled = 0;
   GLint origDepthFunVal = 0, newDepthFunVal = 0;
   GLint origFrontCompareFunc = 0, newFrontCompareFunc = 0;

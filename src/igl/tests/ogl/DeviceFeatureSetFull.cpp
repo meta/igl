@@ -29,7 +29,7 @@ class DeviceFeatureSetFullOGLTest : public ::testing::Test {
   DeviceFeatureSetFullOGLTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_NE(cmdQueue_, nullptr);

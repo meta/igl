@@ -41,12 +41,12 @@ class DeviceOGLTest : public ::testing::Test {
   // Set up common resources. This will create a device
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     iglDev_ = util::createTestDevice();
     ASSERT_TRUE(iglDev_ != nullptr);
 
-    context_ = &static_cast<igl::opengl::Device&>(*iglDev_).getContext();
+    context_ = &static_cast<opengl::Device&>(*iglDev_).getContext();
   }
 
   void TearDown() override {}
@@ -142,14 +142,14 @@ TEST_F(DeviceOGLTest, EndScope) {
 
   // Check that gl version and shader version works
   auto glVersion = context_->deviceFeatures().getGLVersion();
-  ASSERT_NE(glVersion, igl::opengl::GLVersion::NotAvailable);
+  ASSERT_NE(glVersion, opengl::GLVersion::NotAvailable);
 
   auto shaderVersion = iglDev_->getShaderVersion();
   ASSERT_NE(shaderVersion.majorVersion, 0);
 #if IGL_OPENGL_ES
-  ASSERT_EQ(shaderVersion.family, igl::ShaderFamily::GlslEs);
+  ASSERT_EQ(shaderVersion.family, ShaderFamily::GlslEs);
 #else
-  ASSERT_EQ(shaderVersion.family, igl::ShaderFamily::Glsl);
+  ASSERT_EQ(shaderVersion.family, ShaderFamily::Glsl);
 #endif
   ASSERT_GT(shaderVersion.majorVersion + shaderVersion.minorVersion, 0);
 
@@ -157,10 +157,10 @@ TEST_F(DeviceOGLTest, EndScope) {
   const std::string expectedVersion =
       "#version " + std::to_string(shaderVersion.majorVersion) +
       (shaderVersion.minorVersion == 0 ? "00" : std::to_string(shaderVersion.minorVersion)) +
-      ((shaderVersion.family == igl::ShaderFamily::GlslEs && shaderVersion.majorVersion > 1) ? " es"
-                                                                                             : "");
+      ((shaderVersion.family == ShaderFamily::GlslEs && shaderVersion.majorVersion > 1) ? " es"
+                                                                                        : "");
 
-  ASSERT_EQ(igl::opengl::getStringFromShaderVersion(shaderVersion), expectedVersion);
+  ASSERT_EQ(opengl::getStringFromShaderVersion(shaderVersion), expectedVersion);
 #endif // IGL_BACKEND_OPENGL
 }
 
@@ -193,7 +193,7 @@ TEST_F(DeviceOGLTest, EndScopeClearContext) {
 }
 
 TEST_F(DeviceOGLTest, DeletionTest) {
-  const igl::tests::util::TestErrorGuard testErrorGuard;
+  const util::TestErrorGuard testErrorGuard;
 
   auto iglDev2 = util::createTestDevice();
 

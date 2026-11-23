@@ -104,7 +104,7 @@ class PipelineStateOGLTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat(),
                                              .blendEnabled = true}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
   }
 
@@ -157,12 +157,12 @@ TEST_F(PipelineStateOGLTest, GetIndexByName) {
   ASSERT_TRUE(pipelineState != nullptr);
 
   // These should have a location because they are attributes in the simple shader
-  int idx = pipelineState->getIndexByName(IGL_NAMEHANDLE(data::shader::kSimpleUv),
-                                          igl::ShaderStage::Fragment);
+  int idx =
+      pipelineState->getIndexByName(IGL_NAMEHANDLE(data::shader::kSimpleUv), ShaderStage::Fragment);
   ASSERT_NE(idx, -1);
 
   idx = pipelineState->getIndexByName(IGL_NAMEHANDLE(data::shader::kSimplePos),
-                                      igl::ShaderStage::Fragment);
+                                      ShaderStage::Fragment);
   ASSERT_NE(idx, -1);
 }
 

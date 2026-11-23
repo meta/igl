@@ -52,7 +52,7 @@ TEST_F(MemcpyOGLTest, optimizedMemcpyAlignmentPermutation) {
 
     // Always clear the dst buffer before each optimizedMemcpy() call.
     std::memcpy(dst, clr, sizeof(dst));
-    igl::optimizedMemcpy(dst + di, src + i, len);
+    optimizedMemcpy(dst + di, src + i, len);
 
     // Verify optimizedMemcpy() has done the job correctly.
     // We divide the dst buffer into up to 3 sections,

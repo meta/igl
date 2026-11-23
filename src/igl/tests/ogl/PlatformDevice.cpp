@@ -89,7 +89,7 @@ TEST_F(PlatformDeviceTest, CreateTextureBufferExternal) {
   auto* pd = iglDev_->getPlatformDevice<opengl::PlatformDevice>();
   ASSERT_NE(pd, nullptr);
 
-  std::unique_ptr<igl::opengl::TextureBufferExternal> textureBuffer =
+  std::unique_ptr<opengl::TextureBufferExternal> textureBuffer =
       pd->createTextureBufferExternal(1, // Randomly pick 1 as the Texture ID
                                       GL_TEXTURE_2D, // Randomly picking GL_TEXTURE_2D
                                       TextureDesc::TextureUsageBits::Sampled,

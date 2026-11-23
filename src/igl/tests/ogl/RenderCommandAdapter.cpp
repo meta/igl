@@ -37,7 +37,7 @@ class RenderCommandAdapterOGLTest : public ::testing::Test {
   RenderCommandAdapterOGLTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_NE(cmdQueue_, nullptr);
@@ -122,7 +122,7 @@ class RenderCommandAdapterOGLTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
 
     pipelineState_ = iglDev_->createRenderPipeline(renderPipelineDesc_, &ret);
@@ -189,8 +189,8 @@ TEST_F(RenderCommandAdapterOGLTest, DrawArrays) {
   cmdEncoder->bindRenderPipelineState(pipelineState_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimplePosIndex, *vb_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimpleUvIndex, *uvb_);
-  cmdEncoder->bindTexture(0, igl::BindTarget::kFragment, inputTexture_.get());
-  cmdEncoder->bindSamplerState(0, igl::BindTarget::kFragment, sampler_.get());
+  cmdEncoder->bindTexture(0, BindTarget::kFragment, inputTexture_.get());
+  cmdEncoder->bindSamplerState(0, BindTarget::kFragment, sampler_.get());
 
   cmdEncoder->draw(4);
   cmdEncoder->endEncoding();
@@ -233,8 +233,8 @@ TEST_F(RenderCommandAdapterOGLTest, DrawElements) {
   cmdEncoder->bindRenderPipelineState(pipelineState_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimplePosIndex, *vb_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimpleUvIndex, *uvb_);
-  cmdEncoder->bindTexture(0, igl::BindTarget::kFragment, inputTexture_.get());
-  cmdEncoder->bindSamplerState(0, igl::BindTarget::kFragment, sampler_.get());
+  cmdEncoder->bindTexture(0, BindTarget::kFragment, inputTexture_.get());
+  cmdEncoder->bindSamplerState(0, BindTarget::kFragment, sampler_.get());
   cmdEncoder->bindIndexBuffer(*ib_, IndexFormat::UInt16);
 
   cmdEncoder->drawIndexed(6);
@@ -277,8 +277,8 @@ TEST_F(RenderCommandAdapterOGLTest, DrawArraysInstanced) {
   cmdEncoder->bindRenderPipelineState(pipelineState_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimplePosIndex, *vb_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimpleUvIndex, *uvb_);
-  cmdEncoder->bindTexture(0, igl::BindTarget::kFragment, inputTexture_.get());
-  cmdEncoder->bindSamplerState(0, igl::BindTarget::kFragment, sampler_.get());
+  cmdEncoder->bindTexture(0, BindTarget::kFragment, inputTexture_.get());
+  cmdEncoder->bindSamplerState(0, BindTarget::kFragment, sampler_.get());
 
   // Draw 2 instances of the same triangle strip
   cmdEncoder->draw(4, 2);
@@ -311,8 +311,8 @@ TEST_F(RenderCommandAdapterOGLTest, DrawElementsInstanced) {
   cmdEncoder->bindRenderPipelineState(pipelineState_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimplePosIndex, *vb_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimpleUvIndex, *uvb_);
-  cmdEncoder->bindTexture(0, igl::BindTarget::kFragment, inputTexture_.get());
-  cmdEncoder->bindSamplerState(0, igl::BindTarget::kFragment, sampler_.get());
+  cmdEncoder->bindTexture(0, BindTarget::kFragment, inputTexture_.get());
+  cmdEncoder->bindSamplerState(0, BindTarget::kFragment, sampler_.get());
   cmdEncoder->bindIndexBuffer(*ib_, IndexFormat::UInt16);
 
   cmdEncoder->drawIndexed(6, 2);
@@ -343,8 +343,8 @@ TEST_F(RenderCommandAdapterOGLTest, DrawCountIncrement) {
   cmdEncoder->bindRenderPipelineState(pipelineState_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimplePosIndex, *vb_);
   cmdEncoder->bindVertexBuffer(data::shader::kSimpleUvIndex, *uvb_);
-  cmdEncoder->bindTexture(0, igl::BindTarget::kFragment, inputTexture_.get());
-  cmdEncoder->bindSamplerState(0, igl::BindTarget::kFragment, sampler_.get());
+  cmdEncoder->bindTexture(0, BindTarget::kFragment, inputTexture_.get());
+  cmdEncoder->bindSamplerState(0, BindTarget::kFragment, sampler_.get());
   cmdEncoder->bindIndexBuffer(*ib_, IndexFormat::UInt16);
 
   cmdEncoder->drawIndexed(6);
