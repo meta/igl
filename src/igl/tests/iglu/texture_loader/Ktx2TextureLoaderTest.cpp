@@ -90,11 +90,10 @@ uint32_t getTotalDataSize(uint32_t vkFormat,
                           uint32_t width,
                           uint32_t height,
                           uint32_t numMipLevels) {
-  const auto format =
-      igl::vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(vkFormat));
+  const auto format = vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(vkFormat));
   const auto properties = igl::TextureFormatProperties::fromTextureFormat(format);
 
-  const auto range = igl::TextureRangeDesc::new2D(0, 0, std::max(width, 1u), std::max(height, 1u));
+  const auto range = TextureRangeDesc::new2D(0, 0, std::max(width, 1u), std::max(height, 1u));
 
   const uint32_t mipLevelAlignment = std::lcm(static_cast<uint32_t>(properties.bytesPerBlock), 4u);
 
@@ -118,8 +117,7 @@ void putDfd(std::vector<uint8_t>& buffer, uint32_t vkFormat, uint32_t numMipLeve
               vkFormat == VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK ||
               vkFormat == VK_FORMAT_R8G8B8A8_UNORM);
 
-  const auto format =
-      igl::vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(vkFormat));
+  const auto format = vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(vkFormat));
   const auto properties = igl::TextureFormatProperties::fromTextureFormat(format);
 
   const uint16_t descriptorType = 0;
@@ -221,13 +219,13 @@ void putMipLevel(std::vector<uint8_t>& buffer,
                  uint32_t imageSize) {
   const auto* header = reinterpret_cast<const iglu::textureloader::ktx2::Header*>(buffer.data());
   const auto format =
-      igl::vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(header->vkFormat));
+      vulkan::util::vkTextureFormatToTextureFormat(static_cast<int32_t>(header->vkFormat));
   const auto properties = igl::TextureFormatProperties::fromTextureFormat(format);
 
-  const auto range = igl::TextureRangeDesc::new2D(
+  const auto range = TextureRangeDesc::new2D(
       0, 0, std::max(header->pixelWidth, 1u), std::max(header->pixelHeight, 1u));
 
-  const uint32_t maxMipLevels = igl::TextureDesc::calcNumMipLevels(range.width, range.height);
+  const uint32_t maxMipLevels = TextureDesc::calcNumMipLevels(range.width, range.height);
   const uint32_t levelCount = std::min(maxMipLevels, header->levelCount);
 
   const uint32_t mipLevelAlignment = std::lcm(static_cast<uint32_t>(properties.bytesPerBlock), 4u);

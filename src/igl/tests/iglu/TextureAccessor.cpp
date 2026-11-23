@@ -51,8 +51,7 @@ class TextureAccessorTest : public ::testing::Test {
 
     // Initialize texture data
     textureSizeInBytes_ = texture_->getProperties().getBytesPerRange(texture_->getFullRange());
-    const auto range =
-        igl::TextureRangeDesc::new2D(0, 0, OFFSCREEN_TEX_WIDTH, OFFSCREEN_TEX_HEIGHT);
+    const auto range = TextureRangeDesc::new2D(0, 0, OFFSCREEN_TEX_WIDTH, OFFSCREEN_TEX_HEIGHT);
     texture_->upload(range, data::texture::kTexRgba2x2.data());
   }
 

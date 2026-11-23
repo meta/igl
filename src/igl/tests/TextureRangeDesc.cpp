@@ -335,7 +335,7 @@ TEST(TextureRangeDesc, WithNumFaces) {
 }
 
 TEST(TextureRangeDesc, Validate) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
   constexpr size_t kMax = std::numeric_limits<uint32_t>::max();
   constexpr size_t kMaxPlus1 = std::numeric_limits<uint32_t>::max() + 1;
   // Overflow validation logic doesn't work on 32bit architectures

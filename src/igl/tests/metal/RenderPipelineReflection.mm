@@ -79,10 +79,10 @@ class RenderPipelineReflectionMTLTest : public ::testing::Test {
     NSError* error = nullptr;
     MTLRenderPipelineDescriptor* metalDesc = [MTLRenderPipelineDescriptor new];
     metalDesc.vertexDescriptor =
-        static_cast<igl::metal::VertexInputState*>(vertexInputState_.get())->get();
-    metalDesc.vertexFunction = static_cast<igl::metal::ShaderModule*>(vertShader_.get())->get();
+        static_cast<metal::VertexInputState*>(vertexInputState_.get())->get();
+    metalDesc.vertexFunction = static_cast<metal::ShaderModule*>(vertShader_.get())->get();
     IGL_DEBUG_ASSERT(metalDesc.vertexFunction, "RenderPipeline requires non-null vertex function");
-    metalDesc.fragmentFunction = static_cast<igl::metal::ShaderModule*>(fragShader_.get())->get();
+    metalDesc.fragmentFunction = static_cast<metal::ShaderModule*>(fragShader_.get())->get();
     metalDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
     metalDesc.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
 
@@ -244,9 +244,9 @@ class RenderPipelineReflectionMTLArrayTest : public ::testing::Test {
     NSError* error = nullptr;
     MTLRenderPipelineDescriptor* metalDesc = [MTLRenderPipelineDescriptor new];
     metalDesc.vertexDescriptor =
-        static_cast<igl::metal::VertexInputState*>(vertexInputState_.get())->get();
-    metalDesc.vertexFunction = static_cast<igl::metal::ShaderModule*>(vertShader_.get())->get();
-    metalDesc.fragmentFunction = static_cast<igl::metal::ShaderModule*>(fragShader_.get())->get();
+        static_cast<metal::VertexInputState*>(vertexInputState_.get())->get();
+    metalDesc.vertexFunction = static_cast<metal::ShaderModule*>(vertShader_.get())->get();
+    metalDesc.fragmentFunction = static_cast<metal::ShaderModule*>(fragShader_.get())->get();
     metalDesc.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
 
     MTLRenderPipelineReflection* reflection = nil;

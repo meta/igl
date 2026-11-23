@@ -115,7 +115,7 @@ TEST_F(TextureMTLTest, GetMipmapsCount) {
   // Wait for completion
   const CommandBufferDesc desc = {};
   const std::shared_ptr<ICommandBuffer> cmdBuf = cmdQueue_->createCommandBuffer(desc, &res);
-  id<MTLCommandBuffer> mtlCmdBuf = static_cast<igl::metal::CommandBuffer&>(*cmdBuf).get();
+  id<MTLCommandBuffer> mtlCmdBuf = static_cast<metal::CommandBuffer&>(*cmdBuf).get();
   [mtlCmdBuf commit];
   cmdBuf->waitUntilCompleted();
 
@@ -331,7 +331,7 @@ std::shared_ptr<ITexture> createCVPixelBufferTextureWithSize(TextureFormat forma
   CVPixelBufferRef pixelBuffer = nullptr;
   NSDictionary* bufferAttributes = @{
     (NSString*)kCVPixelBufferIOSurfacePropertiesKey : @{},
-    (NSString*)kCVPixelBufferMetalCompatibilityKey : @(backend == igl::BackendType::Metal),
+    (NSString*)kCVPixelBufferMetalCompatibilityKey : @(backend == BackendType::Metal),
   };
 
   const CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault,
@@ -347,7 +347,7 @@ std::shared_ptr<ITexture> createCVPixelBufferTextureWithSize(TextureFormat forma
     return nullptr;
   }
 
-  auto* platformDevice = device->getPlatformDevice<igl::metal::PlatformDevice>();
+  auto* platformDevice = device->getPlatformDevice<metal::PlatformDevice>();
   std::shared_ptr<ITexture> texture =
       platformDevice->createTextureFromNativePixelBuffer(pixelBuffer, format, 0, &outResult);
   if (!outResult.isOk()) {
@@ -382,7 +382,7 @@ TEST_F(TextureMTLTest, createTextureFromNativePixelBufferWithInvalidFormat) {
 }
 
 TEST_F(TextureMTLTest, resetNativeTextureCacheAllowsBufferReuse) {
-  auto* platformDevice = device_->getPlatformDevice<igl::metal::PlatformDevice>();
+  auto* platformDevice = device_->getPlatformDevice<metal::PlatformDevice>();
   platformDevice->resetNativeTextureCache();
   Result result;
   @autoreleasepool {
@@ -419,7 +419,7 @@ TEST_F(TextureMTLTest, createTextureFromNativePixelBufferWithInvalidPlaneSetsErr
                           &pixelBuffer);
   ASSERT_EQ(pixelBufferResult, kCVReturnSuccess);
 
-  auto* platformDevice = device_->getPlatformDevice<igl::metal::PlatformDevice>();
+  auto* platformDevice = device_->getPlatformDevice<metal::PlatformDevice>();
   Result result;
   auto texture = platformDevice->createTextureFromNativePixelBuffer(
       pixelBuffer, TextureFormat::BGRA_UNorm8, 1, &result);

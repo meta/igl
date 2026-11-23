@@ -50,10 +50,10 @@ constexpr uint32_t GL_COMPRESSED_RGB8_ETC2 = 0x9274;
 void putMipLevel(std::vector<uint8_t>& buffer, uint32_t mipLevel, uint32_t imageSize) {
   const auto* header = reinterpret_cast<const iglu::textureloader::ktx1::Header*>(buffer.data());
 
-  const auto range = igl::TextureRangeDesc::new2D(
+  const auto range = TextureRangeDesc::new2D(
       0, 0, std::max(header->pixelWidth, 1u), std::max(header->pixelHeight, 1u));
 
-  const auto format = igl::opengl::util::glTextureFormatToTextureFormat(
+  const auto format = opengl::util::glTextureFormatToTextureFormat(
       header->glInternalFormat, header->glFormat, header->glType);
   const auto properties = igl::TextureFormatProperties::fromTextureFormat(format);
 

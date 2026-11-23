@@ -38,17 +38,17 @@ TEST_F(DepthStencilStateMTLTest, StencilOpConversionToMTL) {
   ASSERT_EQ(mtlStencilOperation, MTLStencilOperationKeep);
 
   const std::vector<StencilOpConversion> conversions{
-      StencilOpConversion{.igl = igl::StencilOperation::Keep, .mtl = MTLStencilOperationKeep},
-      StencilOpConversion{.igl = igl::StencilOperation::Zero, .mtl = MTLStencilOperationZero},
-      StencilOpConversion{.igl = igl::StencilOperation::Replace, .mtl = MTLStencilOperationReplace},
-      StencilOpConversion{.igl = igl::StencilOperation::IncrementClamp,
+      StencilOpConversion{.igl = StencilOperation::Keep, .mtl = MTLStencilOperationKeep},
+      StencilOpConversion{.igl = StencilOperation::Zero, .mtl = MTLStencilOperationZero},
+      StencilOpConversion{.igl = StencilOperation::Replace, .mtl = MTLStencilOperationReplace},
+      StencilOpConversion{.igl = StencilOperation::IncrementClamp,
                           .mtl = MTLStencilOperationIncrementClamp},
-      StencilOpConversion{.igl = igl::StencilOperation::DecrementClamp,
+      StencilOpConversion{.igl = StencilOperation::DecrementClamp,
                           .mtl = MTLStencilOperationDecrementClamp},
-      StencilOpConversion{.igl = igl::StencilOperation::Invert, .mtl = MTLStencilOperationInvert},
-      StencilOpConversion{.igl = igl::StencilOperation::IncrementWrap,
+      StencilOpConversion{.igl = StencilOperation::Invert, .mtl = MTLStencilOperationInvert},
+      StencilOpConversion{.igl = StencilOperation::IncrementWrap,
                           .mtl = MTLStencilOperationIncrementWrap},
-      StencilOpConversion{.igl = igl::StencilOperation::DecrementWrap,
+      StencilOpConversion{.igl = StencilOperation::DecrementWrap,
                           .mtl = MTLStencilOperationDecrementWrap},
   };
 
@@ -65,23 +65,20 @@ TEST_F(DepthStencilStateMTLTest, StencilOpConversionToMTL) {
 //
 TEST_F(DepthStencilStateMTLTest, CompareFunctionToMTL) {
   struct CompareFuncConversion {
-    CompareFunction igl = igl::CompareFunction::Never;
+    CompareFunction igl = CompareFunction::Never;
     MTLCompareFunction mtl = MTLCompareFunctionNever;
   };
 
   const std::vector<CompareFuncConversion> conversions{
-      CompareFuncConversion{.igl = igl::CompareFunction::Never, .mtl = MTLCompareFunctionNever},
-      CompareFuncConversion{.igl = igl::CompareFunction::Less, .mtl = MTLCompareFunctionLess},
-      CompareFuncConversion{.igl = igl::CompareFunction::Equal, .mtl = MTLCompareFunctionEqual},
-      CompareFuncConversion{.igl = igl::CompareFunction::LessEqual,
-                            .mtl = MTLCompareFunctionLessEqual},
-      CompareFuncConversion{.igl = igl::CompareFunction::Greater, .mtl = MTLCompareFunctionGreater},
-      CompareFuncConversion{.igl = igl::CompareFunction::NotEqual,
-                            .mtl = MTLCompareFunctionNotEqual},
-      CompareFuncConversion{.igl = igl::CompareFunction::GreaterEqual,
+      CompareFuncConversion{.igl = CompareFunction::Never, .mtl = MTLCompareFunctionNever},
+      CompareFuncConversion{.igl = CompareFunction::Less, .mtl = MTLCompareFunctionLess},
+      CompareFuncConversion{.igl = CompareFunction::Equal, .mtl = MTLCompareFunctionEqual},
+      CompareFuncConversion{.igl = CompareFunction::LessEqual, .mtl = MTLCompareFunctionLessEqual},
+      CompareFuncConversion{.igl = CompareFunction::Greater, .mtl = MTLCompareFunctionGreater},
+      CompareFuncConversion{.igl = CompareFunction::NotEqual, .mtl = MTLCompareFunctionNotEqual},
+      CompareFuncConversion{.igl = CompareFunction::GreaterEqual,
                             .mtl = MTLCompareFunctionGreaterEqual},
-      CompareFuncConversion{.igl = igl::CompareFunction::AlwaysPass,
-                            .mtl = MTLCompareFunctionAlways},
+      CompareFuncConversion{.igl = CompareFunction::AlwaysPass, .mtl = MTLCompareFunctionAlways},
   };
 
   for (auto data : conversions) {

@@ -25,7 +25,7 @@ class ManagedUniformBufferTest : public ::testing::Test {
   // Set up common resources. This will create a device and a command queue
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
   }

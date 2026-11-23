@@ -207,7 +207,7 @@ TEST_F(WebPTextureLoaderTest, PreferredFormatIsRespected) {
   Result ret;
   const auto reader = *iglu::textureloader::DataReader::tryCreate(
       buffer.data(), static_cast<uint32_t>(buffer.size()), nullptr);
-  const auto loader = factory_.tryCreate(reader, igl::TextureFormat::RGBA_SRGB, &ret);
+  const auto loader = factory_.tryCreate(reader, TextureFormat::RGBA_SRGB, &ret);
   ASSERT_NE(loader, nullptr);
   ASSERT_TRUE(ret.isOk()) << ret.message;
 

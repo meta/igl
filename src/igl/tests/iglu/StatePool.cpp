@@ -81,7 +81,7 @@ class StatePoolTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = TextureFormat::RGBA_UNorm8}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
 
@@ -89,7 +89,7 @@ class StatePoolTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = TextureFormat::RGBA_UNorm8}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
 
@@ -97,7 +97,7 @@ class StatePoolTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = TextureFormat::RGBA_UNorm8}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }
@@ -157,7 +157,7 @@ TEST_F(StatePoolTest, renderPipelineDescCaching1) {
   //------------------------------------------------------------
   // Modify one of the descriptors, should get different objects
   //------------------------------------------------------------
-  renderPipelineDesc2_.cullMode = igl::CullMode::Front;
+  renderPipelineDesc2_.cullMode = CullMode::Front;
 
   ps2 = graphicsPool_.getOrCreate(*iglDev_, renderPipelineDesc2_, &ret);
   ASSERT_EQ(ret.code, Result::Code::Ok);
@@ -180,8 +180,8 @@ TEST_F(StatePoolTest, renderPipelineDescCachingLRU1) {
   //------------------------------------------------------------
   iglu::state_pool::RenderPipelineStatePool smallCachePool;
   smallCachePool.setCacheSize(2);
-  renderPipelineDesc2_.cullMode = igl::CullMode::Front;
-  renderPipelineDesc3_.cullMode = igl::CullMode::Back;
+  renderPipelineDesc2_.cullMode = CullMode::Front;
+  renderPipelineDesc3_.cullMode = CullMode::Back;
 
   // Fill up the cache
   ps1 = iglDev_->createRenderPipeline(renderPipelineDesc1_, &ret);

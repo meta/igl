@@ -23,7 +23,7 @@ TEST(PrimitiveDescTest, DefaultConstruction) {
 
 TEST(PrimitiveDescTest, DesignatedInitializer) {
   const iglu::vertexdata::PrimitiveDesc desc{
-      .numEntries = 42, .offset = 10, .frontFaceWinding = igl::WindingMode::Clockwise};
+      .numEntries = 42, .offset = 10, .frontFaceWinding = WindingMode::Clockwise};
   EXPECT_EQ(desc.numEntries, 42u);
   EXPECT_EQ(desc.offset, 10u);
   EXPECT_EQ(desc.frontFaceWinding, igl::WindingMode::Clockwise);
@@ -31,7 +31,7 @@ TEST(PrimitiveDescTest, DesignatedInitializer) {
 
 TEST(PrimitiveDescTest, CopyPreservesFields) {
   const iglu::vertexdata::PrimitiveDesc original{
-      .numEntries = 99, .offset = 7, .frontFaceWinding = igl::WindingMode::Clockwise};
+      .numEntries = 99, .offset = 7, .frontFaceWinding = WindingMode::Clockwise};
   const iglu::vertexdata::PrimitiveDesc copy = original;
   EXPECT_EQ(copy.numEntries, original.numEntries);
   EXPECT_EQ(copy.offset, original.offset);
@@ -143,8 +143,7 @@ TEST(DepthTestConfigTest, AllValuesDistinct) {
 // --- BlendMode two-argument constructor ---
 
 TEST(BlendModeConstructionTest, TwoArgSetsSymmetricBlendFactors) {
-  const iglu::material::BlendMode mode(igl::BlendFactor::SrcAlpha,
-                                       igl::BlendFactor::OneMinusSrcAlpha);
+  const iglu::material::BlendMode mode(BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha);
   EXPECT_EQ(mode.srcRGB, igl::BlendFactor::SrcAlpha);
   EXPECT_EQ(mode.dstRGB, igl::BlendFactor::OneMinusSrcAlpha);
   EXPECT_EQ(mode.opRGB, igl::BlendOp::Add);

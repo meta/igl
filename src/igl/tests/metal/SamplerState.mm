@@ -18,12 +18,12 @@ class SamplerStateMTLTest : public ::testing::Test {
   void SetUp() override {
     setDebugBreakEnabled(false);
 
-    samplerState_ = std::make_shared<igl::metal::SamplerState>(nil);
+    samplerState_ = std::make_shared<metal::SamplerState>(nil);
   }
   void TearDown() override {}
 
  protected:
-  std::shared_ptr<igl::metal::SamplerState> samplerState_;
+  std::shared_ptr<metal::SamplerState> samplerState_;
 };
 
 TEST_F(SamplerStateMTLTest, ConvertMinMagFilter) {

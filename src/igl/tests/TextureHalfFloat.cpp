@@ -114,7 +114,7 @@ class TextureHalfFloatTest : public ::testing::Test {
         .uniforms = {
             UniformDesc{
                 .name = "layer",
-                .type = igl::UniformType::Int,
+                .type = UniformType::Int,
                 .offset = offsetof(VertexUniforms, layer),
             },
         }};
@@ -162,7 +162,7 @@ class TextureHalfFloatTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }
@@ -193,7 +193,7 @@ class TextureHalfFloatTest : public ::testing::Test {
     }
 
     Result ret;
-    createPassthroughFrameBuffer(igl::TextureFormat::RGBA_F16);
+    createPassthroughFrameBuffer(TextureFormat::RGBA_F16);
 
     // Initialize render pass descriptor
     renderPass_ = {
@@ -406,26 +406,26 @@ void runUploadTest(IDevice& device,
 }
 } // namespace
 TEST_F(TextureHalfFloatTest, UploadRGBA16) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RGBA_F16, kTextureDataRGBAHalf.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RGBA_F16, kTextureDataRGBAHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, UploadRGB16) {
   if (iglDev_->getBackendType() == BackendType::Vulkan ||
       iglDev_->getBackendType() == BackendType::Metal ||
       iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES ||
-      iglDev_->getTextureFormatCapabilities(igl::TextureFormat::RGB_F16) ==
+      iglDev_->getTextureFormatCapabilities(TextureFormat::RGB_F16) ==
           ICapabilities::TextureFormatCapabilityBits::Unsupported) {
     GTEST_SKIP() << "Skip due to lack of support for RGB";
   }
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RGB_F16, kTextureDataRGBHalf.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RGB_F16, kTextureDataRGBHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, UploadRG16) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RG_F16, kTextureDataRGHalf.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RG_F16, kTextureDataRGHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, UploadR16) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::R_F16, kTextureDataRHalf.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::R_F16, kTextureDataRHalf.data());
 }
 
 //
@@ -436,7 +436,7 @@ TEST_F(TextureHalfFloatTest, UploadR16) {
 //
 
 TEST_F(TextureHalfFloatTest, PassthroughSampleRGBA16) {
-  runPassthroughFormat(igl::TextureFormat::RGBA_F16, kTextureDataRGBAHalf.data());
+  runPassthroughFormat(TextureFormat::RGBA_F16, kTextureDataRGBAHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, PassthroughSampleRGB16) {
@@ -450,11 +450,11 @@ TEST_F(TextureHalfFloatTest, PassthroughSampleRGB16) {
       iglDev_->getBackendType() == BackendType::OpenGL ||
 #endif
       iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES ||
-      iglDev_->getTextureFormatCapabilities(igl::TextureFormat::RGB_F16) ==
+      iglDev_->getTextureFormatCapabilities(TextureFormat::RGB_F16) ==
           ICapabilities::TextureFormatCapabilityBits::Unsupported) {
     GTEST_SKIP() << "Skip due to lack of support for RGB";
   }
-  runPassthroughFormat(igl::TextureFormat::RGB_F16, kTextureDataRGBHalf.data());
+  runPassthroughFormat(TextureFormat::RGB_F16, kTextureDataRGBHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, PassthroughSampleRG16) {
@@ -463,7 +463,7 @@ TEST_F(TextureHalfFloatTest, PassthroughSampleRG16) {
     GTEST_SKIP() << "Skip due to lack of support for RG on mac OpenGL";
   }
 #endif
-  runPassthroughFormat(igl::TextureFormat::RG_F16, kTextureDataRGHalf.data());
+  runPassthroughFormat(TextureFormat::RG_F16, kTextureDataRGHalf.data());
 }
 
 TEST_F(TextureHalfFloatTest, PassthroughSampleR16) {
@@ -472,7 +472,7 @@ TEST_F(TextureHalfFloatTest, PassthroughSampleR16) {
     GTEST_SKIP() << "Skip due to lack of support for RG on mac OpenGL";
   }
 #endif
-  runPassthroughFormat(igl::TextureFormat::R_F16, kTextureDataRHalf.data());
+  runPassthroughFormat(TextureFormat::R_F16, kTextureDataRHalf.data());
 }
 
 } // namespace igl::tests

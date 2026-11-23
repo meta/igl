@@ -61,7 +61,7 @@ class BitmapWriterTest : public ::testing::Test {
     }
 
     // Initialize texture data
-    const auto range = igl::TextureRangeDesc::new2D(0, 0, kTexWidth, kTexWidth);
+    const auto range = TextureRangeDesc::new2D(0, 0, kTexWidth, kTexWidth);
     texture_->upload(range, data.data());
   }
 

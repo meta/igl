@@ -56,7 +56,7 @@ class ShaderUniformsTest : public ::testing::Test {
   // Set up common resources. This will create a device and a command queue
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
   }
@@ -144,12 +144,12 @@ TEST_F(ShaderUniformsTest, SettersCoverage) {
 // Test construction with vertex-stage uniform buffer
 TEST_F(ShaderUniformsTest, ConstructWithVertexStageBuffer) {
   BufferArgDesc vertexBuffer{
-      .name = igl::genNameHandle("vertexUniforms"),
+      .name = genNameHandle("vertexUniforms"),
       .bufferDataSize = 64,
       .bufferIndex = 0,
       .shaderStage = ShaderStage::Vertex,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("modelMatrix"),
+      .members = {{.name = genNameHandle("modelMatrix"),
                    .type = UniformType::Mat4x4,
                    .offset = 0,
                    .arrayLength = 1}},
@@ -166,18 +166,18 @@ TEST_F(ShaderUniformsTest, ConstructWithVertexStageBuffer) {
   // Verify uniform was registered and is accessible
   const iglu::simdtypes::float4 col = {1.0f, 0.0f, 0.0f, 0.0f};
   const iglu::simdtypes::float4x4 identity(col, col, col, col);
-  shaderUniforms.setFloat4x4(igl::genNameHandle("modelMatrix"), identity);
+  shaderUniforms.setFloat4x4(genNameHandle("modelMatrix"), identity);
 }
 
 // Test construction with fragment-stage uniform buffer
 TEST_F(ShaderUniformsTest, ConstructWithFragmentStageBuffer) {
   BufferArgDesc fragmentBuffer{
-      .name = igl::genNameHandle("fragmentUniforms"),
+      .name = genNameHandle("fragmentUniforms"),
       .bufferDataSize = 16,
       .bufferIndex = 1,
       .shaderStage = ShaderStage::Fragment,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("color"),
+      .members = {{.name = genNameHandle("color"),
                    .type = UniformType::Float4,
                    .offset = 0,
                    .arrayLength = 1}},
@@ -193,34 +193,34 @@ TEST_F(ShaderUniformsTest, ConstructWithFragmentStageBuffer) {
 
   // Verify uniform was registered and is accessible
   const iglu::simdtypes::float4 redColor = {1.0f, 0.0f, 0.0f, 1.0f};
-  shaderUniforms.setFloat4(igl::genNameHandle("color"), redColor);
+  shaderUniforms.setFloat4(genNameHandle("color"), redColor);
 }
 
 // Test construction with both vertex and fragment stage buffers
 TEST_F(ShaderUniformsTest, ConstructWithMixedStageBuffers) {
   BufferArgDesc vertexBuffer{
-      .name = igl::genNameHandle("vertexUniforms"),
+      .name = genNameHandle("vertexUniforms"),
       .bufferDataSize = 64,
       .bufferIndex = 0,
       .shaderStage = ShaderStage::Vertex,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("mvpMatrix"),
+      .members = {{.name = genNameHandle("mvpMatrix"),
                    .type = UniformType::Mat4x4,
                    .offset = 0,
                    .arrayLength = 1}},
   };
 
   BufferArgDesc fragmentBuffer{
-      .name = igl::genNameHandle("fragmentUniforms"),
+      .name = genNameHandle("fragmentUniforms"),
       .bufferDataSize = 20,
       .bufferIndex = 1,
       .shaderStage = ShaderStage::Fragment,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("baseColor"),
+      .members = {{.name = genNameHandle("baseColor"),
                    .type = UniformType::Float4,
                    .offset = 0,
                    .arrayLength = 1},
-                  {.name = igl::genNameHandle("roughness"),
+                  {.name = genNameHandle("roughness"),
                    .type = UniformType::Float,
                    .offset = 16,
                    .arrayLength = 1}},
@@ -237,28 +237,28 @@ TEST_F(ShaderUniformsTest, ConstructWithMixedStageBuffers) {
   // Verify both stages' uniforms are accessible
   const iglu::simdtypes::float4 col = {1.0f, 0.0f, 0.0f, 0.0f};
   const iglu::simdtypes::float4x4 matrix(col, col, col, col);
-  shaderUniforms.setFloat4x4(igl::genNameHandle("mvpMatrix"), matrix);
+  shaderUniforms.setFloat4x4(genNameHandle("mvpMatrix"), matrix);
 
   const iglu::simdtypes::float4 color = {0.5f, 0.5f, 0.5f, 1.0f};
-  shaderUniforms.setFloat4(igl::genNameHandle("baseColor"), color);
+  shaderUniforms.setFloat4(genNameHandle("baseColor"), color);
 
   const iglu::simdtypes::float1 roughness = 0.8f;
-  shaderUniforms.setFloat(igl::genNameHandle("roughness"), roughness);
+  shaderUniforms.setFloat(genNameHandle("roughness"), roughness);
 }
 
 // Test construction with multiple members in a single buffer
 TEST_F(ShaderUniformsTest, ConstructWithMultiMemberBuffer) {
   BufferArgDesc buffer{
-      .name = igl::genNameHandle("perFrameUniforms"),
+      .name = genNameHandle("perFrameUniforms"),
       .bufferDataSize = 128,
       .bufferIndex = 0,
       .shaderStage = ShaderStage::Vertex,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("modelMatrix"),
+      .members = {{.name = genNameHandle("modelMatrix"),
                    .type = UniformType::Mat4x4,
                    .offset = 0,
                    .arrayLength = 1},
-                  {.name = igl::genNameHandle("viewMatrix"),
+                  {.name = genNameHandle("viewMatrix"),
                    .type = UniformType::Mat4x4,
                    .offset = 64,
                    .arrayLength = 1}},
@@ -275,8 +275,8 @@ TEST_F(ShaderUniformsTest, ConstructWithMultiMemberBuffer) {
   // Both members should be settable
   const iglu::simdtypes::float4 col = {1.0f, 0.0f, 0.0f, 0.0f};
   const iglu::simdtypes::float4x4 identity(col, col, col, col);
-  shaderUniforms.setFloat4x4(igl::genNameHandle("modelMatrix"), identity);
-  shaderUniforms.setFloat4x4(igl::genNameHandle("viewMatrix"), identity);
+  shaderUniforms.setFloat4x4(genNameHandle("modelMatrix"), identity);
+  shaderUniforms.setFloat4x4(genNameHandle("viewMatrix"), identity);
 }
 
 // Drives a real uniform-buffer upload on Vulkan through bind(). setFloat4() copies the
@@ -285,12 +285,12 @@ TEST_F(ShaderUniformsTest, ConstructWithMultiMemberBuffer) {
 // static_cast<uint8_t*>(allocation->ptr) + suballocation-offset source pointer in
 // bindBuffer(). Suballocation slot 1 is selected so a non-zero offset is exercised.
 TEST_F(ShaderUniformsTest, BindUploadsSuballocatedUniformBuffer) {
-  if (iglDev_->getBackendType() != igl::BackendType::Vulkan) {
+  if (iglDev_->getBackendType() != BackendType::Vulkan) {
     GTEST_SKIP() << "Suballocated uniform-buffer upload path is Vulkan-only";
   }
 
-  const NameHandle blockName = igl::genNameHandle("FragmentUniforms");
-  const NameHandle memberName = igl::genNameHandle("color");
+  const NameHandle blockName = genNameHandle("FragmentUniforms");
+  const NameHandle memberName = genNameHandle("color");
   const BufferArgDesc fragmentBuffer{
       .name = blockName,
       .bufferDataSize = 16,
@@ -374,7 +374,7 @@ TEST_F(ShaderUniformsTest, BindUploadsSuballocatedUniformBuffer) {
       .vertexInputState = vertexInputState,
       .shaderStages = shaderStages,
       .targetDesc = {.colorAttachments = {{.textureFormat = offscreen->getFormat()}}},
-      .cullMode = igl::CullMode::Disabled,
+      .cullMode = CullMode::Disabled,
       .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
   };
   std::shared_ptr<IRenderPipelineState> pipelineState =
@@ -411,12 +411,12 @@ namespace {
 
 TestRenderPipelineReflection colorBlockReflection() {
   const BufferArgDesc fragmentBuffer{
-      .name = igl::genNameHandle("FragmentUniforms"),
+      .name = genNameHandle("FragmentUniforms"),
       .bufferDataSize = 16,
       .bufferIndex = 0,
       .shaderStage = ShaderStage::Fragment,
       .isUniformBlock = true,
-      .members = {{.name = igl::genNameHandle("color"),
+      .members = {{.name = genNameHandle("color"),
                    .type = UniformType::Float4,
                    .offset = 0,
                    .arrayLength = 1}},
@@ -471,7 +471,7 @@ TEST_F(ShaderUniformsTest, CommandBufferModeUploadsInUpdate) {
   IBuffer& uniformBuffer = *device.createdBuffer;
 
   const iglu::simdtypes::float4 color = {0.25f, 0.5f, 0.75f, 1.0f};
-  shaderUniforms.setFloat4(igl::genNameHandle("color"), color);
+  shaderUniforms.setFloat4(genNameHandle("color"), color);
 
   Result ret;
   const BufferDesc readbackDesc{
@@ -517,7 +517,7 @@ TEST_F(ShaderUniformsTest, CommandBufferModeUpdateRewritesUnchangedBuffers) {
   IBuffer& uniformBuffer = *device.createdBuffer;
 
   const iglu::simdtypes::float4 color = {0.25f, 0.5f, 0.75f, 1.0f};
-  shaderUniforms.setFloat4(igl::genNameHandle("color"), color);
+  shaderUniforms.setFloat4(genNameHandle("color"), color);
 
   Result ret;
   auto first = cmdQueue_->createCommandBuffer({}, &ret);

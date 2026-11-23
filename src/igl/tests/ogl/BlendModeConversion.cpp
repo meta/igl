@@ -23,7 +23,7 @@ class BlendModeConversionOGLTest : public ::testing::Test {
   BlendModeConversionOGLTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
   }
 
   void TearDown() override {}

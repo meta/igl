@@ -100,7 +100,7 @@ class ShaderCrossTest : public ::testing::Test {
   // Set up common resources. This will create a device and a command queue
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
   }
@@ -119,9 +119,9 @@ TEST_F(ShaderCrossTest, Construction) {
 
 TEST_F(ShaderCrossTest, EntryPointName) {
   const iglu::ShaderCross shaderCross(*iglDev_);
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     EXPECT_EQ(shaderCross.entryPointName(igl::ShaderStage::Vertex), "main0");
-  } else if (iglDev_->getBackendType() == igl::BackendType::OpenGL) {
+  } else if (iglDev_->getBackendType() == BackendType::OpenGL) {
     EXPECT_EQ(shaderCross.entryPointName(igl::ShaderStage::Vertex), "main");
   } else {
     EXPECT_EQ(shaderCross.entryPointName(igl::ShaderStage::Vertex), "");
@@ -131,32 +131,32 @@ TEST_F(ShaderCrossTest, EntryPointName) {
 TEST_F(ShaderCrossTest, CrossCompile) {
   const iglu::ShaderCross shaderCross(*iglDev_);
   Result res;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     const auto vs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanVertexShaderSource(false).c_str(), igl::ShaderStage::Vertex, &res);
+        getVulkanVertexShaderSource(false).c_str(), ShaderStage::Vertex, &res);
     EXPECT_TRUE(res.isOk());
     EXPECT_TRUE(!vs.empty());
 
     const auto fs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanFragmentShaderSource(), igl::ShaderStage::Fragment, &res);
+        getVulkanFragmentShaderSource(), ShaderStage::Fragment, &res);
     EXPECT_TRUE(res.isOk());
     EXPECT_TRUE(!fs.empty());
 
-  } else if (iglDev_->getBackendType() == igl::BackendType::OpenGL) {
+  } else if (iglDev_->getBackendType() == BackendType::OpenGL) {
     const auto vs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanVertexShaderSource(true).c_str(), igl::ShaderStage::Vertex, &res);
+        getVulkanVertexShaderSource(true).c_str(), ShaderStage::Vertex, &res);
     EXPECT_TRUE(res.isOk());
     EXPECT_TRUE(!vs.empty());
 
     const auto fs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanFragmentShaderSource(), igl::ShaderStage::Fragment, &res);
+        getVulkanFragmentShaderSource(), ShaderStage::Fragment, &res);
     EXPECT_TRUE(res.isOk());
     EXPECT_TRUE(!fs.empty());
   }
 }
 
 TEST_F(ShaderCrossTest, CrossCompileSubgroupArithmetic) {
-  if (iglDev_->getBackendType() != igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() != BackendType::Metal) {
     GTEST_SKIP() << "Subgroup arithmetic cross-compilation is only gated on the Metal path";
   }
 
@@ -167,7 +167,7 @@ TEST_F(ShaderCrossTest, CrossCompileSubgroupArithmetic) {
 
   Result res;
   const auto cs = shaderCross.crossCompileFromVulkanSource(
-      getVulkanSubgroupArithmeticComputeShaderSource(), igl::ShaderStage::Compute, &res);
+      getVulkanSubgroupArithmeticComputeShaderSource(), ShaderStage::Compute, &res);
   EXPECT_TRUE(res.isOk()) << res.message;
   EXPECT_TRUE(!cs.empty());
 }
@@ -195,13 +195,13 @@ TEST_F(ShaderCrossTest, CrossCompileRejectsSubpassInputs) {
   const iglu::ShaderCross shaderCross(*iglDev_);
   Result result;
   const std::string out = shaderCross.crossCompileFromVulkanSource(
-      getVulkanSubpassInputFragmentShaderSource(), igl::ShaderStage::Fragment, &result);
+      getVulkanSubpassInputFragmentShaderSource(), ShaderStage::Fragment, &result);
 
-  if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  if (iglDev_->getBackendType() == BackendType::Vulkan) {
     EXPECT_TRUE(result.isOk());
     EXPECT_EQ(out, getVulkanSubpassInputFragmentShaderSource());
-  } else if (iglDev_->getBackendType() == igl::BackendType::Metal ||
-             iglDev_->getBackendType() == igl::BackendType::OpenGL) {
+  } else if (iglDev_->getBackendType() == BackendType::Metal ||
+             iglDev_->getBackendType() == BackendType::OpenGL) {
     EXPECT_EQ(result.code, igl::Result::Code::Unsupported) << result.message;
     EXPECT_TRUE(out.empty());
     EXPECT_NE(result.message.find("subpass"), std::string::npos) << result.message;

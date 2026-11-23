@@ -38,7 +38,7 @@ TEST_F(DeviceMetalTest, GetShaderVersion) {
 }
 
 TEST_F(DeviceMetalTest, GetMostRecentCommandQueue) {
-  auto* metalDevice = static_cast<igl::metal::Device*>(iglDev_.get());
+  auto* metalDevice = static_cast<metal::Device*>(iglDev_.get());
 
   // Initially, no command queue should exist
   auto initialCmdQueue = metalDevice->getMostRecentCommandQueue();
