@@ -94,13 +94,13 @@ struct Vertex {
     bool stereoRendering) noexcept {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     IGL_DEBUG_ABORT("Metal is not supported");
     return nullptr;
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getVulkanVertexShaderSource(stereoRendering).c_str(),
@@ -110,23 +110,23 @@ struct Vertex {
         "main",
         "",
         nullptr);
-  case igl::BackendType::OpenGL: {
+  case BackendType::OpenGL: {
     Result res;
     const auto vs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanVertexShaderSource(stereoRendering).c_str(), igl::ShaderStage::Vertex, &res);
+        getVulkanVertexShaderSource(stereoRendering).c_str(), ShaderStage::Vertex, &res);
     IGL_DEBUG_ASSERT(res.isOk(), res.message.c_str());
 
     const auto fs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanFragmentShaderSource(), igl::ShaderStage::Fragment, &res);
+        getVulkanFragmentShaderSource(), ShaderStage::Fragment, &res);
     IGL_DEBUG_ASSERT(res.isOk(), res.message.c_str());
 
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         vs.c_str(),
-        shaderCross.entryPointName(igl::ShaderStage::Vertex),
+        shaderCross.entryPointName(ShaderStage::Vertex),
         "",
         fs.c_str(),
-        shaderCross.entryPointName(igl::ShaderStage::Fragment),
+        shaderCross.entryPointName(ShaderStage::Fragment),
         "",
         nullptr);
   }
@@ -342,8 +342,8 @@ void HandsOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
                 .depthAttachmentFormat =
                     framebuffer_[viewIndex]->getDepthAttachment()->getProperties().format,
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::CounterClockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::CounterClockwise,
     };
     pipelineState_ = getPlatform().getDevice().createRenderPipeline(graphicsDesc, nullptr);
   }
@@ -375,21 +375,21 @@ void HandsOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
       std::vector<UniformDesc>{UniformDesc{
                                    .name = "jointMatrices",
                                    .location = -1,
-                                   .type = igl::UniformType::Mat4x4,
+                                   .type = UniformType::Mat4x4,
                                    .numElements = kMaxJoints,
                                    .offset = offsetof(UniformBlock, jointMatrices),
                                    .elementStride = sizeof(glm::mat4),
                                },
                                UniformDesc{.name = "viewProjectionMatrix",
                                            .location = -1,
-                                           .type = igl::UniformType::Mat4x4,
+                                           .type = UniformType::Mat4x4,
                                            .numElements = 2,
                                            .offset = offsetof(UniformBlock, viewProjectionMatrix),
                                            .elementStride = sizeof(glm::mat4)},
                                UniformDesc{
                                    .name = "viewId",
                                    .location = -1,
-                                   .type = igl::UniformType::Int,
+                                   .type = UniformType::Int,
                                    .numElements = 1,
                                    .offset = offsetof(UniformBlock, viewId),
                                    .elementStride = 0,

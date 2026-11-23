@@ -143,14 +143,14 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource(),
                                                            "main",
@@ -162,15 +162,15 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL: {
+  case BackendType::OpenGL: {
 #if IGL_BACKEND_OPENGL
     auto glVersion =
-        static_cast<igl::opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
-    if (glVersion > igl::opengl::GLVersion::v2_1) {
-      auto usesOpenGLES = igl::opengl::DeviceFeatureSet::usesOpenGLES();
+        static_cast<opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
+    if (glVersion > opengl::GLVersion::v2_1) {
+      auto usesOpenGLES = opengl::DeviceFeatureSet::usesOpenGLES();
       std::string codeVS(getVulkanVertexShaderSource());
       stringReplaceAll(codeVS, "gl_VertexIndex", "gl_VertexID");
       stringReplaceAll(codeVS, "460", usesOpenGLES ? "300 es" : "410");
@@ -194,7 +194,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
     return nullptr;
 #endif // IGL_BACKEND_OPENGL
   }
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     // D3D12 instanced drawing shader
     // Note: D3D12 clip space Y is flipped vs Vulkan, so we negate Y to match Vulkan behavior
     static const char* kVS = R"(
@@ -283,7 +283,7 @@ void DrawInstancedSession::update(SurfaceTextures surfaceTextures) noexcept {
                 {},
                 {
                     .stride = sizeof(float) * 2,
-                    .sampleFunction = igl::VertexSampleFunction::Instance,
+                    .sampleFunction = VertexSampleFunction::Instance,
                 },
             },
     };

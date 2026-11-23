@@ -43,7 +43,7 @@ FunctionConstantValues getVertexSpecConstants() {
   FunctionConstantValues fcv;
   for (uint8_t v = 0; v < 3; ++v) {
     for (uint8_t c = 0; c < 3; ++c) {
-      fcv.setConstantValue(v * 3 + c, igl::ConstantValueType::Float1, &kVertexColors[v][c]);
+      fcv.setConstantValue(v * 3 + c, ConstantValueType::Float1, &kVertexColors[v][c]);
     }
   }
   return fcv;
@@ -188,15 +188,15 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   const BackendType backend = device.getBackendType();
   std::shared_ptr<IShaderModule> vertexModule;
   std::shared_ptr<IShaderModule> fragmentModule;
-  if (backend == igl::BackendType::Metal || backend == igl::BackendType::WebGPU) {
+  if (backend == BackendType::Metal || backend == BackendType::WebGPU) {
     auto library = igl::ShaderLibraryCreator::fromStringInput(
         device,
-        backend == igl::BackendType::Metal ? getMetalShaderSource().c_str()
-                                           : getWgslShaderSource().c_str(),
-        {{.stage = igl::ShaderStage::Vertex,
+        backend == BackendType::Metal ? getMetalShaderSource().c_str()
+                                      : getWgslShaderSource().c_str(),
+        {{.stage = ShaderStage::Vertex,
           .entryPoint = "vertexShader",
           .functionConstantValues = getVertexSpecConstants()},
-         {.stage = igl::ShaderStage::Fragment, .entryPoint = "fragmentShader"}},
+         {.stage = ShaderStage::Fragment, .entryPoint = "fragmentShader"}},
         "",
         nullptr);
     if (library) {
@@ -206,11 +206,11 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   }
 
   switch (backend) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource().c_str(),
                                                            "main",
@@ -222,11 +222,11 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
-  case igl::BackendType::WebGPU:
+  case BackendType::Metal:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromRenderModules(
         device, std::move(vertexModule), std::move(fragmentModule), nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -235,7 +235,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float4 color : COLOR; };
       struct VSOut { float4 position : SV_POSITION; float4 color : COLOR; };
@@ -352,10 +352,10 @@ void SpecConstantsSession::update(SurfaceTextures textures) noexcept {
                     .stencilAttachmentFormat =
                         framebuffer_->getStencilAttachment()
                             ? framebuffer_->getStencilAttachment()->getFormat()
-                            : igl::TextureFormat::Invalid,
+                            : TextureFormat::Invalid,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
         },
         nullptr);
     IGL_DEBUG_ASSERT(pipelineState_ != nullptr);

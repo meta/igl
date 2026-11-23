@@ -86,8 +86,8 @@ void DrawIndirectSession::initialize() noexcept {
   // Initialize render pass
   renderPass_ = {
       .colorAttachments = {{
-          .loadAction = igl::LoadAction::Clear,
-          .storeAction = igl::StoreAction::Store,
+          .loadAction = LoadAction::Clear,
+          .storeAction = StoreAction::Store,
           .clearColor = getPreferredClearColor(),
       }},
   };
@@ -189,8 +189,8 @@ void DrawIndirectSession::initialize() noexcept {
     shaderStages_ = iglu::spark_sl_compiler::compileShaderStages(
         device,
         getShaderSourceFactory()->makeFromModules(
-            {igl::shell::shaders::getDrawIndirectSessionVertModuleDescription(),
-             igl::shell::shaders::getDrawIndirectSessionFragModuleDescription()}),
+            {shaders::getDrawIndirectSessionVertModuleDescription(),
+             shaders::getDrawIndirectSessionFragModuleDescription()}),
         false /* autoReorderModules */,
         spark_sl::backend::CapabilityFlags{},
         {},
@@ -201,8 +201,8 @@ void DrawIndirectSession::initialize() noexcept {
     shaderStagesAlt_ = iglu::spark_sl_compiler::compileShaderStages(
         device,
         getShaderSourceFactory()->makeFromModules(
-            {igl::shell::shaders::getDrawIndirectSessionVertModuleDescription(),
-             igl::shell::shaders::getDrawIndirectSessionAltFragModuleDescription()}),
+            {shaders::getDrawIndirectSessionVertModuleDescription(),
+             shaders::getDrawIndirectSessionAltFragModuleDescription()}),
         false /* autoReorderModules */,
         spark_sl::backend::CapabilityFlags{},
         {},
@@ -215,7 +215,7 @@ void DrawIndirectSession::initialize() noexcept {
     buildIndirectBufferStages_ = iglu::spark_sl_compiler::compileShaderStages(
         device,
         getShaderSourceFactory()->makeFromModules(
-            {igl::shell::shaders::getDrawIndirectSessionCompModuleDescription()}),
+            {shaders::getDrawIndirectSessionCompModuleDescription()}),
         false /* autoReorderModules */,
         spark_sl::backend::CapabilityFlags{},
         {},
@@ -264,8 +264,8 @@ void DrawIndirectSession::update(SurfaceTextures surfaceTextures) noexcept {
                         },
                     },
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::CounterClockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::CounterClockwise,
     };
 
     pipelineState_ = device.createRenderPipeline(graphicsDesc, nullptr);
@@ -283,8 +283,8 @@ void DrawIndirectSession::update(SurfaceTextures surfaceTextures) noexcept {
                         },
                     },
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::CounterClockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::CounterClockwise,
     };
 
     pipelineStateAlt_ = device.createRenderPipeline(graphicsDesc, nullptr);

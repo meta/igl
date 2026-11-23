@@ -141,7 +141,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
 
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     taskShader = getMetalTaskShaderSource();
     meshShader = getMetalMeshShaderSource();
     fragmentShader = getMetalFragmentShaderSource();
@@ -150,7 +150,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
     fragmentShaderEntryPoint = "fragmentMain";
     break;
 
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     taskShader = getVulkanTaskShaderSource();
     meshShader = getVulkanMeshShaderSource();
     fragmentShader = getVulkanFragmentShaderSource();
@@ -171,19 +171,19 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   auto taskModule = igl::ShaderModuleCreator::fromStringInput(
       device,
       taskShader.c_str(),
-      {.stage = igl::ShaderStage::Task, .entryPoint = taskShaderEntryPoint},
+      {.stage = ShaderStage::Task, .entryPoint = taskShaderEntryPoint},
       "task shader",
       nullptr);
   auto meshModule = igl::ShaderModuleCreator::fromStringInput(
       device,
       meshShader.c_str(),
-      {.stage = igl::ShaderStage::Mesh, .entryPoint = meshShaderEntryPoint},
+      {.stage = ShaderStage::Mesh, .entryPoint = meshShaderEntryPoint},
       "mesh shader",
       nullptr);
   auto fragmentModule = igl::ShaderModuleCreator::fromStringInput(
       device,
       fragmentShader.c_str(),
-      {.stage = igl::ShaderStage::Fragment, .entryPoint = fragmentShaderEntryPoint},
+      {.stage = ShaderStage::Fragment, .entryPoint = fragmentShaderEntryPoint},
       "fragment shader",
       nullptr);
 
@@ -244,7 +244,7 @@ void MeshShaderTriangleSession::initialize() noexcept {
   const BufferDesc uboDesc{
       .type = igl::BufferDesc::BufferTypeBits::Uniform,
       .length = sizeof(glm::mat4),
-      .storage = igl::ResourceStorage::Shared,
+      .storage = ResourceStorage::Shared,
   };
   ubo_ = device.createBuffer(uboDesc, nullptr);
   IGL_DEBUG_ASSERT(ubo_ != nullptr);
@@ -278,8 +278,8 @@ void MeshShaderTriangleSession::update(SurfaceTextures surfaceTextures) noexcept
         .depthAttachment = {.texture = surfaceTextures.depth},
         .stencilAttachment =
             (surfaceTextures.depth && surfaceTextures.depth->getProperties().hasStencil())
-                ? igl::FramebufferDesc::AttachmentDesc{.texture = surfaceTextures.depth}
-                : igl::FramebufferDesc::AttachmentDesc{},
+                ? FramebufferDesc::AttachmentDesc{.texture = surfaceTextures.depth}
+                : FramebufferDesc::AttachmentDesc{},
     };
     framebuffer_ = getPlatform().getDevice().createFramebuffer(framebufferDesc, &ret);
     IGL_DEBUG_ASSERT(ret.isOk());
@@ -299,10 +299,10 @@ void MeshShaderTriangleSession::update(SurfaceTextures surfaceTextures) noexcept
                 .depthAttachmentFormat = framebuffer_->getDepthAttachment()->getFormat(),
                 .stencilAttachmentFormat = framebuffer_->getStencilAttachment()
                                                ? framebuffer_->getStencilAttachment()->getFormat()
-                                               : igl::TextureFormat::Invalid,
+                                               : TextureFormat::Invalid,
             },
-        .cullMode = igl::CullMode::Disabled,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Disabled,
+        .frontFaceWinding = WindingMode::Clockwise,
     };
     pipelineState_ = getPlatform().getDevice().createRenderPipeline(graphicsDesc, &ret);
     IGL_DEBUG_ASSERT(ret.isOk());

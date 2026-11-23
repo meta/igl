@@ -298,10 +298,10 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 std::unique_ptr<IShaderStages> createShaderStagesForBackend(const IDevice& device,
                                                             int programIndex) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
+  case BackendType::Invalid:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getVulkanVertexShaderSource().c_str(),
@@ -311,16 +311,16 @@ std::unique_ptr<IShaderStages> createShaderStagesForBackend(const IDevice& devic
         "main",
         "",
         nullptr);
-  case igl::BackendType::Custom:
+  case BackendType::Custom:
     IGL_DEBUG_ABORT("No Custom shader available");
     return nullptr;
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(programIndex), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     if (programIndex == 0) {
       // First pass: write to SV_Target0 and SV_Target1
       static const char* kVS = R"(
@@ -355,7 +355,7 @@ std::unique_ptr<IShaderStages> createShaderStagesForBackend(const IDevice& devic
           device, kVS, "main", "", kPS, "main", "", nullptr);
     }
   }
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getOpenGLVertexShaderSource().c_str(),
@@ -365,7 +365,7 @@ std::unique_ptr<IShaderStages> createShaderStagesForBackend(const IDevice& devic
         "main",
         "",
         nullptr);
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
         getMetalShaderSource(programIndex).c_str(),
@@ -515,8 +515,8 @@ void MRTSession::update(const SurfaceTextures surfaceTextures) noexcept {
                             },
                         },
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         },
         nullptr);
@@ -561,8 +561,8 @@ void MRTSession::update(const SurfaceTextures surfaceTextures) noexcept {
                             },
                         },
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap =
                 {
                     {textureUnit, IGL_NAMEHANDLE("colorRed")},

@@ -283,10 +283,10 @@ std::unique_ptr<IShaderStages> GPUStressSession::getShaderStagesForBackend(
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getVulkanVertexShaderSource(multiView).c_str(),
@@ -816,11 +816,11 @@ void GPUStressSession::initialize() noexcept {
   };
 
   if (useMSAA_) {
-    renderPass_.colorAttachments[0].storeAction = igl::StoreAction::MsaaResolve;
+    renderPass_.colorAttachments[0].storeAction = StoreAction::MsaaResolve;
   }
 
   const DepthStencilStateDesc depthDesc{
-      .compareFunction = igl::CompareFunction::Less,
+      .compareFunction = CompareFunction::Less,
       .isDepthWriteEnabled = true,
   };
   depthStencilState_ = device.createDepthStencilState(depthDesc, nullptr);
@@ -888,7 +888,7 @@ void GPUStressSession::initState(const SurfaceTextures& surfaceTextures) {
                                                  ? TextureType::TwoDArray
                                                  : TextureType::TwoD,
                                      .format = surfaceTextures.color->getFormat(),
-                                     .storage = igl::ResourceStorage::Private};
+                                     .storage = ResourceStorage::Private};
 
       framebufferDesc.colorAttachments[0].texture =
           getPlatform().getDevice().createTexture(fbTexDesc, nullptr);
@@ -910,7 +910,7 @@ void GPUStressSession::initState(const SurfaceTextures& surfaceTextures) {
                                                    ? TextureType::TwoDArray
                                                    : TextureType::TwoD,
                                        .format = surfaceTextures.depth->getFormat(),
-                                       .storage = igl::ResourceStorage::Private};
+                                       .storage = ResourceStorage::Private};
 
         framebufferDesc.depthAttachment.texture =
             getPlatform().getDevice().createTexture(depthDesc, nullptr);
@@ -948,8 +948,8 @@ void GPUStressSession::initState(const SurfaceTextures& surfaceTextures) {
                 }},
                 .depthAttachmentFormat = framebuffer_->getDepthAttachment()->getProperties().format,
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::Clockwise,
         .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         .sampleCount = useMSAA_ ? kMsaaSamples : 1u,
     };
@@ -1028,19 +1028,19 @@ void GPUStressSession::drawCubes(const SurfaceTextures& surfaceTextures,
           info.uniforms = std::vector<UniformDesc>{
               UniformDesc{.name = "projectionMatrix",
                           .location = -1,
-                          .type = igl::UniformType::Mat4x4,
+                          .type = UniformType::Mat4x4,
                           .numElements = 1,
                           .offset = offsetof(VertexFormat, projectionMatrix),
                           .elementStride = 0},
               UniformDesc{.name = "modelViewMatrix",
                           .location = -1,
-                          .type = igl::UniformType::Mat4x4,
+                          .type = UniformType::Mat4x4,
                           .numElements = 1,
                           .offset = offsetof(VertexFormat, modelViewMatrix),
                           .elementStride = 0},
               UniformDesc{.name = "scaleZ",
                           .location = -1,
-                          .type = igl::UniformType::Float,
+                          .type = UniformType::Float,
                           .numElements = 1,
                           .offset = offsetof(VertexFormat, scaleZ),
                           .elementStride = 0}};

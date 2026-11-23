@@ -528,14 +528,14 @@ void FireworksSession::generateParticleTexture(std::vector<uint8_t>& image) {
 std::unique_ptr<IShaderStages> FireworksSession::getShaderStagesForBackend(IDevice& device,
                                                                            bool stereoRendering) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan: {
+  case BackendType::Vulkan: {
     const std::string vsSource = getVulkanVertexShaderSource(stereoRendering);
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device, vsSource.c_str(), "main", "", getVulkanFragmentShaderSource(), "main", "", nullptr);
@@ -555,10 +555,10 @@ std::unique_ptr<IShaderStages> FireworksSession::getShaderStagesForBackend(IDevi
     // @fb-only
     // @fb-only
 // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::D3D12:
+  case BackendType::D3D12:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getD3D12VertexShaderSource(),
                                                            "main",
@@ -567,12 +567,12 @@ std::unique_ptr<IShaderStages> FireworksSession::getShaderStagesForBackend(IDevi
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::OpenGL: {
+  case BackendType::OpenGL: {
 #if IGL_BACKEND_OPENGL
     auto glVersion =
-        static_cast<igl::opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
+        static_cast<opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
 
-    if (glVersion <= igl::opengl::GLVersion::v2_1) {
+    if (glVersion <= opengl::GLVersion::v2_1) {
       // GLSL 120: attribute/varying, plain uniforms, texture2D
       const char* vs120 = R"(#version 120
 attribute vec3 pos;
@@ -609,7 +609,7 @@ void main() {
   gl_FragColor = vec4(vColor * alpha, alpha);
 }
 )";
-      if (igl::opengl::DeviceFeatureSet::usesOpenGLES()) {
+      if (opengl::DeviceFeatureSet::usesOpenGLES()) {
         // OpenGL ES 2.0 takes the same shaders as GLSL ES 1.00.
         std::string codeVS(vs120);
         std::string codeFS(fs120);
@@ -622,7 +622,7 @@ void main() {
           device, vs120, "main", "", fs120, "main", "", nullptr);
     }
 
-    auto usesOpenGLES = igl::opengl::DeviceFeatureSet::usesOpenGLES();
+    auto usesOpenGLES = opengl::DeviceFeatureSet::usesOpenGLES();
 
     std::string codeVS(getVulkanVertexShaderSource(false));
     stringReplaceAll(codeVS, "gl_VertexIndex", "gl_VertexID");
@@ -882,7 +882,7 @@ void FireworksSession::update(SurfaceTextures surfaceTextures) noexcept {
                     .dstAlphaBlendFactor = BlendFactor::One,
                 }},
             },
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE("particleTex")}},
     };
     renderPipelineState_ = device.createRenderPipeline(pipelineDesc, nullptr);

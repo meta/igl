@@ -142,7 +142,7 @@ void ComputeSession::initialize() noexcept {
       .height = static_cast<uint32_t>(imageData.desc.height),
       .usage = igl::TextureDesc::TextureUsageBits::Sampled | TextureDesc::TextureUsageBits::Storage,
       .type = TextureType::TwoD,
-      .format = igl::TextureFormat::RGBA_UNorm8,
+      .format = TextureFormat::RGBA_UNorm8,
   };
 
   Result res;
@@ -290,9 +290,9 @@ void ComputeSession::update(SurfaceTextures surfaceTextures) noexcept {
     // Grayscale values as uniforms
     iglu::uniform::DescriptorValue<glm::vec3> tmpFloat3(glm::vec3(0.2126f, 0.7152f, 0.0722f));
     const int index = device.getBackendType() == BackendType::OpenGL
-                          ? computePipelineState0_->getIndexByName(igl::genNameHandle("grayscale"))
+                          ? computePipelineState0_->getIndexByName(genNameHandle("grayscale"))
                           : 0;
-    tmpFloat3.setIndex(igl::ShaderStage::Compute, index);
+    tmpFloat3.setIndex(ShaderStage::Compute, index);
     enc(*computeEncoder0, tmpFloat3);
 
     // dispatch
@@ -338,8 +338,8 @@ void ComputeSession::update(SurfaceTextures surfaceTextures) noexcept {
                         },
                     },
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::Clockwise,
         .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE("diffuseTex")}},
     };
 

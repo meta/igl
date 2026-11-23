@@ -46,8 +46,8 @@ void ImguiSession::update(SurfaceTextures surfaceTextures) noexcept {
 
   const RenderPassDesc renderPassDesc = {
       .colorAttachments = {{
-          .loadAction = igl::LoadAction::Clear,
-          .storeAction = igl::StoreAction::Store,
+          .loadAction = LoadAction::Clear,
+          .storeAction = StoreAction::Store,
           .clearColor = getPreferredClearColor(),
       }},
   };

@@ -102,13 +102,13 @@ constexpr uint16_t kIndexData[] = {0, 1, 2, 1, 3, 2, 1, 4, 3, 4, 6, 3, 4, 5, 6, 
     bool stereoRendering) noexcept {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     IGL_DEBUG_ABORT("Metal is not supported");
     return nullptr;
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getVulkanVertexShaderSource(stereoRendering).c_str(),
@@ -118,23 +118,23 @@ constexpr uint16_t kIndexData[] = {0, 1, 2, 1, 3, 2, 1, 4, 3, 4, 6, 3, 4, 5, 6, 
         "main",
         "",
         nullptr);
-  case igl::BackendType::OpenGL: {
+  case BackendType::OpenGL: {
     Result res;
     const auto vs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanVertexShaderSource(stereoRendering).c_str(), igl::ShaderStage::Vertex, &res);
+        getVulkanVertexShaderSource(stereoRendering).c_str(), ShaderStage::Vertex, &res);
     IGL_DEBUG_ASSERT(res.isOk(), res.message.c_str());
 
     const auto fs = shaderCross.crossCompileFromVulkanSource(
-        getVulkanFragmentShaderSource(), igl::ShaderStage::Fragment, &res);
+        getVulkanFragmentShaderSource(), ShaderStage::Fragment, &res);
     IGL_DEBUG_ASSERT(res.isOk(), res.message.c_str());
 
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         vs.c_str(),
-        shaderCross.entryPointName(igl::ShaderStage::Vertex),
+        shaderCross.entryPointName(ShaderStage::Vertex),
         "",
         fs.c_str(),
-        shaderCross.entryPointName(igl::ShaderStage::Fragment),
+        shaderCross.entryPointName(ShaderStage::Fragment),
         "",
         nullptr);
   }
@@ -347,8 +347,8 @@ void HelloOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
                     .depthAttachmentFormat =
                         framebuffer_[viewIndex]->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::CounterClockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::CounterClockwise,
             .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         },
         nullptr);
@@ -370,7 +370,7 @@ void HelloOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
               {
                   .name = "modelMatrix",
                   .location = -1,
-                  .type = igl::UniformType::Mat4x4,
+                  .type = UniformType::Mat4x4,
                   .numElements = 1,
                   .offset = offsetof(UniformBlock, modelMatrix),
                   .elementStride = 0,
@@ -378,7 +378,7 @@ void HelloOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
               {
                   .name = "viewProjectionMatrix",
                   .location = -1,
-                  .type = igl::UniformType::Mat4x4,
+                  .type = UniformType::Mat4x4,
                   .numElements = 2,
                   .offset = offsetof(UniformBlock, viewProjectionMatrix),
                   .elementStride = sizeof(glm::mat4),
@@ -386,7 +386,7 @@ void HelloOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
               {
                   .name = "scaleZ",
                   .location = -1,
-                  .type = igl::UniformType::Float,
+                  .type = UniformType::Float,
                   .numElements = 1,
                   .offset = offsetof(UniformBlock, scaleZ),
                   .elementStride = 0,
@@ -394,7 +394,7 @@ void HelloOpenXRSession::update(SurfaceTextures surfaceTextures) noexcept {
               {
                   .name = "viewId",
                   .location = -1,
-                  .type = igl::UniformType::Int,
+                  .type = UniformType::Int,
                   .numElements = 1,
                   .offset = offsetof(UniformBlock, viewId),
                   .elementStride = 0,

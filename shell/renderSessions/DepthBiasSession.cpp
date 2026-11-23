@@ -150,18 +150,18 @@ fn shadowFragmentShader() {}
 
 std::unique_ptr<IShaderStages> getShadowShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(device,
                                                             getShadowWgslShaderSource().c_str(),
                                                             "shadowVertexShader",
                                                             "shadowFragmentShader",
                                                             "",
                                                             nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getShadowVulkanVertexShaderSource().c_str(),
@@ -174,14 +174,14 @@ std::unique_ptr<IShaderStages> getShadowShaderStagesForBackend(IDevice& device) 
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(device,
                                                             getShadowMetalShaderSource().c_str(),
                                                             "shadowVertexShader",
                                                             "shadowFragmentShader",
                                                             "",
                                                             nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getShadowOpenGLVertexShaderSource().c_str(),
@@ -191,7 +191,7 @@ std::unique_ptr<IShaderStages> getShadowShaderStagesForBackend(IDevice& device) 
         "main",
         "",
         nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float3 normal : NORMAL; };
       struct VSOut { float4 position : SV_POSITION; };
@@ -403,14 +403,14 @@ fn fragmentShader(in : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getMainShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMainWgslShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getMainVulkanVertexShaderSource().c_str(),
@@ -423,10 +423,10 @@ std::unique_ptr<IShaderStages> getMainShaderStagesForBackend(IDevice& device) {
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMainMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getMainOpenGLVertexShaderSource().c_str(),
@@ -436,7 +436,7 @@ std::unique_ptr<IShaderStages> getMainShaderStagesForBackend(IDevice& device) {
         "main",
         "",
         nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float3 normal : NORMAL; };
       struct VSOut {
@@ -653,8 +653,8 @@ void DepthBiasSession::update(SurfaceTextures textures) noexcept {
                 {
                     .depthAttachmentFormat = shadowMap_->getFormat(),
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::CounterClockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::CounterClockwise,
         },
         nullptr);
     IGL_DEBUG_ASSERT(shadowPipelineState_ != nullptr);
@@ -674,10 +674,10 @@ void DepthBiasSession::update(SurfaceTextures textures) noexcept {
                     .stencilAttachmentFormat =
                         framebuffer_->getStencilAttachment()
                             ? framebuffer_->getStencilAttachment()->getFormat()
-                            : igl::TextureFormat::Invalid,
+                            : TextureFormat::Invalid,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::CounterClockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::CounterClockwise,
             .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE("shadowMap")}},
         },
         nullptr);
