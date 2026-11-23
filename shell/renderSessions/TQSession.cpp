@@ -209,14 +209,14 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource().c_str(),
                                                            "main",
@@ -235,10 +235,10 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
         // @fb-only
         // @fb-only
         // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -247,7 +247,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::D3D12:
+  case BackendType::D3D12:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getD3D12VertexShaderSource().c_str(),
                                                            "main",
@@ -375,7 +375,7 @@ void TQSession::initialize() noexcept {
   IGL_DEBUG_ASSERT(commandQueue_ != nullptr);
 
   // Generate mipmaps for texture for D3D12
-  if (device.getBackendType() == igl::BackendType::D3D12) {
+  if (device.getBackendType() == BackendType::D3D12) {
     tex0_->generateMipmap(*commandQueue_);
   }
 
@@ -440,10 +440,10 @@ void TQSession::update(SurfaceTextures surfaceTextures) noexcept {
                 .depthAttachmentFormat = framebuffer_->getDepthAttachment()->getFormat(),
                 .stencilAttachmentFormat = framebuffer_->getStencilAttachment()
                                                ? framebuffer_->getStencilAttachment()->getFormat()
-                                               : igl::TextureFormat::Invalid,
+                                               : TextureFormat::Invalid,
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::Clockwise,
         .fragmentUnitSamplerMap =
             {
                 std::pair<size_t, NameHandle>(textureUnit, IGL_NAMEHANDLE("inputImage")),
@@ -471,7 +471,7 @@ void TQSession::update(SurfaceTextures surfaceTextures) noexcept {
     // @fb-only
       if (getPlatform().getDevice().hasFeature(DeviceFeatures::BindUniform)) {
         fragmentUniformDescriptors_.back().location =
-            pipelineState_->getIndexByName("color", igl::ShaderStage::Fragment);
+            pipelineState_->getIndexByName("color", ShaderStage::Fragment);
       }
     fragmentUniformDescriptors_.back().type = UniformType::Float3;
     fragmentUniformDescriptors_.back().offset = offsetof(FragmentFormat, color);

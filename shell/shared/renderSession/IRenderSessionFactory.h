@@ -43,7 +43,7 @@ class IRenderSessionFactory {
     std::vector<RenderSessionConfig> requestedConfigs;
     requestedConfigs.reserve(suggestedConfigs.size());
     for (auto& suggestedConfig : suggestedConfigs) {
-      if (suggestedConfig.backendVersion.flavor != igl::BackendFlavor::Invalid) {
+      if (suggestedConfig.backendVersion.flavor != BackendFlavor::Invalid) {
         requestedConfigs.push_back(suggestedConfig);
       }
     }

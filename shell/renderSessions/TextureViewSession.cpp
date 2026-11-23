@@ -278,13 +278,13 @@ void TextureViewSession::initialize() noexcept {
 
   const uint32_t texWidth = 256;
   const uint32_t texHeight = 256;
-  TextureDesc desc = TextureDesc::new2D(igl::TextureFormat::BGRA_UNorm8,
+  TextureDesc desc = TextureDesc::new2D(TextureFormat::BGRA_UNorm8,
                                         texWidth,
                                         texHeight,
                                         TextureDesc::TextureUsageBits::Attachment |
                                             TextureDesc::TextureUsageBits::Sampled,
                                         "Colored mipmaps");
-  desc.numMipLevels = igl::TextureDesc::calcNumMipLevels(texWidth, texHeight);
+  desc.numMipLevels = TextureDesc::calcNumMipLevels(texWidth, texHeight);
   texture_ = device.createTexture(desc, nullptr);
 
   if (hasTextureViews) {
@@ -383,8 +383,8 @@ void TextureViewSession::update(SurfaceTextures surfaceTextures) noexcept {
                     .depthAttachmentFormat =
                         framebuffer_->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
         },
         &ret);
     IGL_DEBUG_ASSERT(ret.isOk());

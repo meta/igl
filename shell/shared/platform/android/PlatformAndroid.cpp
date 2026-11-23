@@ -32,12 +32,12 @@ PlatformAndroid::PlatformAndroid(std::shared_ptr<IDevice> device, bool useFakeLo
 
 void PlatformAndroid::updatePreRotationMatrix() {
 #if IGL_BACKEND_VULKAN
-  if (device_->getBackendType() != igl::BackendType::Vulkan) {
+  if (device_->getBackendType() != BackendType::Vulkan) {
     return;
   }
   // Get the surface transform matrix
   getDisplayContext().preRotationMatrix = [&device = *device_]() -> glm::mat4 {
-    auto& vulkanDevice = static_cast<igl::vulkan::Device&>(device);
+    auto& vulkanDevice = static_cast<vulkan::Device&>(device);
 
     float angle = 0.0f;
     switch (vulkanDevice.getVulkanContext().getSurfaceCapabilities().currentTransform) {

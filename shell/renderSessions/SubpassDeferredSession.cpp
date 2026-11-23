@@ -602,15 +602,15 @@ fn lightingFragmentShader(@builtin(position) position : vec4f) -> @location(0) v
 // not available on D3D12 and WebGPU
 std::unique_ptr<IShaderStages> getGBufferShaderStages(const IDevice& device, bool subpass) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     IGL_DEBUG_ASSERT(!subpass);
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, kWgslGBufferShader, "gBufferVertexShader", "gBufferFragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getVulkanGBufferVertexShader().c_str(),
@@ -623,7 +623,7 @@ std::unique_ptr<IShaderStages> getGBufferShaderStages(const IDevice& device, boo
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
         (std::string(kMetalGBufferVertexShader) +
@@ -633,7 +633,7 @@ std::unique_ptr<IShaderStages> getGBufferShaderStages(const IDevice& device, boo
         "gBufferFragmentShader",
         "",
         nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getOpenGLGBufferVertexShader(device, subpass).c_str(),
@@ -643,7 +643,7 @@ std::unique_ptr<IShaderStages> getGBufferShaderStages(const IDevice& device, boo
         "main",
         "",
         nullptr);
-  case igl::BackendType::D3D12:
+  case BackendType::D3D12:
     IGL_DEBUG_ASSERT(!subpass);
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device, kHlslGBufferVertexShader, "main", "", kHlslGBufferPixelShader, "main", "", nullptr);
@@ -653,15 +653,15 @@ std::unique_ptr<IShaderStages> getGBufferShaderStages(const IDevice& device, boo
 
 std::unique_ptr<IShaderStages> getLightingShaderStages(const IDevice& device, bool subpass) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     IGL_DEBUG_ASSERT(!subpass);
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, kWgslLightingShader, "lightingVertexShader", "lightingFragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         kVulkanLightingVertexShader,
@@ -674,7 +674,7 @@ std::unique_ptr<IShaderStages> getLightingShaderStages(const IDevice& device, bo
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
         (std::string(kMetalLightingVertexShader) +
@@ -684,7 +684,7 @@ std::unique_ptr<IShaderStages> getLightingShaderStages(const IDevice& device, bo
         "lightingFragmentShader",
         "",
         nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getOpenGLLightingVertexShader(device, subpass).c_str(),
@@ -694,7 +694,7 @@ std::unique_ptr<IShaderStages> getLightingShaderStages(const IDevice& device, bo
         "main",
         "",
         nullptr);
-  case igl::BackendType::D3D12:
+  case BackendType::D3D12:
     IGL_DEBUG_ASSERT(!subpass);
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            kHlslLightingVertexShader,

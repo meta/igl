@@ -26,8 +26,8 @@ class FileLoaderLinuxTest : public ::testing::Test {
  public:
   void SetUp() override {
     sAborted = false;
-    debugBreakEnabled_ = igl::isDebugBreakEnabled();
-    igl::setDebugBreakEnabled(false);
+    debugBreakEnabled_ = isDebugBreakEnabled();
+    setDebugBreakEnabled(false);
     iglSetDebugAbortListener([](const char* /*category*/,
                                 const char* /*reason*/,
                                 const char* /*file*/,
@@ -49,7 +49,7 @@ class FileLoaderLinuxTest : public ::testing::Test {
     std::error_code ec;
     std::filesystem::remove_all(tempDir_, ec);
     iglSetDebugAbortListener(nullptr);
-    igl::setDebugBreakEnabled(debugBreakEnabled_);
+    setDebugBreakEnabled(debugBreakEnabled_);
   }
 
  protected:

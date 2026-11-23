@@ -313,16 +313,16 @@ fn fragmentShader(in : VertexOut) -> @location(0) vec4f {
 [[nodiscard]] std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
+  case BackendType::Invalid:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
 
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
 
 #if IGL_BACKEND_VULKAN
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource(),
                                                            "main",
@@ -340,18 +340,18 @@ fn fragmentShader(in : VertexOut) -> @location(0) vec4f {
 // @fb-only
 
 #if IGL_BACKEND_METAL
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
 #endif // IGL_BACKEND_METAL
 
 #if IGL_BACKEND_OPENGL
-  case igl::BackendType::OpenGL: {
+  case BackendType::OpenGL: {
     auto glVersion =
-        static_cast<igl::opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
+        static_cast<opengl::Device&>(device).getContext().deviceFeatures().getGLVersion();
 
     // The shaders are the Vulkan GLSL under `#version 460`.
-    if (glVersion >= igl::opengl::GLVersion::v4_6) {
+    if (glVersion >= opengl::GLVersion::v4_6) {
       const std::string codeVS1 =
           stringReplaceAll(getVulkanVertexShaderSource(), "gl_VertexIndex", "gl_VertexID");
       const std::string codeVS2 = std::string("#version 460\n") + codeVS1;
@@ -366,7 +366,7 @@ fn fragmentShader(in : VertexOut) -> @location(0) vec4f {
   }
 #endif // IGL_BACKEND_OPENGL
 
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
 cbuffer UniformsPerFrame : register(b0) { float4x4 proj; float4x4 view; };
 cbuffer UniformsPerObject : register(b1) { float4x4 model; };
@@ -470,7 +470,7 @@ void TinyMeshBindGroupSession::initialize() noexcept {
 
   {
     const DepthStencilStateDesc desc{
-        .compareFunction = igl::CompareFunction::Less,
+        .compareFunction = CompareFunction::Less,
         .isDepthWriteEnabled = true,
     };
     depthStencilState_ = device_->createDepthStencilState(desc, nullptr);
@@ -505,7 +505,7 @@ void TinyMeshBindGroupSession::createRenderPipeline() {
 
   const TextureFormat depthFormat = framebuffer_->getDepthAttachment()
                                         ? framebuffer_->getDepthAttachment()->getProperties().format
-                                        : igl::TextureFormat::Invalid;
+                                        : TextureFormat::Invalid;
   std::shared_ptr<IShaderStages> shaderStages = getShaderStagesForBackend(*device_);
   const RenderPipelineDesc desc{
       .vertexInputState = vertexInput0_,
@@ -518,12 +518,12 @@ void TinyMeshBindGroupSession::createRenderPipeline() {
               .depthAttachmentFormat = depthFormat,
           },
 #if !TINY_TEST_USE_DEPTH_BUFFER
-      .cullMode = igl::CullMode::Back,
+      .cullMode = CullMode::Back,
 #endif // TINY_TEST_USE_DEPTH_BUFFER
-      .frontFaceWinding = igl::WindingMode::Clockwise,
+      .frontFaceWinding = WindingMode::Clockwise,
       .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE("uTex0")}, {1, IGL_NAMEHANDLE("uTex1")}},
       .isDynamicBufferMask = kDynamicBufferMask,
-      .debugName = igl::genNameHandle("Pipeline: mesh"),
+      .debugName = genNameHandle("Pipeline: mesh"),
   };
   if (desc.shaderStages) {
     renderPipelineStateMesh_ = device_->createRenderPipeline(desc, nullptr);
@@ -554,7 +554,7 @@ void TinyMeshBindGroupSession::createRenderPipeline() {
   {
     const auto imageData = getPlatform().getImageLoader().loadImageData("marble.png");
     IGL_DEBUG_ASSERT(imageData.data, "Cannot load marble.png");
-    const TextureDesc desc2D = TextureDesc::new2D(igl::TextureFormat::RGBA_SRGB,
+    const TextureDesc desc2D = TextureDesc::new2D(TextureFormat::RGBA_SRGB,
                                                   imageData.desc.width,
                                                   imageData.desc.height,
                                                   TextureDesc::TextureUsageBits::Sampled,
@@ -566,11 +566,11 @@ void TinyMeshBindGroupSession::createRenderPipeline() {
   }
   {
     const SamplerStateDesc samplerDesc = {
-        .minFilter = igl::SamplerMinMagFilter::Linear,
-        .magFilter = igl::SamplerMinMagFilter::Linear,
-        .mipFilter = igl::SamplerMipFilter::Disabled,
-        .addressModeU = igl::SamplerAddressMode::Repeat,
-        .addressModeV = igl::SamplerAddressMode::Repeat,
+        .minFilter = SamplerMinMagFilter::Linear,
+        .magFilter = SamplerMinMagFilter::Linear,
+        .mipFilter = SamplerMipFilter::Disabled,
+        .addressModeU = SamplerAddressMode::Repeat,
+        .addressModeV = SamplerAddressMode::Repeat,
         .debugName = "Sampler: linear",
     };
     sampler_ = device_->createSamplerState(samplerDesc, nullptr);
@@ -605,7 +605,7 @@ void TinyMeshBindGroupSession::createRenderPipeline() {
 std::shared_ptr<ITexture> TinyMeshBindGroupSession::getVulkanNativeDepth() {
 #if IGL_BACKEND_VULKAN
   if (device_->getBackendType() == BackendType::Vulkan) {
-    const auto& vkPlatformDevice = device_->getPlatformDevice<igl::vulkan::PlatformDevice>();
+    const auto& vkPlatformDevice = device_->getPlatformDevice<vulkan::PlatformDevice>();
 
     IGL_DEBUG_ASSERT(vkPlatformDevice != nullptr);
 

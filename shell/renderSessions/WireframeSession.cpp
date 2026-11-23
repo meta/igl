@@ -247,14 +247,14 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource().c_str(),
                                                            "main",
@@ -266,10 +266,10 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -278,7 +278,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float4 color : COLOR; };
       struct VSOut { float4 position : SV_POSITION; float4 color : COLOR; };
@@ -312,18 +312,18 @@ fn fragmentShaderWireframe() -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getWireframeShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(device,
                                                             getWireframeWgslShaderSource().c_str(),
                                                             "vertexShaderWireframe",
                                                             "fragmentShaderWireframe",
                                                             "",
                                                             nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getWireframeVulkanVertexShaderSource().c_str(),
@@ -336,14 +336,14 @@ std::unique_ptr<IShaderStages> getWireframeShaderStagesForBackend(IDevice& devic
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(device,
                                                             getWireframeMetalShaderSource().c_str(),
                                                             "vertexShaderWireframe",
                                                             "fragmentShaderWireframe",
                                                             "",
                                                             nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getWireframeOpenGLVertexShaderSource().c_str(),
@@ -353,7 +353,7 @@ std::unique_ptr<IShaderStages> getWireframeShaderStagesForBackend(IDevice& devic
         "main",
         "",
         nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float4 color : COLOR; };
       struct VSOut { float4 position : SV_POSITION; };
@@ -433,7 +433,7 @@ void WireframeSession::initialize() noexcept {
   // Depth stencil state
   depthStencilState_ = device.createDepthStencilState(
       DepthStencilStateDesc{
-          .compareFunction = igl::CompareFunction::LessEqual,
+          .compareFunction = CompareFunction::LessEqual,
           .isDepthWriteEnabled = true,
       },
       nullptr);
@@ -492,11 +492,11 @@ void WireframeSession::update(SurfaceTextures textures) noexcept {
                     .stencilAttachmentFormat =
                         framebuffer_->getStencilAttachment()
                             ? framebuffer_->getStencilAttachment()->getFormat()
-                            : igl::TextureFormat::Invalid,
+                            : TextureFormat::Invalid,
                 },
-            .cullMode = igl::CullMode::Disabled,
-            .frontFaceWinding = igl::WindingMode::CounterClockwise,
-            .polygonFillMode = igl::PolygonFillMode::Fill,
+            .cullMode = CullMode::Disabled,
+            .frontFaceWinding = WindingMode::CounterClockwise,
+            .polygonFillMode = PolygonFillMode::Fill,
         },
         nullptr);
     IGL_DEBUG_ASSERT(solidPipelineState_ != nullptr);
@@ -520,20 +520,19 @@ void WireframeSession::update(SurfaceTextures textures) noexcept {
                       .stencilAttachmentFormat =
                           framebuffer_->getStencilAttachment()
                               ? framebuffer_->getStencilAttachment()->getFormat()
-                              : igl::TextureFormat::Invalid,
+                              : TextureFormat::Invalid,
                   },
-              .cullMode = igl::CullMode::Disabled,
-              .frontFaceWinding = igl::WindingMode::CounterClockwise,
+              .cullMode = CullMode::Disabled,
+              .frontFaceWinding = WindingMode::CounterClockwise,
               .polygonFillMode = fillMode,
           },
           &result);
       return result.isOk() ? pipeline : nullptr;
     };
     wireframePipelineState_ =
-        createWireframePipeline(PrimitiveType::Triangle, igl::PolygonFillMode::Line);
+        createWireframePipeline(PrimitiveType::Triangle, PolygonFillMode::Line);
     if (wireframePipelineState_ == nullptr) {
-      wireframePipelineState_ =
-          createWireframePipeline(PrimitiveType::Line, igl::PolygonFillMode::Fill);
+      wireframePipelineState_ = createWireframePipeline(PrimitiveType::Line, PolygonFillMode::Fill);
       wireframeAsLines_ = wireframePipelineState_ != nullptr;
     }
     IGL_DEBUG_ASSERT(wireframePipelineState_ != nullptr);

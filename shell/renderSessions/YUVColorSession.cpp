@@ -247,10 +247,10 @@ void main() {
 std::unique_ptr<IShaderStages> getPlanarShaderStages(IDevice& device, bool isNV12) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(isNV12).c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
         getMetalPlanarShaderSource(isNV12).c_str(),
@@ -258,7 +258,7 @@ std::unique_ptr<IShaderStages> getPlanarShaderStages(IDevice& device, bool isNV1
         "fragmentShader",
         "",
         nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return createOpenGLPlanarShaderStages(device, isNV12);
   default:
     return nullptr;
@@ -268,16 +268,16 @@ std::unique_ptr<IShaderStages> getPlanarShaderStages(IDevice& device, bool isNV1
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
   // @fb-only
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Metal:
-  case igl::BackendType::Custom:
-  case igl::BackendType::D3D12: // D3D12 YUV shaders not yet implemented
+  case BackendType::Invalid:
+  case BackendType::Metal:
+  case BackendType::Custom:
+  case BackendType::D3D12: // D3D12 YUV shaders not yet implemented
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(false).c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getVulkanVertexShaderSource().c_str(),
                                                            "main",
@@ -286,7 +286,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -466,8 +466,8 @@ void YUVColorSession::initialize() noexcept {
             .name = demoName, .sampler = sampler, .texture = texture, .pipelineState = nullptr});
       };
 
-  createYUVDemo(device, "YUV 420p", igl::TextureFormat::YUV_420p, "output_frame_900.420p.yuv");
-  createYUVDemo(device, "YUV NV12", igl::TextureFormat::YUV_NV12, "output_frame_900.nv12.yuv");
+  createYUVDemo(device, "YUV 420p", TextureFormat::YUV_420p, "output_frame_900.420p.yuv");
+  createYUVDemo(device, "YUV NV12", TextureFormat::YUV_NV12, "output_frame_900.nv12.yuv");
 
   if (std::any_of(yuvFormatDemos_.begin(), yuvFormatDemos_.end(), [](const YUVFormatDemo& demo) {
         return demo.shaderStages == nullptr;
@@ -534,8 +534,8 @@ void YUVColorSession::update(SurfaceTextures surfaceTextures) noexcept {
                     },
                 .depthAttachmentFormat = framebuffer_->getDepthAttachment()->getProperties().format,
             },
-        .cullMode = igl::CullMode::Back,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Back,
+        .frontFaceWinding = WindingMode::Clockwise,
         .fragmentUnitSamplerMap = std::move(fragmentUnitSamplerMap),
         .immutableSamplers = {demo->chromaPlanes.empty() ? demo->sampler : nullptr}, // Ycbcr
                                                                                      // sampler

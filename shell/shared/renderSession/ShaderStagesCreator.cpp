@@ -13,20 +13,20 @@ namespace {
 const char* getEntryPointName(ShaderStage stage, BackendType backendType) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (backendType) {
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     switch (stage) {
-    case igl::ShaderStage::Vertex:
+    case ShaderStage::Vertex:
       return "vertexMain";
-    case igl::ShaderStage::Fragment:
+    case ShaderStage::Fragment:
       return "fragmentMain";
-    case igl::ShaderStage::Compute:
+    case ShaderStage::Compute:
       return "computeMain";
-    case igl::ShaderStage::Task:
+    case ShaderStage::Task:
       return "taskMain";
-    case igl::ShaderStage::Mesh:
+    case ShaderStage::Mesh:
       return "meshMain";
     }
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     return "main";
   default:
     return "main";
@@ -44,36 +44,36 @@ std::unique_ptr<IShaderStages> createRenderPipelineStages(
     const IShaderProvider& fragShaderProvider) {
   Result result;
   auto backend = device.getBackendType();
-  if (backend == igl::BackendType::Vulkan) {
+  if (backend == BackendType::Vulkan) {
     auto vertWords = vertShaderProvider.getShaderBinary(device);
     auto fragWords = fragShaderProvider.getShaderBinary(device);
-    auto vertModule = igl::ShaderModuleCreator::fromBinaryInput(
-        device,
-        vertWords.data(),
-        vertWords.size() * sizeof(uint32_t),
-        getShaderModuleInfo(igl::ShaderStage::Vertex, backend),
-        "",
-        &result);
+    auto vertModule =
+        igl::ShaderModuleCreator::fromBinaryInput(device,
+                                                  vertWords.data(),
+                                                  vertWords.size() * sizeof(uint32_t),
+                                                  getShaderModuleInfo(ShaderStage::Vertex, backend),
+                                                  "",
+                                                  &result);
     auto fragModule = igl::ShaderModuleCreator::fromBinaryInput(
         device,
         fragWords.data(),
         fragWords.size() * sizeof(uint32_t),
-        getShaderModuleInfo(igl::ShaderStage::Fragment, backend),
+        getShaderModuleInfo(ShaderStage::Fragment, backend),
         "",
         &result);
     return igl::ShaderStagesCreator::fromRenderModules(
         device, std::move(vertModule), std::move(fragModule), &result);
   } else {
-    auto vertModule = igl::ShaderModuleCreator::fromStringInput(
-        device,
-        vertShaderProvider.getShaderText(device).c_str(),
-        getShaderModuleInfo(igl::ShaderStage::Vertex, backend),
-        "",
-        &result);
+    auto vertModule =
+        igl::ShaderModuleCreator::fromStringInput(device,
+                                                  vertShaderProvider.getShaderText(device).c_str(),
+                                                  getShaderModuleInfo(ShaderStage::Vertex, backend),
+                                                  "",
+                                                  &result);
     auto fragModule = igl::ShaderModuleCreator::fromStringInput(
         device,
         fragShaderProvider.getShaderText(device).c_str(),
-        getShaderModuleInfo(igl::ShaderStage::Fragment, backend),
+        getShaderModuleInfo(ShaderStage::Fragment, backend),
         "",
         &result);
     return igl::ShaderStagesCreator::fromRenderModules(
@@ -86,13 +86,13 @@ std::unique_ptr<IShaderStages> createComputePipelineStages(
     const IShaderProvider& compShaderProvider) {
   Result result;
   auto backend = device.getBackendType();
-  if (backend == igl::BackendType::Vulkan) {
+  if (backend == BackendType::Vulkan) {
     auto compWords = compShaderProvider.getShaderBinary(device);
     auto compModule = igl::ShaderModuleCreator::fromBinaryInput(
         device,
         compWords.data(),
         compWords.size() * sizeof(uint32_t),
-        getShaderModuleInfo(igl::ShaderStage::Compute, backend),
+        getShaderModuleInfo(ShaderStage::Compute, backend),
         "",
         &result);
     return igl::ShaderStagesCreator::fromComputeModule(device, std::move(compModule), &result);
@@ -100,7 +100,7 @@ std::unique_ptr<IShaderStages> createComputePipelineStages(
     auto compModule = igl::ShaderModuleCreator::fromStringInput(
         device,
         compShaderProvider.getShaderText(device).c_str(),
-        getShaderModuleInfo(igl::ShaderStage::Compute, backend),
+        getShaderModuleInfo(ShaderStage::Compute, backend),
         "",
         &result);
     return igl::ShaderStagesCreator::fromComputeModule(device, std::move(compModule), &result);

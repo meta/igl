@@ -64,7 +64,7 @@ InputDispatcher& Platform::getInputDispatcher() noexcept {
 std::shared_ptr<ITexture> Platform::loadTexture(const char* filename,
                                                 bool calculateMipmapLevels,
                                                 TextureFormat format,
-                                                igl::TextureDesc::TextureUsageBits usage) {
+                                                TextureDesc::TextureUsageBits usage) {
   auto imageData = getImageLoader().loadImageData(filename);
 
   return loadTexture(imageData, calculateMipmapLevels, format, usage, filename);
@@ -73,15 +73,15 @@ std::shared_ptr<ITexture> Platform::loadTexture(const char* filename,
 std::shared_ptr<ITexture> Platform::loadTexture(const ImageData& imageData,
                                                 bool calculateMipmapLevels,
                                                 TextureFormat format,
-                                                igl::TextureDesc::TextureUsageBits usage,
+                                                TextureDesc::TextureUsageBits usage,
                                                 const char* debugName) {
   // @fb-only
   // For D3D12 backend: If
   // mipmaps are requested, we need Attachment usage so that generateMipmap can create render
   // targets for each mip level.
   auto effectiveUsage = usage;
-  if (calculateMipmapLevels && getDevice().getBackendType() == igl::BackendType::D3D12) {
-    effectiveUsage = static_cast<igl::TextureDesc::TextureUsageBits>(
+  if (calculateMipmapLevels && getDevice().getBackendType() == BackendType::D3D12) {
+    effectiveUsage = static_cast<TextureDesc::TextureUsageBits>(
         static_cast<uint32_t>(usage) |
         static_cast<uint32_t>(igl::TextureDesc::TextureUsageBits::Attachment));
   }
@@ -89,7 +89,7 @@ std::shared_ptr<ITexture> Platform::loadTexture(const ImageData& imageData,
   TextureDesc texDesc =
       igl::TextureDesc::new2D(format, imageData.desc.width, imageData.desc.height, effectiveUsage);
   texDesc.numMipLevels =
-      calculateMipmapLevels ? igl::TextureDesc::calcNumMipLevels(texDesc.width, texDesc.height) : 1;
+      calculateMipmapLevels ? TextureDesc::calcNumMipLevels(texDesc.width, texDesc.height) : 1;
   texDesc.debugName = debugName;
 
   Result res;

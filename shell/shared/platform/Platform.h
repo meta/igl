@@ -42,14 +42,14 @@ class Platform {
   std::shared_ptr<ITexture> loadTexture(
       const char* filename,
       bool calculateMipmapLevels = true,
-      TextureFormat format = igl::TextureFormat::RGBA_SRGB,
-      igl::TextureDesc::TextureUsageBits usage = igl::TextureDesc::TextureUsageBits::Sampled);
+      TextureFormat format = TextureFormat::RGBA_SRGB,
+      TextureDesc::TextureUsageBits usage = igl::TextureDesc::TextureUsageBits::Sampled);
 
   std::shared_ptr<ITexture> loadTexture(
       const ImageData& imageData,
       bool calculateMipmapLevels = true,
-      TextureFormat format = igl::TextureFormat::RGBA_SRGB,
-      igl::TextureDesc::TextureUsageBits usage = igl::TextureDesc::TextureUsageBits::Sampled,
+      TextureFormat format = TextureFormat::RGBA_SRGB,
+      TextureDesc::TextureUsageBits usage = igl::TextureDesc::TextureUsageBits::Sampled,
       const char* debugName = "");
   // 'argc' and 'argv' are the exact arguments received in 'main()'.
   static int argc();

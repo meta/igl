@@ -173,25 +173,25 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
+  case BackendType::Invalid:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::Vulkan:
+  case BackendType::Vulkan:
     IGL_LOG_INFO("TQMultiRenderPassSession: no Vulkan shaders; skipping\n");
     return nullptr;
-  case igl::BackendType::Custom:
+  case BackendType::Custom:
     IGL_DEBUG_ABORT("IGLSamples not set up for Custom");
     return nullptr;
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -200,7 +200,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::D3D12:
+  case BackendType::D3D12:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getD3D12VertexShaderSource().c_str(),
                                                            "main",
@@ -232,7 +232,7 @@ void render(std::shared_ptr<ICommandBuffer>& buffer,
 
   commands->bindRenderPipelineState(pipelineState);
 
-  if (backend != igl::BackendType::OpenGL) {
+  if (backend != BackendType::OpenGL) {
     if (fragmentParamBuffer) {
       commands->bindBuffer(0, fragmentParamBuffer.get());
     }
@@ -358,7 +358,7 @@ void TQMultiRenderPassSession::update(SurfaceTextures surfaceTextures) noexcept 
   if (framebuffer0_ == nullptr) {
     const auto dimensions = surfaceTextures.color->getDimensions();
     const TextureDesc desc1 =
-        igl::TextureDesc::new2D(igl::TextureFormat::RGBA_UNorm8,
+        igl::TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                 dimensions.width,
                                 dimensions.height,
                                 igl::TextureDesc::TextureUsageBits::Sampled |
@@ -376,8 +376,8 @@ void TQMultiRenderPassSession::update(SurfaceTextures surfaceTextures) noexcept 
                             .height = dimensions.height,
                             .usage = igl::TextureDesc::TextureUsageBits::Attachment,
                             .type = TextureType::TwoD,
-                            .format = igl::TextureFormat::Z_UNorm24,
-                            .storage = igl::ResourceStorage::Private,
+                            .format = TextureFormat::Z_UNorm24,
+                            .storage = ResourceStorage::Private,
                         },
                         &ret),
                 },
@@ -418,8 +418,8 @@ void TQMultiRenderPassSession::update(SurfaceTextures surfaceTextures) noexcept 
                     .depthAttachmentFormat =
                         framebuffer0_->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         },
         nullptr);
@@ -440,8 +440,8 @@ void TQMultiRenderPassSession::update(SurfaceTextures surfaceTextures) noexcept 
                     .depthAttachmentFormat =
                         framebuffer1_->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         },
         nullptr);
@@ -459,7 +459,7 @@ void TQMultiRenderPassSession::update(SurfaceTextures surfaceTextures) noexcept 
 
   if (!fragmentUniformDescriptors_.empty()) {
     fragmentUniformDescriptors_.back().location =
-        pipelineState0_->getIndexByName("color", igl::ShaderStage::Fragment);
+        pipelineState0_->getIndexByName("color", ShaderStage::Fragment);
     fragmentUniformDescriptors_.back().type = UniformType::Float3;
     fragmentUniformDescriptors_.back().offset = offsetof(FragmentFormat, color);
   }
