@@ -163,7 +163,7 @@ class BlendingTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }

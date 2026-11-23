@@ -22,7 +22,7 @@ bool sSoftError = false;
 class AssertTest : public ::testing::Test {
  public:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglSetDebugAbortListener([](const char* /*category*/,
                                 const char* /*reason*/,
                                 const char* /*file*/,
@@ -247,13 +247,13 @@ TEST_F(AssertTest, SoftAssertPassDoesNotFire) {
 
 TEST_F(AssertTest, DebugBreakEnabledRoundTrip) {
   // SetUp() disables debug break, so the getter should reflect that initially.
-  EXPECT_FALSE(igl::isDebugBreakEnabled());
+  EXPECT_FALSE(isDebugBreakEnabled());
 
-  igl::setDebugBreakEnabled(true);
-  EXPECT_TRUE(igl::isDebugBreakEnabled());
+  setDebugBreakEnabled(true);
+  EXPECT_TRUE(isDebugBreakEnabled());
 
-  igl::setDebugBreakEnabled(false);
-  EXPECT_FALSE(igl::isDebugBreakEnabled());
+  setDebugBreakEnabled(false);
+  EXPECT_FALSE(isDebugBreakEnabled());
 }
 
 TEST_F(AssertTest, SoftErrorHandlerRoundTrip) {

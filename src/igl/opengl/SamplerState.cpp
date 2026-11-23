@@ -32,7 +32,7 @@ SamplerState::SamplerState(IContext& context, const SamplerStateDesc& desc) :
   addressW_(convertAddressMode(desc.addressModeW)),
   depthCompareFunction_(DepthStencilState::convertCompareFunction(desc.depthCompareFunction)),
   depthCompareEnabled_(desc.depthCompareEnabled),
-  isYUV_(desc.yuvFormat != igl::TextureFormat::Invalid) {
+  isYUV_(desc.yuvFormat != TextureFormat::Invalid) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   const std::hash<SamplerStateDesc> h;
   hash_ = h(desc);

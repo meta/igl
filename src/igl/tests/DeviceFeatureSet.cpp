@@ -51,29 +51,29 @@ class DeviceFeatureSetTest : public ::testing::Test {
 TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
   EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::StandardDerivative));
 
-  const bool backendOpenGL = iglDev_->getBackendType() == igl::BackendType::OpenGL;
+  const bool backendOpenGL = iglDev_->getBackendType() == BackendType::OpenGL;
 
   if (backendOpenGL) {
 #if IGL_BACKEND_OPENGL
-    auto& context = iglDev_->getPlatformDevice<igl::opengl::PlatformDevice>()->getContext();
-    const bool usesOpenGLES = igl::opengl::DeviceFeatureSet::usesOpenGLES();
+    auto& context = iglDev_->getPlatformDevice<opengl::PlatformDevice>()->getContext();
+    const bool usesOpenGLES = opengl::DeviceFeatureSet::usesOpenGLES();
     const auto& deviceFeatures = context.deviceFeatures();
     auto glVersion = deviceFeatures.getGLVersion();
 
     const bool readWriteFramebuffer =
-        glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+        glVersion >= opengl::GLVersion::v3_0_ES ||
         deviceFeatures.isSupported("GL_ARB_framebuffer_object") ||
         deviceFeatures.isSupported("GL_APPLE_framebuffer_multisample");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::ReadWriteFramebuffer), readWriteFramebuffer);
 
     const bool texture2DArray =
-        (usesOpenGLES ? glVersion >= igl::opengl::GLVersion::v3_0_ES
-                      : (glVersion >= igl::opengl::GLVersion::v3_0 ||
+        (usesOpenGLES ? glVersion >= opengl::GLVersion::v3_0_ES
+                      : (glVersion >= opengl::GLVersion::v3_0 ||
                          deviceFeatures.isSupported("GL_EXT_texture_array")));
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::Texture2DArray), texture2DArray);
 
-    const bool texture3D = (usesOpenGLES ? glVersion >= igl::opengl::GLVersion::v3_0_ES
-                                         : glVersion >= igl::opengl::GLVersion::v2_0) ||
+    const bool texture3D = (usesOpenGLES ? glVersion >= opengl::GLVersion::v3_0_ES
+                                         : glVersion >= opengl::GLVersion::v2_0) ||
                            deviceFeatures.isSupported("GL_OES_texture_3D");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::Texture3D), texture3D);
 
@@ -83,24 +83,23 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::TextureArrayExt), textureArrayExt);
 
     const bool textureExternalImage =
-        usesOpenGLES && (glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+        usesOpenGLES && (glVersion >= opengl::GLVersion::v3_0_ES ||
                          deviceFeatures.isSupported("GL_OES_EGL_image_external_essl3") ||
                          deviceFeatures.isSupported("GL_OES_EGL_image_external"));
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::TextureExternalImage), textureExternalImage);
 
-    const bool textureNotPot = (!usesOpenGLES || glVersion >= igl::opengl::GLVersion::v3_0_ES) ||
+    const bool textureNotPot = (!usesOpenGLES || glVersion >= opengl::GLVersion::v3_0_ES) ||
                                deviceFeatures.isSupported("GL_OES_texture_npot");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::TextureNotPot), textureNotPot);
 
     const bool multiView = deviceFeatures.isSupported("GL_OVR_multiview2") &&
-                           (usesOpenGLES ? glVersion >= igl::opengl::GLVersion::v3_0_ES
-                                         : glVersion >= igl::opengl::GLVersion::v3_0);
+                           (usesOpenGLES ? glVersion >= opengl::GLVersion::v3_0_ES
+                                         : glVersion >= opengl::GLVersion::v3_0);
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::Multiview), multiView);
 
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::BindUniform));
 
-    const bool texturePartialMipChain = !usesOpenGLES ||
-                                        glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+    const bool texturePartialMipChain = !usesOpenGLES || glVersion >= opengl::GLVersion::v3_0_ES ||
                                         deviceFeatures.isSupported("GL_APPLE_texture_max_level");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::TexturePartialMipChain), texturePartialMipChain);
 
@@ -111,8 +110,8 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::BufferDeviceAddress));
 
     const bool shaderTextureLod = iglDev_->hasFeature(DeviceFeatures::ShaderTextureLodExt) ||
-                                  (usesOpenGLES ? glVersion >= igl::opengl::GLVersion::v3_0_ES
-                                                : glVersion >= igl::opengl::GLVersion::v3_0);
+                                  (usesOpenGLES ? glVersion >= opengl::GLVersion::v3_0_ES
+                                                : glVersion >= opengl::GLVersion::v3_0);
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::ShaderTextureLod), shaderTextureLod);
 
     const bool shaderTextureLodExt = usesOpenGLES
@@ -125,9 +124,9 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::StandardDerivativeExt), standardDerivativeExt);
 
     const bool supportsSRGB =
-        (usesOpenGLES ? (glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+        (usesOpenGLES ? (glVersion >= opengl::GLVersion::v3_0_ES ||
                          deviceFeatures.isSupported("GL_EXT_sRGB"))
-                      : glVersion >= igl::opengl::GLVersion::v2_1 ||
+                      : glVersion >= opengl::GLVersion::v2_1 ||
                             deviceFeatures.isSupported("GL_EXT_texture_sRGB"));
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::SRGB), supportsSRGB);
 
@@ -136,28 +135,26 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
 
     const bool supportsSRGBWriteControl =
         usesOpenGLES ? deviceFeatures.isSupported("GL_EXT_sRGB_write_control")
-                     : glVersion >= igl::opengl::GLVersion::v3_0 ||
+                     : glVersion >= opengl::GLVersion::v3_0 ||
                            deviceFeatures.isSupported("GL_ARB_framebuffer_sRGB") ||
                            deviceFeatures.isSupported("GL_EXT_framebuffer_sRGB");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::SRGBWriteControl), supportsSRGBWriteControl);
 
-    const bool samplerMinMaxLod = !usesOpenGLES || glVersion >= igl::opengl::GLVersion::v3_0_ES;
+    const bool samplerMinMaxLod = !usesOpenGLES || glVersion >= opengl::GLVersion::v3_0_ES;
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::SamplerMinMaxLod), samplerMinMaxLod);
 
-    const bool drawIndexedIndirect =
-        (usesOpenGLES && glVersion >= igl::opengl::GLVersion::v3_1_ES) ||
-        (!usesOpenGLES && glVersion >= igl::opengl::GLVersion::v4_0) ||
-        deviceFeatures.isSupported("GL_ARB_draw_indirect");
+    const bool drawIndexedIndirect = (usesOpenGLES && glVersion >= opengl::GLVersion::v3_1_ES) ||
+                                     (!usesOpenGLES && glVersion >= opengl::GLVersion::v4_0) ||
+                                     deviceFeatures.isSupported("GL_ARB_draw_indirect");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::DrawIndexedIndirect), drawIndexedIndirect);
 
-    const bool multipleRenderTargets = !usesOpenGLES ||
-                                       glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+    const bool multipleRenderTargets = !usesOpenGLES || glVersion >= opengl::GLVersion::v3_0_ES ||
                                        deviceFeatures.isSupported("GL_EXT_draw_buffers");
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::MultipleRenderTargets), multipleRenderTargets);
 
     const bool explicitBinding =
-        (usesOpenGLES && glVersion >= igl::opengl::GLVersion::v3_1_ES) ||
-        (!usesOpenGLES && (glVersion >= igl::opengl::GLVersion::v4_2 ||
+        (usesOpenGLES && glVersion >= opengl::GLVersion::v3_1_ES) ||
+        (!usesOpenGLES && (glVersion >= opengl::GLVersion::v4_2 ||
                            deviceFeatures.isSupported("GL_ARB_shading_language_420pack")));
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::ExplicitBinding), explicitBinding);
 
@@ -165,10 +162,10 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::ExplicitBindingExt), explicitBindingExt);
 
     const bool textureFormatRG =
-        (usesOpenGLES && (glVersion >= igl::opengl::GLVersion::v3_0_ES ||
+        (usesOpenGLES && (glVersion >= opengl::GLVersion::v3_0_ES ||
                           deviceFeatures.isSupported("GL_EXT_texture_rg"))) ||
-        (!usesOpenGLES && (glVersion >= igl::opengl::GLVersion::v3_0 ||
-                           deviceFeatures.isSupported("GL_ARB_texture_rg")));
+        (!usesOpenGLES &&
+         (glVersion >= opengl::GLVersion::v3_0 || deviceFeatures.isSupported("GL_ARB_texture_rg")));
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::TextureFormatRG), textureFormatRG);
     EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::ValidationLayersEnabled));
     const bool externalMemoryObjects = deviceFeatures.isSupported("GL_EXT_memory_object") &&
@@ -181,17 +178,17 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     // From OpenGL (ES) 3.0, which Subpasses needs, isSupported() matches whole extension names, so
     // GL_EXT_shader_framebuffer_fetch_non_coherent alone does not satisfy the fetch check
     const bool drawBuffersIndexed =
-        usesOpenGLES ? (glVersion >= igl::opengl::GLVersion::v3_2_ES ||
+        usesOpenGLES ? (glVersion >= opengl::GLVersion::v3_2_ES ||
                         deviceFeatures.isSupported("GL_OES_draw_buffers_indexed") ||
                         deviceFeatures.isSupported("GL_EXT_draw_buffers_indexed"))
-                     : glVersion >= igl::opengl::GLVersion::v4_0;
+                     : glVersion >= opengl::GLVersion::v4_0;
     const auto* renderer = reinterpret_cast<const char*>(context.getString(GL_RENDERER));
     const auto* vendor = reinterpret_cast<const char*>(context.getString(GL_VENDOR));
-    const bool subpasses = (usesOpenGLES ? glVersion >= igl::opengl::GLVersion::v3_0_ES
-                                         : glVersion >= igl::opengl::GLVersion::v4_0) &&
+    const bool subpasses = (usesOpenGLES ? glVersion >= opengl::GLVersion::v3_0_ES
+                                         : glVersion >= opengl::GLVersion::v4_0) &&
                            deviceFeatures.isSupported("GL_EXT_shader_framebuffer_fetch") &&
                            drawBuffersIndexed &&
-                           !igl::opengl::hasBrokenFramebufferFetch(renderer, vendor);
+                           !opengl::hasBrokenFramebufferFetch(renderer, vendor);
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::Subpasses), subpasses);
     EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::MemorylessAttachments));
     EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::MultiviewSubpasses));
@@ -199,7 +196,7 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::DynamicCullMode));
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::DynamicFrontFacingWinding));
 #endif // IGL_BACKEND_OPENGL
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::TextureNotPot));
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::SRGB));
     EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::ShaderLibrary));
@@ -235,7 +232,7 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::SRGBSwapchain), true);
     EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::SRGBWriteControl), false);
 
-    if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+    if (iglDev_->getBackendType() == BackendType::Vulkan) {
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture2DArray));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture3D));
       EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::TextureArrayExt));
@@ -275,7 +272,7 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
       // features must report the same availability.
       EXPECT_EQ(iglDev_->hasFeature(DeviceFeatures::DynamicCullMode),
                 iglDev_->hasFeature(DeviceFeatures::DynamicFrontFacingWinding));
-    } else if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+    } else if (iglDev_->getBackendType() == BackendType::Metal) {
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture2DArray));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture3D));
       EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::TextureArrayExt));
@@ -304,7 +301,7 @@ TEST_F(DeviceFeatureSetTest, hasFeatureForMacOSOrWinOrAndroidTest) {
       EXPECT_FALSE(iglDev_->hasFeature(DeviceFeatures::MultiviewSubpasses));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::DynamicCullMode));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::DynamicFrontFacingWinding));
-    } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+    } else if (iglDev_->getBackendType() == BackendType::D3D12) {
       // D3D12 backend
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture2DArray));
       EXPECT_TRUE(iglDev_->hasFeature(DeviceFeatures::Texture3D));
@@ -888,7 +885,7 @@ void expectTimestampQueriesAtTier(const std::shared_ptr<ITimestampQueries>& quer
 } // namespace
 
 TEST_F(DeviceFeatureSetTest, TimestampQueriesWithoutOptInFollowTheClassification) {
-  if (iglDev_->getBackendType() != igl::BackendType::OpenGL) {
+  if (iglDev_->getBackendType() != BackendType::OpenGL) {
     GTEST_SKIP() << "OpenGL only";
   }
   const auto& device = static_cast<const opengl::Device&>(*iglDev_);
@@ -913,7 +910,7 @@ TEST_F(DeviceFeatureSetTest, TimestampQueriesWithoutOptInFollowTheClassification
 }
 
 TEST_F(DeviceFeatureSetTest, TimestampQueriesWithOptInUseTheOverrideTier) {
-  if (iglDev_->getBackendType() != igl::BackendType::OpenGL) {
+  if (iglDev_->getBackendType() != BackendType::OpenGL) {
     GTEST_SKIP() << "OpenGL only";
   }
   const auto& device = static_cast<const opengl::Device&>(*iglDev_);
@@ -995,7 +992,7 @@ TEST_F(GpuTimerTierTest, DebugOverrideIsReadFromTheEnvironmentOnlyInDebugBuilds)
 }
 
 TEST_F(DeviceFeatureSetTest, GpuTimerTierHonorsTheDebugOverride) {
-  const auto* platformDevice = iglDev_->getPlatformDevice<igl::opengl::PlatformDevice>();
+  const auto* platformDevice = iglDev_->getPlatformDevice<opengl::PlatformDevice>();
   if (platformDevice == nullptr) {
     GTEST_SKIP() << "OpenGL only";
   }

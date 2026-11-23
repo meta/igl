@@ -178,7 +178,7 @@ class FramebufferTest : public ::testing::Test {
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}},
                        .depthAttachmentFormat = depthStencilTexture_->getFormat(),
                        .stencilAttachmentFormat = depthStencilTexture_->getFormat()},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
 
     //
@@ -644,11 +644,11 @@ TEST_F(FramebufferTest, UpdateDrawableWithDepthAndStencilTest) {
 }
 
 TEST_F(FramebufferTest, GetColorAttachmentTest) {
-  const bool backendOpenGL = iglDev_->getBackendType() == igl::BackendType::OpenGL;
+  const bool backendOpenGL = iglDev_->getBackendType() == BackendType::OpenGL;
 
   if (backendOpenGL) {
 #if IGL_BACKEND_OPENGL
-    if (!iglDev_->getPlatformDevice<igl::opengl::PlatformDevice>()
+    if (!iglDev_->getPlatformDevice<opengl::PlatformDevice>()
              ->getContext()
              .deviceFeatures()
              .hasInternalFeature(opengl::InternalFeatures::PackRowLength)) {
@@ -708,7 +708,7 @@ TEST_F(FramebufferTest, GetColorAttachmentTest) {
   const int outputElementPerRow = outputImageWidth * channelCount;
   auto pixels = std::vector<uint8_t>(static_cast<size_t>(outputElementPerRow * textureHeight), 0);
 
-  const auto rangeDesc = igl::TextureRangeDesc::new2D(0, 0, textureWidth, textureHeight);
+  const auto rangeDesc = TextureRangeDesc::new2D(0, 0, textureWidth, textureHeight);
   framebuffer_->copyBytesColorAttachment(*cmdQueue_,
                                          0,
                                          pixels.data(),

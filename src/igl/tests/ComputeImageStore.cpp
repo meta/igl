@@ -160,8 +160,8 @@ void ComputeImageStoreTest::runImageStoreTest(TextureFormat format) {
   // Metal. Feeding the sRGB orange directly would treat it as linear and encode it a
   // second time: 0.502 linear encodes to ~0.735 sRGB, i.e. byte 188 instead of 128.
   const bool isSRGB = (format == TextureFormat::RGBA_SRGB);
-  const bool isMetal = (iglDev_->getBackendType() == igl::BackendType::Metal);
-  const bool isVulkan = (iglDev_->getBackendType() == igl::BackendType::Vulkan);
+  const bool isMetal = (iglDev_->getBackendType() == BackendType::Metal);
+  const bool isVulkan = (iglDev_->getBackendType() == BackendType::Vulkan);
 
   glm::vec4 writeColor(kOrangeR / 255.0f, kOrangeG / 255.0f, kOrangeB / 255.0f, kOrangeA / 255.0f);
   if (isSRGB && (isMetal || isVulkan)) {
@@ -183,19 +183,19 @@ void ComputeImageStoreTest::runImageStoreTest(TextureFormat format) {
   // Compile compute shader
   std::string source;
   std::string_view entryName;
-  if (iglDev_->getBackendType() == igl::BackendType::OpenGL) {
+  if (iglDev_->getBackendType() == BackendType::OpenGL) {
     source = kOglImageStoreShader;
     entryName = kImageStoreFunc;
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     source = kVulkanImageStoreShader;
     entryName = "main";
   } else if (isMetal) {
     source = kMtlImageStoreShader;
     entryName = kImageStoreFunc;
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = kD3D12ImageStoreShader;
     entryName = kImageStoreFunc;
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = kWgslImageStoreShader;
     entryName = kImageStoreFunc;
   } else {

@@ -23,10 +23,9 @@ constexpr std::array<GLenum, 6> kCubeFaceTargets = {GL_TEXTURE_CUBE_MAP_POSITIVE
                                                     GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
                                                     GL_TEXTURE_CUBE_MAP_NEGATIVE_Z};
 void swapTextureChannelsForFormat(IContext& context, GLuint target, TextureFormat iglFormat) {
-  if (iglFormat == igl::TextureFormat::A_UNorm8 &&
-      context.deviceFeatures().hasInternalRequirement(
-          InternalRequirement::SwizzleAlphaTexturesReq)) {
-    if (iglFormat == igl::TextureFormat::A_UNorm8) {
+  if (iglFormat == TextureFormat::A_UNorm8 && context.deviceFeatures().hasInternalRequirement(
+                                                  InternalRequirement::SwizzleAlphaTexturesReq)) {
+    if (iglFormat == TextureFormat::A_UNorm8) {
       // In GL3, GL_RED is used since GL_ALPHA is removed. To keep parity, red value must be set
       // to the alpha channel.
       context.texParameteri(target, GL_TEXTURE_SWIZZLE_R, GL_ZERO);

@@ -122,7 +122,7 @@ TEST(NameHandleTests, MoveAssignment) {
 
 TEST(NameHandleTests, GenNameHandleRuntimeConsistency) {
   const NameHandle compileTime = IGL_NAMEHANDLE("hello");
-  const NameHandle runtime = igl::genNameHandle("hello");
+  const NameHandle runtime = genNameHandle("hello");
   EXPECT_EQ(compileTime.getCrc32(), runtime.getCrc32());
   EXPECT_EQ(compileTime.toString(), runtime.toString());
 }
@@ -130,7 +130,7 @@ TEST(NameHandleTests, GenNameHandleRuntimeConsistency) {
 TEST(NameHandleTests, Crc32StringViewConsistency) {
   constexpr std::string_view sv = "testString";
   constexpr uint32_t crcSv = igl::iglCrc32ConstExpr(sv);
-  constexpr uint32_t crcCstr = igl::iglCrc32ConstExpr("testString");
+  constexpr uint32_t crcCstr = iglCrc32ConstExpr("testString");
   static_assert(crcSv == crcCstr, "CRC32 string_view and const char* overloads must agree");
   EXPECT_EQ(crcSv, crcCstr);
 }

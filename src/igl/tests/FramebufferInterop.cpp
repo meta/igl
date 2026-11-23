@@ -26,7 +26,7 @@ class FramebufferInteropTest : public ::testing::Test {
   FramebufferInteropTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(device_, cmdQueue_);
     ASSERT_TRUE(device_ != nullptr);
@@ -163,7 +163,7 @@ TEST_F(FramebufferInteropTest, AttachmentGetNativeImage) {
   ASSERT_NE(colorAttachment, nullptr);
 
   // For some backends it may be not possible to get native image
-  if (device_->getBackendType() != igl::BackendType::OpenGL) {
+  if (device_->getBackendType() != BackendType::OpenGL) {
     void* nativeImage = colorAttachment->getNativeImage();
     EXPECT_NE(nativeImage, nullptr);
   }
@@ -246,7 +246,7 @@ TEST_F(FramebufferInteropTest, MultipleColorAttachments) {
 }
 
 TEST_F(FramebufferInteropTest, StereoFramebuffer) {
-  if (device_->getBackendType() == igl::BackendType::OpenGL &&
+  if (device_->getBackendType() == BackendType::OpenGL &&
       device_->getBackendVersion().majorVersion < 3) {
     GTEST_SKIP() << "Stereo rendering is not supported in OpenGL ES 2.0";
   }

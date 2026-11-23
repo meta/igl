@@ -41,7 +41,7 @@ class DeviceTest : public ::testing::Test {
     // I suspect that might be the actual issue, but it requires deeper D3D12 backend investigation
     // first Release all GPU resources before destroying the device Resources must be released in
     // reverse order of creation and before the device is destroyed to avoid VMA cleanup issues
-    if (iglDev_ && iglDev_->getBackendType() == igl::BackendType::D3D12) {
+    if (iglDev_ && iglDev_->getBackendType() == BackendType::D3D12) {
       ib_.reset();
       vertexInputState_.reset();
       shaderStages_.reset();
@@ -56,7 +56,7 @@ class DeviceTest : public ::testing::Test {
   // Set up common resources. This will create a device and a command queue
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
 
@@ -127,7 +127,7 @@ class DeviceTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
   }
 
@@ -200,12 +200,12 @@ TEST_F(DeviceTest, LastDrawStat) {
 //
 TEST_F(DeviceTest, InDevelopmentFeature) {
   // Set a flag
-  iglDev_->setDevelopmentFlags(igl::InDevelopementFeatures::DummyFeatureExample, true);
-  ASSERT_TRUE(iglDev_->testDevelopmentFlags(igl::InDevelopementFeatures::DummyFeatureExample) != 0);
+  iglDev_->setDevelopmentFlags(InDevelopementFeatures::DummyFeatureExample, true);
+  ASSERT_TRUE(iglDev_->testDevelopmentFlags(InDevelopementFeatures::DummyFeatureExample) != 0);
 
   // Reset the flag
-  iglDev_->setDevelopmentFlags(igl::InDevelopementFeatures::DummyFeatureExample, false);
-  ASSERT_TRUE(iglDev_->testDevelopmentFlags(igl::InDevelopementFeatures::DummyFeatureExample) == 0);
+  iglDev_->setDevelopmentFlags(InDevelopementFeatures::DummyFeatureExample, false);
+  ASSERT_TRUE(iglDev_->testDevelopmentFlags(InDevelopementFeatures::DummyFeatureExample) == 0);
 }
 
 //
@@ -214,15 +214,15 @@ TEST_F(DeviceTest, InDevelopmentFeature) {
 // Make sure IDevice->getBackendType() only returns expected values
 //
 TEST_F(DeviceTest, GetBackendType) {
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     ASSERT_EQ(backend_, util::kBackendMtl);
-  } else if (iglDev_->getBackendType() == igl::BackendType::OpenGL) {
+  } else if (iglDev_->getBackendType() == BackendType::OpenGL) {
     ASSERT_EQ(backend_, util::kBackendOgl);
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     ASSERT_EQ(backend_, util::kBackendVul);
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     ASSERT_EQ(backend_, util::kBackendD3D12);
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     ASSERT_EQ(backend_, util::kBackendWebGPU);
   } else {
     ASSERT_TRUE(0);

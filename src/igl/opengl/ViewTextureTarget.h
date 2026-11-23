@@ -28,9 +28,9 @@ class PlatformDevice;
 // platforms. It represents the "texture" associated with the default framebuffer on OpenGL (i.e.
 // framebuffer with ID 0), which is not available on some platforms such as iOS.
 class ViewTextureTarget final : public Texture {
-  friend class igl::opengl::egl::PlatformDevice;
-  friend class igl::opengl::wgl::PlatformDevice;
-  friend class igl::opengl::webgl::PlatformDevice;
+  friend class egl::PlatformDevice;
+  friend class wgl::PlatformDevice;
+  friend class webgl::PlatformDevice;
 
  public:
   using Super = Texture;

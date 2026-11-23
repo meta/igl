@@ -53,7 +53,7 @@ class TextureArrayTest : public ::testing::Test {
         .uniforms = {
             UniformDesc{
                 .name = "layer",
-                .type = igl::UniformType::Int,
+                .type = UniformType::Int,
                 .offset = offsetof(VertexUniforms, layer),
             },
         }};
@@ -121,25 +121,25 @@ class TextureArrayTest : public ::testing::Test {
 #if IGL_BACKEND_OPENGL
       if (iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES) {
         util::createShaderStages(iglDev_,
-                                 igl::tests::data::shader::kOglSimpleVertShaderTexArrayEs3,
-                                 igl::tests::data::shader::kShaderFunc,
-                                 igl::tests::data::shader::kOglSimpleFragShaderTexArrayEs3,
-                                 igl::tests::data::shader::kShaderFunc,
+                                 data::shader::kOglSimpleVertShaderTexArrayEs3,
+                                 data::shader::kShaderFunc,
+                                 data::shader::kOglSimpleFragShaderTexArrayEs3,
+                                 data::shader::kShaderFunc,
                                  stages);
       } else {
         if (!iglDev_->hasRequirement(DeviceRequirement::TextureArrayExtReq)) {
           util::createShaderStages(iglDev_,
-                                   igl::tests::data::shader::kOglSimpleVertShaderTexArray,
-                                   igl::tests::data::shader::kShaderFunc,
-                                   igl::tests::data::shader::kOglSimpleFragShaderTexArray,
-                                   igl::tests::data::shader::kShaderFunc,
+                                   data::shader::kOglSimpleVertShaderTexArray,
+                                   data::shader::kShaderFunc,
+                                   data::shader::kOglSimpleFragShaderTexArray,
+                                   data::shader::kShaderFunc,
                                    stages);
         } else if (iglDev_->hasFeature(DeviceFeatures::TextureArrayExt)) {
           util::createShaderStages(iglDev_,
-                                   igl::tests::data::shader::kOglSimpleVertShaderTexArrayExt,
-                                   igl::tests::data::shader::kShaderFunc,
-                                   igl::tests::data::shader::kOglSimpleFragShaderTexArrayExt,
-                                   igl::tests::data::shader::kShaderFunc,
+                                   data::shader::kOglSimpleVertShaderTexArrayExt,
+                                   data::shader::kShaderFunc,
+                                   data::shader::kOglSimpleFragShaderTexArrayExt,
+                                   data::shader::kShaderFunc,
                                    stages);
         }
       }
@@ -149,30 +149,30 @@ class TextureArrayTest : public ::testing::Test {
 #endif // IGL_BACKEND_OPENGL
     } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kVulkanSimpleVertShaderTex2dArray,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kVulkanSimpleFragShaderTex2dArray,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kVulkanSimpleVertShaderTex2dArray,
+                               data::shader::kShaderFunc,
+                               data::shader::kVulkanSimpleFragShaderTex2dArray,
+                               data::shader::kShaderFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::Metal) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kMtlSimpleShaderTxt2dArray,
-                               igl::tests::data::shader::kSimpleVertFunc,
-                               igl::tests::data::shader::kSimpleFragFunc,
+                               data::shader::kMtlSimpleShaderTxt2dArray,
+                               data::shader::kSimpleVertFunc,
+                               data::shader::kSimpleFragFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::D3D12) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kD3D12SimpleVertShaderTexArray,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kD3D12SimpleFragShaderTexArray,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kD3D12SimpleVertShaderTexArray,
+                               data::shader::kShaderFunc,
+                               data::shader::kD3D12SimpleFragShaderTexArray,
+                               data::shader::kShaderFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kWgslSimpleVertShaderTex2dArray,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kWgslSimpleFragShaderTex2dArray,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kWgslSimpleVertShaderTex2dArray,
+                               data::shader::kShaderFunc,
+                               data::shader::kWgslSimpleFragShaderTex2dArray,
+                               data::shader::kShaderFunc,
                                stages);
     }
 
@@ -243,7 +243,7 @@ class TextureArrayTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }

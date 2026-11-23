@@ -71,7 +71,7 @@ TEST_F(HashTest, GraphicsPipeline1) {
   ASSERT_EQ(std::hash<RenderPipelineDesc>()(descOne), std::hash<RenderPipelineDesc>()(descTwo));
 
   // Modify descTwo 1
-  descTwo.cullMode = igl::CullMode::Front;
+  descTwo.cullMode = CullMode::Front;
 
   ASSERT_NE(std::hash<RenderPipelineDesc>()(descOne), std::hash<RenderPipelineDesc>()(descTwo));
   descTwo.cullMode = descOne.cullMode;
@@ -137,13 +137,13 @@ TEST_F(HashTest, GraphicsPipeline3) {
   ASSERT_TRUE(descOne == descTwo);
 
   // Change and restore cull mode
-  descTwo.cullMode = igl::CullMode::Front;
+  descTwo.cullMode = CullMode::Front;
   ASSERT_TRUE(descOne != descTwo);
   descTwo.cullMode = descOne.cullMode;
   ASSERT_TRUE(descOne == descTwo);
 
   // Change and restore winding mode
-  descTwo.frontFaceWinding = igl::WindingMode::Clockwise;
+  descTwo.frontFaceWinding = WindingMode::Clockwise;
   ASSERT_TRUE(descOne != descTwo);
   descTwo.frontFaceWinding = descOne.frontFaceWinding;
   ASSERT_TRUE(descOne == descTwo);

@@ -74,20 +74,20 @@ class ComputeCommandEncoderTest : public ::testing::Test {
     { // Compile CS
       std::string_view entryName;
       std::string_view source;
-      if (iglDev_->getBackendType() == igl::BackendType::OpenGL) {
-        source = igl::tests::data::shader::kOglSimpleComputeShader;
-        entryName = igl::tests::data::shader::kSimpleComputeFunc;
-      } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
-        source = igl::tests::data::shader::kVulkanSimpleComputeShader;
+      if (iglDev_->getBackendType() == BackendType::OpenGL) {
+        source = data::shader::kOglSimpleComputeShader;
+        entryName = data::shader::kSimpleComputeFunc;
+      } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
+        source = data::shader::kVulkanSimpleComputeShader;
         entryName = "main"; // entry point is not pipelined. Hardcoding to main for now.
-      } else if (iglDev_->getBackendType() == igl::BackendType::Metal) {
-        source = igl::tests::data::shader::kMtlSimpleComputeShader;
-        entryName = igl::tests::data::shader::kSimpleComputeFunc;
-      } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
-        source = igl::tests::data::shader::kD3D12SimpleComputeShader;
-        entryName = igl::tests::data::shader::kSimpleComputeFunc;
-      } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
-        source = igl::tests::data::shader::kWgslSimpleComputeShader;
+      } else if (iglDev_->getBackendType() == BackendType::Metal) {
+        source = data::shader::kMtlSimpleComputeShader;
+        entryName = data::shader::kSimpleComputeFunc;
+      } else if (iglDev_->getBackendType() == BackendType::D3D12) {
+        source = data::shader::kD3D12SimpleComputeShader;
+        entryName = data::shader::kSimpleComputeFunc;
+      } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
+        source = data::shader::kWgslSimpleComputeShader;
         entryName = "main";
       } else {
         IGL_DEBUG_ASSERT_NOT_REACHED();
@@ -111,10 +111,10 @@ class ComputeCommandEncoderTest : public ::testing::Test {
                      std::shared_ptr<IComputePipelineState>& ret) {
     ASSERT_TRUE(computeStages_ != nullptr);
     const ComputePipelineDesc computeDesc{
-        .buffersMap = {{igl::tests::data::shader::kSimpleComputeInputIndex,
-                        IGL_NAMEHANDLE(igl::tests::data::shader::kSimpleComputeInput)},
-                       {igl::tests::data::shader::kSimpleComputeOutputIndex,
-                        IGL_NAMEHANDLE(igl::tests::data::shader::kSimpleComputeOutput)}},
+        .buffersMap = {{data::shader::kSimpleComputeInputIndex,
+                        IGL_NAMEHANDLE(data::shader::kSimpleComputeInput)},
+                       {data::shader::kSimpleComputeOutputIndex,
+                        IGL_NAMEHANDLE(data::shader::kSimpleComputeOutput)}},
         .shaderStages = computeStages_,
     };
     auto computePipelineState = iglDev_->createComputePipeline(computeDesc, nullptr);
@@ -126,9 +126,8 @@ class ComputeCommandEncoderTest : public ::testing::Test {
     computeEncoder->insertDebugEventLabel("Running ComputeCommandEncoderTest...");
 
     computeEncoder->bindComputePipelineState(computePipelineState);
-    computeEncoder->bindBuffer(igl::tests::data::shader::kSimpleComputeInputIndex, bufferIn.get());
-    computeEncoder->bindBuffer(igl::tests::data::shader::kSimpleComputeOutputIndex,
-                               bufferOut.get());
+    computeEncoder->bindBuffer(data::shader::kSimpleComputeInputIndex, bufferIn.get());
+    computeEncoder->bindBuffer(data::shader::kSimpleComputeOutputIndex, bufferOut.get());
 
     const Dimensions threadgroupSize(kDataIn.size(), 1, 1);
     const Dimensions threadgroupCount(1, 1, 1);

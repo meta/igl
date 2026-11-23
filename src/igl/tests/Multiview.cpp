@@ -45,7 +45,7 @@ class MultiviewTest : public ::testing::Test {
             {
                 {.name = "colors",
                  .location = -1,
-                 .type = igl::UniformType::Float4,
+                 .type = UniformType::Float4,
                  .numElements = 2,
                  .offset = 0,
                  .elementStride = sizeof(glm::vec4)},
@@ -72,7 +72,7 @@ class MultiviewTest : public ::testing::Test {
   void SetUp() override {
     setDebugBreakEnabled(false);
 
-    const std::vector<DeviceFeatures> requestedFeatures{igl::DeviceFeatures::Multiview};
+    const std::vector<DeviceFeatures> requestedFeatures{DeviceFeatures::Multiview};
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_NE(iglDev_, nullptr);
@@ -178,7 +178,7 @@ class MultiviewTest : public ::testing::Test {
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}},
                        .depthAttachmentFormat = depthStencilTexture_->getFormat(),
                        .stencilAttachmentFormat = depthStencilTexture_->getFormat()},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
     };
   }
 
@@ -228,16 +228,16 @@ TEST_F(MultiviewTest, SinglePassStereo) {
   if (backend_ == util::kBackendOgl) {
     igl::tests::util::createShaderStages(iglDev_,
                                          data::shader::kOglSimpleVertShaderMultiviewEs3,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          data::shader::kOglSimpleFragShaderMultiviewEs3,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          stages);
   } else if (backend_ == util::kBackendVul) {
     igl::tests::util::createShaderStages(iglDev_,
                                          data::shader::kVulkanSimpleVertShaderMultiview,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          data::shader::kVulkanSimpleFragShaderMultiview,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          stages);
   }
 

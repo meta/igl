@@ -157,7 +157,7 @@ class RenderCommandEncoderTest : public ::testing::Test {
                 .depthAttachmentFormat = depthStencilTexture_->getFormat(),
                 .stencilAttachmentFormat = depthStencilTexture_->getFormat(),
             },
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
 
@@ -498,7 +498,7 @@ TEST_F(RenderCommandEncoderTest, shouldDrawLineStrip) {
 }
 
 TEST_F(RenderCommandEncoderTest, drawIndexedFirstIndex) {
-  if (!iglDev_->hasFeature(igl::DeviceFeatures::DrawFirstIndexFirstVertex)) {
+  if (!iglDev_->hasFeature(DeviceFeatures::DrawFirstIndexFirstVertex)) {
     GTEST_SKIP();
   }
   initializeBuffers(
@@ -539,7 +539,7 @@ TEST_F(RenderCommandEncoderTest, drawIndexedFirstIndex) {
 }
 
 TEST_F(RenderCommandEncoderTest, drawIndexed8Bit) {
-  if (!iglDev_->hasFeature(igl::DeviceFeatures::Indices8Bit)) {
+  if (!iglDev_->hasFeature(DeviceFeatures::Indices8Bit)) {
     GTEST_SKIP();
   }
   initializeBuffers(
@@ -579,7 +579,7 @@ TEST_F(RenderCommandEncoderTest, drawIndexed8Bit) {
 }
 
 TEST_F(RenderCommandEncoderTest, drawInstanced) {
-  if (!iglDev_->hasFeature(igl::DeviceFeatures::DrawFirstIndexFirstVertex)) {
+  if (!iglDev_->hasFeature(DeviceFeatures::DrawFirstIndexFirstVertex)) {
     GTEST_SKIP();
   }
   initializeBuffers(
@@ -726,9 +726,9 @@ TEST_F(RenderCommandEncoderTest, shouldDrawTriangleStrip) {
 }
 
 TEST_F(RenderCommandEncoderTest, shouldDrawTriangleStripCopyTextureToBuffer) {
-  if (iglDev_->getBackendType() != igl::BackendType::Vulkan &&
-      iglDev_->getBackendType() != igl::BackendType::D3D12 &&
-      iglDev_->getBackendType() != igl::BackendType::WebGPU) {
+  if (iglDev_->getBackendType() != BackendType::Vulkan &&
+      iglDev_->getBackendType() != BackendType::D3D12 &&
+      iglDev_->getBackendType() != BackendType::WebGPU) {
     GTEST_SKIP() << "Not implemented for this backend";
   }
 
@@ -847,7 +847,7 @@ TEST_F(RenderCommandEncoderTest, shouldNotDraw) {
 
 TEST_F(RenderCommandEncoderTest, shouldDrawATriangleBindGroup) {
 #if IGL_PLATFORM_APPLE
-  if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  if (iglDev_->getBackendType() == BackendType::Vulkan) {
     // @fb-only
     GTEST_SKIP() << "Broken on macOS arm64";
   }
@@ -926,26 +926,26 @@ TEST_F(RenderCommandEncoderTest, drawUsingBindPushConstants) {
 
   // Create new shader stages with push constant shaders
   std::unique_ptr<IShaderStages> pushConstantStages;
-  if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  if (iglDev_->getBackendType() == BackendType::D3D12) {
     igl::tests::util::createShaderStages(iglDev_,
                                          data::shader::kD3D12PushConstantVertShader,
                                          std::string("main"),
                                          data::shader::kD3D12PushConstantFragShader,
                                          std::string("main"),
                                          pushConstantStages);
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     igl::tests::util::createShaderStages(iglDev_,
                                          data::shader::kWgslSimpleVertShader,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          data::shader::kWgslPushConstantFragShader,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          pushConstantStages);
   } else {
     igl::tests::util::createShaderStages(iglDev_,
                                          data::shader::kVulkanPushConstantVertShader,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          data::shader::kVulkanPushConstantFragShader,
-                                         igl::tests::data::shader::kShaderFunc,
+                                         data::shader::kShaderFunc,
                                          pushConstantStages);
   }
   ASSERT_TRUE(pushConstantStages);
@@ -959,7 +959,7 @@ TEST_F(RenderCommandEncoderTest, drawUsingBindPushConstants) {
       .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}},
                      .depthAttachmentFormat = depthStencilTexture_->getFormat(),
                      .stencilAttachmentFormat = depthStencilTexture_->getFormat()},
-      .cullMode = igl::CullMode::Disabled,
+      .cullMode = CullMode::Disabled,
       .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
   };
 

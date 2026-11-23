@@ -52,7 +52,7 @@ class TextureCubeTest : public ::testing::Test {
         .uniforms = {
             UniformDesc{
                 .name = "view",
-                .type = igl::UniformType::Float4,
+                .type = UniformType::Float4,
                 .offset = offsetof(VertexUniforms, viewDirection),
             },
         }};
@@ -110,37 +110,37 @@ class TextureCubeTest : public ::testing::Test {
     std::unique_ptr<IShaderStages> stages;
     if (iglDev_->getBackendType() == BackendType::OpenGL) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kOglSimpleVertShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kOglSimpleFragShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kOglSimpleVertShaderCube,
+                               data::shader::kShaderFunc,
+                               data::shader::kOglSimpleFragShaderCube,
+                               data::shader::kShaderFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::Metal) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kMtlSimpleShaderCube,
-                               igl::tests::data::shader::kSimpleVertFunc,
-                               igl::tests::data::shader::kSimpleFragFunc,
+                               data::shader::kMtlSimpleShaderCube,
+                               data::shader::kSimpleVertFunc,
+                               data::shader::kSimpleFragFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kVulkanSimpleVertShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kVulkanSimpleFragShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kVulkanSimpleVertShaderCube,
+                               data::shader::kShaderFunc,
+                               data::shader::kVulkanSimpleFragShaderCube,
+                               data::shader::kShaderFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::D3D12) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kD3D12SimpleVertShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kD3D12SimpleFragShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kD3D12SimpleVertShaderCube,
+                               data::shader::kShaderFunc,
+                               data::shader::kD3D12SimpleFragShaderCube,
+                               data::shader::kShaderFunc,
                                stages);
     } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
       util::createShaderStages(iglDev_,
-                               igl::tests::data::shader::kWgslSimpleVertShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
-                               igl::tests::data::shader::kWgslSimpleFragShaderCube,
-                               igl::tests::data::shader::kShaderFunc,
+                               data::shader::kWgslSimpleVertShaderCube,
+                               data::shader::kShaderFunc,
+                               data::shader::kWgslSimpleFragShaderCube,
+                               data::shader::kShaderFunc,
                                stages);
     } else {
       ASSERT_TRUE(false);
@@ -211,7 +211,7 @@ class TextureCubeTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }

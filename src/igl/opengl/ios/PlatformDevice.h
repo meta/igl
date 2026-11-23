@@ -27,7 +27,7 @@ class Device;
 // @fb-only
 class PlatformDevice final : public opengl::PlatformDevice {
  public:
-  static constexpr PlatformDeviceType kType = igl::PlatformDeviceType::OpenGLIOS;
+  static constexpr PlatformDeviceType kType = PlatformDeviceType::OpenGLIOS;
 
   PlatformDevice(Device& owner);
   ~PlatformDevice() override;

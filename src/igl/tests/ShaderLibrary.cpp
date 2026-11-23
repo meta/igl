@@ -24,7 +24,7 @@ class ShaderLibraryTest : public ::testing::Test {
   //
   void SetUp() override {
     // Turn off debug breaks, only use in debug mode
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     util::createDeviceAndQueue(iglDev_, cmdQueue_);
     ASSERT_TRUE(iglDev_ != nullptr);
@@ -45,13 +45,13 @@ TEST_F(ShaderLibraryTest, CreateFromSource) {
   }
 
   const char* source = nullptr;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     source = data::shader::kMtlSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     source = data::shader::kVulkanSimpleVertShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = data::shader::kWgslSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = data::shader::kD3D12SimpleShader.data();
   } else {
     IGL_DEBUG_ASSERT_NOT_REACHED();
@@ -90,13 +90,13 @@ TEST_F(ShaderLibraryTest, CreateFromSourceMultipleModules) {
   }
 
   const char* source = nullptr;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     source = data::shader::kMtlSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     GTEST_SKIP() << "Vulkan does not support multiple modules from the same source code.";
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = data::shader::kWgslSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = data::shader::kD3D12SimpleShader.data();
   }
 
@@ -131,13 +131,13 @@ TEST_F(ShaderLibraryTest, CreateFromSourceNoResult) {
   }
 
   const char* source = nullptr;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     source = data::shader::kMtlSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     source = data::shader::kVulkanSimpleVertShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = data::shader::kWgslSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = data::shader::kD3D12SimpleShader.data();
   } else {
     IGL_DEBUG_ASSERT_NOT_REACHED();
@@ -166,13 +166,13 @@ TEST_F(ShaderLibraryTest, GetNonExistentModuleReturnsNull) {
   }
 
   const char* source = nullptr;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     source = data::shader::kMtlSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     source = data::shader::kVulkanSimpleVertShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = data::shader::kWgslSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = data::shader::kD3D12SimpleShader.data();
   }
 
@@ -196,13 +196,13 @@ TEST_F(ShaderLibraryTest, CreateWithDebugName) {
   }
 
   const char* source = nullptr;
-  if (iglDev_->getBackendType() == igl::BackendType::Metal) {
+  if (iglDev_->getBackendType() == BackendType::Metal) {
     source = data::shader::kMtlSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::Vulkan) {
+  } else if (iglDev_->getBackendType() == BackendType::Vulkan) {
     source = data::shader::kVulkanSimpleVertShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::WebGPU) {
+  } else if (iglDev_->getBackendType() == BackendType::WebGPU) {
     source = data::shader::kWgslSimpleShader.data();
-  } else if (iglDev_->getBackendType() == igl::BackendType::D3D12) {
+  } else if (iglDev_->getBackendType() == BackendType::D3D12) {
     source = data::shader::kD3D12SimpleShader.data();
   }
 

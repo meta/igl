@@ -101,7 +101,7 @@ class TextureFloatTest : public ::testing::Test {
         .uniforms = {
             UniformDesc{
                 .name = "layer",
-                .type = igl::UniformType::Int,
+                .type = UniformType::Int,
                 .offset = offsetof(VertexUniforms, layer),
             },
         }};
@@ -149,7 +149,7 @@ class TextureFloatTest : public ::testing::Test {
         .vertexInputState = vertexInputState_,
         .shaderStages = shaderStages_,
         .targetDesc = {.colorAttachments = {{.textureFormat = offscreenTexture_->getFormat()}}},
-        .cullMode = igl::CullMode::Disabled,
+        .cullMode = CullMode::Disabled,
         .fragmentUnitSamplerMap = {{textureUnit_, IGL_NAMEHANDLE(data::shader::kSimpleSampler)}},
     };
   }
@@ -188,7 +188,7 @@ class TextureFloatTest : public ::testing::Test {
 #endif
 
     Result ret;
-    createPassthroughFrameBuffer(igl::TextureFormat::RGBA_F32);
+    createPassthroughFrameBuffer(TextureFormat::RGBA_F32);
 
     // Initialize render pass descriptor
     renderPass_ = {
@@ -402,26 +402,26 @@ void runUploadTest(IDevice& device,
 } // namespace
 
 TEST_F(TextureFloatTest, UploadRGBA32) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RGBA_F32, kTextureDataRGBA.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RGBA_F32, kTextureDataRGBA.data());
 }
 
 TEST_F(TextureFloatTest, UploadRGB32) {
   if (iglDev_->getBackendType() == BackendType::Vulkan ||
       iglDev_->getBackendType() == BackendType::Metal ||
       iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES ||
-      iglDev_->getTextureFormatCapabilities(igl::TextureFormat::RGB_F32) ==
+      iglDev_->getTextureFormatCapabilities(TextureFormat::RGB_F32) ==
           ICapabilities::TextureFormatCapabilityBits::Unsupported) {
     GTEST_SKIP() << "Skip due to lack of support for RGB";
   }
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RGB_F32, kTextureDataRGB.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RGB_F32, kTextureDataRGB.data());
 }
 
 TEST_F(TextureFloatTest, UploadRG32) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::RG_F32, kTextureDataRG.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::RG_F32, kTextureDataRG.data());
 }
 
 TEST_F(TextureFloatTest, UploadR32) {
-  runUploadTest(*iglDev_, *cmdQueue_, igl::TextureFormat::R_F32, kTextureDataR.data());
+  runUploadTest(*iglDev_, *cmdQueue_, TextureFormat::R_F32, kTextureDataR.data());
 }
 
 //
@@ -431,7 +431,7 @@ TEST_F(TextureFloatTest, UploadR32) {
 // a output texture that matches the size of the input texture layer
 //
 TEST_F(TextureFloatTest, PassthroughSampleRGBA32) {
-  runPassthroughFormat(igl::TextureFormat::RGBA_F32, kTextureDataRGBA.data());
+  runPassthroughFormat(TextureFormat::RGBA_F32, kTextureDataRGBA.data());
 }
 
 TEST_F(TextureFloatTest, PassthroughSampleRGB32) {
@@ -441,19 +441,19 @@ TEST_F(TextureFloatTest, PassthroughSampleRGB32) {
   if (iglDev_->getBackendType() == BackendType::Vulkan ||
       iglDev_->getBackendType() == BackendType::Metal ||
       iglDev_->getBackendVersion().flavor == BackendFlavor::OpenGL_ES ||
-      iglDev_->getTextureFormatCapabilities(igl::TextureFormat::RGB_F32) ==
+      iglDev_->getTextureFormatCapabilities(TextureFormat::RGB_F32) ==
           ICapabilities::TextureFormatCapabilityBits::Unsupported) {
     GTEST_SKIP() << "Skip due to lack of support for RGB";
   }
-  runPassthroughFormat(igl::TextureFormat::RGB_F32, kTextureDataRGB.data());
+  runPassthroughFormat(TextureFormat::RGB_F32, kTextureDataRGB.data());
 }
 
 TEST_F(TextureFloatTest, PassthroughSampleRG32) {
-  runPassthroughFormat(igl::TextureFormat::RG_F32, kTextureDataRG.data());
+  runPassthroughFormat(TextureFormat::RG_F32, kTextureDataRG.data());
 }
 
 TEST_F(TextureFloatTest, PassthroughSampleR32) {
-  runPassthroughFormat(igl::TextureFormat::R_F32, kTextureDataR.data());
+  runPassthroughFormat(TextureFormat::R_F32, kTextureDataR.data());
 }
 
 } // namespace igl::tests
