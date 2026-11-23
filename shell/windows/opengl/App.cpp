@@ -9,12 +9,6 @@
 
 #include <igl/Macros.h>
 
-#if defined(FORCE_USE_ANGLE) || IGL_PLATFORM_LINUX
-#include <igl/opengl/egl/HWDevice.h>
-#else
-#include <igl/opengl/wgl/HWDevice.h>
-#endif // FORCE_USE_ANGLE
-
 #if IGL_PLATFORM_LINUX
 #include <igl/opengl/glx/Device.h>
 #endif

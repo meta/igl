@@ -8,7 +8,6 @@
 #include <shell/shared/renderSession/ShellParams.h>
 
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <string_view>
 #include <type_traits>
