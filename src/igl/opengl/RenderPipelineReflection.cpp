@@ -348,7 +348,7 @@ void RenderPipelineReflection::cacheDescriptors() {
     const TextureType textureType = toIGLTextureType(glDesc.type);
 
     // buffers
-    if (textureType == igl::TextureType::Invalid) {
+    if (textureType == TextureType::Invalid) {
       const UniformType uniformType = toIGLUniformType(glDesc.type);
 
       BufferArgDesc bufferDesc;
@@ -356,9 +356,9 @@ void RenderPipelineReflection::cacheDescriptors() {
       bufferDesc.bufferAlignment = 1;
       bufferDesc.bufferDataSize = glDesc.size * igl::sizeForUniformType(uniformType);
       bufferDesc.bufferIndex = glDesc.location;
-      bufferDesc.shaderStage = igl::ShaderStage::Fragment;
+      bufferDesc.shaderStage = ShaderStage::Fragment;
 
-      igl::BufferArgDesc::BufferMemberDesc iglMemberDesc{
+      BufferArgDesc::BufferMemberDesc iglMemberDesc{
           .name = entry.first,
           .type = uniformType,
           .offset = 0,
@@ -374,7 +374,7 @@ void RenderPipelineReflection::cacheDescriptors() {
       textureDesc.name = entry.first;
       textureDesc.type = textureType;
       textureDesc.textureIndex = glDesc.location;
-      textureDesc.shaderStage = igl::ShaderStage::Fragment;
+      textureDesc.shaderStage = ShaderStage::Fragment;
 
       // Create one artificial sampler for each texture
       SamplerArgDesc samplerDesc;
@@ -396,13 +396,13 @@ void RenderPipelineReflection::cacheDescriptors() {
     bufferDesc.bufferAlignment = 1;
     bufferDesc.bufferDataSize = blockDesc.size;
     bufferDesc.bufferIndex = blockDesc.blockIndex;
-    bufferDesc.shaderStage = igl::ShaderStage::Fragment;
+    bufferDesc.shaderStage = ShaderStage::Fragment;
 
     for (const auto& uniformEntry : blockDesc.members) {
       const auto& uniformDesc = uniformEntry.second;
       const UniformType uniformType = toIGLUniformType(uniformDesc.type);
 
-      igl::BufferArgDesc::BufferMemberDesc iglMemberDesc{
+      BufferArgDesc::BufferMemberDesc iglMemberDesc{
           .name = uniformEntry.first,
           .type = uniformType,
           .offset = static_cast<size_t>(uniformDesc.offset),

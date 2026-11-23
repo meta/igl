@@ -31,7 +31,7 @@ class Framebuffer;
 
 class PlatformDevice final : public IPlatformDevice {
  public:
-  static constexpr PlatformDeviceType kType = igl::PlatformDeviceType::Metal;
+  static constexpr PlatformDeviceType kType = PlatformDeviceType::Metal;
 
   PlatformDevice(Device& device);
   ~PlatformDevice() override;

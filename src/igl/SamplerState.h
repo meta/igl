@@ -122,7 +122,7 @@ struct SamplerStateDesc {
    */
   std::string debugName;
 
-  TextureFormat yuvFormat = igl::TextureFormat::Invalid;
+  TextureFormat yuvFormat = TextureFormat::Invalid;
 
   /**
    * @brief Creates a new SamplerStateDesc instance set up for linearly interpolating within mipmap

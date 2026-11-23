@@ -22,11 +22,11 @@
 namespace igl::shell::util {
 
 #if IGL_PLATFORM_WINDOWS
-struct WGLDevice final : public igl::opengl::Device {
-  explicit WGLDevice(std::unique_ptr<igl::opengl::IContext> context) :
+struct WGLDevice final : public opengl::Device {
+  explicit WGLDevice(std::unique_ptr<opengl::IContext> context) :
     Device(std::move(context)), platformDevice_(*this) {}
 
-  const igl::opengl::PlatformDevice& getPlatformDevice() const noexcept override {
+  const opengl::PlatformDevice& getPlatformDevice() const noexcept override {
     return platformDevice_;
   }
 
@@ -37,14 +37,14 @@ struct WGLDevice final : public igl::opengl::Device {
     }
   }
 
-  igl::opengl::PlatformDevice platformDevice_;
+  opengl::PlatformDevice platformDevice_;
 };
 #elif IGL_PLATFORM_LINUX
-struct GLXDevice final : public igl::opengl::Device {
-  explicit GLXDevice(std::unique_ptr<igl::opengl::glx::Context> context) :
+struct GLXDevice final : public opengl::Device {
+  explicit GLXDevice(std::unique_ptr<opengl::glx::Context> context) :
     Device(std::move(context)), platformDevice(*this) {}
 
-  [[nodiscard]] const igl::opengl::PlatformDevice& getPlatformDevice() const noexcept override {
+  [[nodiscard]] const opengl::PlatformDevice& getPlatformDevice() const noexcept override {
     return platformDevice;
   }
 
@@ -55,7 +55,7 @@ struct GLXDevice final : public igl::opengl::Device {
     }
   }
 
-  igl::opengl::PlatformDevice platformDevice;
+  opengl::PlatformDevice platformDevice;
 };
 #endif
 } // namespace igl::shell::util

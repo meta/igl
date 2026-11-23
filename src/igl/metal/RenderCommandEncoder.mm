@@ -100,7 +100,7 @@ void RenderCommandEncoder::initialize(const std::shared_ptr<CommandBuffer>& comm
 
     const auto& iglResolveTexture = attachment.resolveTexture;
     if (iglResolveTexture &&
-        renderPass.colorAttachments[index].storeAction == igl::StoreAction::MsaaResolve) {
+        renderPass.colorAttachments[index].storeAction == StoreAction::MsaaResolve) {
       metalColorAttachment.resolveTexture = static_cast<Texture&>(*iglResolveTexture).get();
     }
 
@@ -126,7 +126,7 @@ void RenderCommandEncoder::initialize(const std::shared_ptr<CommandBuffer>& comm
     metalRenderPassDesc.depthAttachment.clearDepth = renderPass.depthAttachment.clearDepth;
 
     if (desc.depthAttachment.resolveTexture &&
-        renderPass.depthAttachment.storeAction == igl::StoreAction::MsaaResolve) {
+        renderPass.depthAttachment.storeAction == StoreAction::MsaaResolve) {
       metalRenderPassDesc.depthAttachment.resolveTexture =
           static_cast<Texture&>(*desc.depthAttachment.resolveTexture).get();
     }
@@ -143,7 +143,7 @@ void RenderCommandEncoder::initialize(const std::shared_ptr<CommandBuffer>& comm
     metalRenderPassDesc.stencilAttachment.clearStencil = renderPass.stencilAttachment.clearStencil;
 
     if (desc.stencilAttachment.resolveTexture &&
-        renderPass.stencilAttachment.storeAction == igl::StoreAction::MsaaResolve) {
+        renderPass.stencilAttachment.storeAction == StoreAction::MsaaResolve) {
       metalRenderPassDesc.stencilAttachment.resolveTexture =
           static_cast<Texture&>(*desc.stencilAttachment.resolveTexture).get();
     }
@@ -511,7 +511,7 @@ void RenderCommandEncoder::bindTexture(size_t index, uint8_t bindTarget, ITextur
 }
 
 void RenderCommandEncoder::bindTexture(size_t index, ITexture* texture) {
-  bindTexture(index, igl::BindTarget::kFragment, texture);
+  bindTexture(index, BindTarget::kFragment, texture);
 }
 
 void RenderCommandEncoder::bindUniform(const UniformDesc& /*uniformDesc*/, const void* /*data*/) {

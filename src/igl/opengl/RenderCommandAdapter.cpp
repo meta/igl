@@ -570,7 +570,7 @@ void RenderCommandAdapter::willDraw() {
         if (IGL_DEBUG_VERIFY_NOT(texture == nullptr)) {
           continue;
         }
-        ret = pipelineState->bindTextureUnit(index, igl::BindTarget::kVertex, *texture);
+        ret = pipelineState->bindTextureUnit(index, BindTarget::kVertex, *texture);
 
         if (!ret.isOk()) {
           IGL_LOG_INFO_ONCE(ret.message.c_str());
@@ -592,7 +592,7 @@ void RenderCommandAdapter::willDraw() {
         if (IGL_DEBUG_VERIFY_NOT(texture == nullptr)) {
           continue;
         }
-        ret = pipelineState->bindTextureUnit(index, igl::BindTarget::kFragment, *texture);
+        ret = pipelineState->bindTextureUnit(index, BindTarget::kFragment, *texture);
 
         if (!ret.isOk()) {
           IGL_LOG_INFO_ONCE(ret.message.c_str());
@@ -620,7 +620,7 @@ GLenum RenderCommandAdapter::toMockWireframeMode(GLenum mode) const {
 #if defined(IGL_OPENGL_ES)
   auto* const pipelineState = static_cast<RenderPipelineState*>(pipelineState_.get());
   const bool modeNeedsConversion = mode == GL_TRIANGLES || mode != GL_TRIANGLE_STRIP;
-  if (pipelineState->getPolygonFillMode() == igl::PolygonFillMode::Line && modeNeedsConversion) {
+  if (pipelineState->getPolygonFillMode() == PolygonFillMode::Line && modeNeedsConversion) {
     return GL_LINE_STRIP;
   }
 #endif

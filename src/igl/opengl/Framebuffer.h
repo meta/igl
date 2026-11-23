@@ -87,7 +87,7 @@ class Framebuffer : public WithContext, public IFramebuffer {
   GLuint frameBufferID_ = 0;
 
   struct CachedState {
-    FramebufferMode mode = igl::FramebufferMode::Mono;
+    FramebufferMode mode = FramebufferMode::Mono;
     uint8_t layer = 0;
     uint8_t face = 0;
     uint8_t mipLevel = 0;

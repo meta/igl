@@ -29,14 +29,14 @@ void glfwErrorHandler(int error, const char* description) {
 
 MouseButton getIGLMouseButton(int button) {
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
-    return igl::shell::MouseButton::Left;
+    return MouseButton::Left;
   }
 
   if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-    return igl::shell::MouseButton::Right;
+    return MouseButton::Right;
   }
 
-  return igl::shell::MouseButton::Middle;
+  return MouseButton::Middle;
 }
 } // namespace
 
@@ -90,7 +90,7 @@ bool GlfwShell::createWindow() noexcept {
   glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
   glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
   glfwWindowHint(GLFW_DECORATED,
-                 windowConfig_.windowMode == shell::WindowMode::Window ? GLFW_TRUE : GLFW_FALSE);
+                 windowConfig_.windowMode == WindowMode::Window ? GLFW_TRUE : GLFW_FALSE);
 
   int posX = 0;
   int posY = 0;
@@ -206,12 +206,11 @@ bool GlfwShell::initialize(int argc,
   suggestedWindowConfig.height = static_cast<int>(shellParams_.viewportSize.y);
   suggestedWindowConfig.windowMode = WindowMode::Window;
 
-  auto factory = igl::shell::createDefaultRenderSessionFactory();
+  auto factory = createDefaultRenderSessionFactory();
 
-  windowConfig_ =
-      factory->requestedWindowConfig(igl::shell::ShellType::Windows, suggestedWindowConfig);
+  windowConfig_ = factory->requestedWindowConfig(ShellType::Windows, suggestedWindowConfig);
   const auto requestedConfigs =
-      factory->requestedSessionConfigs(igl::shell::ShellType::Windows, {suggestedSessionConfig});
+      factory->requestedSessionConfigs(ShellType::Windows, {suggestedSessionConfig});
   if (IGL_DEBUG_VERIFY_NOT(requestedConfigs.size() != 1) ||
       IGL_DEBUG_VERIFY_NOT(suggestedSessionConfig.backendVersion.flavor !=
                            requestedConfigs[0].backendVersion.flavor)) {

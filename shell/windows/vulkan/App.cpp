@@ -69,7 +69,7 @@ void VulkanShell::willCreateWindow() noexcept {
 }
 
 std::shared_ptr<Platform> VulkanShell::createPlatform() noexcept {
-  igl::vulkan::VulkanContextConfig cfg = {
+  vulkan::VulkanContextConfig cfg = {
 #if defined(_MSC_VER) && !IGL_DEBUG
       .enableValidation = false,
 #else
@@ -169,7 +169,7 @@ void VulkanShell::initStereoPresent(IDevice& device) {
 SurfaceTextures VulkanShell::createSurfaceTextures() noexcept {
   IGL_PROFILER_FUNCTION();
   auto& device = platform().getDevice();
-  const auto& vkPlatformDevice = device.getPlatformDevice<igl::vulkan::PlatformDevice>();
+  const auto& vkPlatformDevice = device.getPlatformDevice<vulkan::PlatformDevice>();
 
   IGL_DEBUG_ASSERT(vkPlatformDevice != nullptr);
 

@@ -121,10 +121,10 @@ TEST(QuadLayerInfoTest, BlendModeCustomSticks) {
 TEST(QuadLayerInfoTest, CustomBlendFactorsStick) {
   QuadLayerInfo info;
   info.blendMode = LayerBlendMode::Custom;
-  info.customSrcRGBBlendFactor = igl::BlendFactor::SrcAlpha;
-  info.customSrcAlphaBlendFactor = igl::BlendFactor::OneMinusSrcAlpha;
-  info.customDstRGBBlendFactor = igl::BlendFactor::DstColor;
-  info.customDstAlphaBlendFactor = igl::BlendFactor::OneMinusDstColor;
+  info.customSrcRGBBlendFactor = BlendFactor::SrcAlpha;
+  info.customSrcAlphaBlendFactor = BlendFactor::OneMinusSrcAlpha;
+  info.customDstRGBBlendFactor = BlendFactor::DstColor;
+  info.customDstAlphaBlendFactor = BlendFactor::OneMinusDstColor;
 
   EXPECT_EQ(info.customSrcRGBBlendFactor, igl::BlendFactor::SrcAlpha);
   EXPECT_EQ(info.customSrcAlphaBlendFactor, igl::BlendFactor::OneMinusSrcAlpha);
@@ -139,10 +139,10 @@ TEST(QuadLayerInfoTest, AggregateInitializationOverridesAllFields) {
       .blendMode = LayerBlendMode::Custom,
       .imageWidth = 128u,
       .imageHeight = 64u,
-      .customSrcRGBBlendFactor = igl::BlendFactor::BlendColor,
-      .customSrcAlphaBlendFactor = igl::BlendFactor::OneMinusBlendColor,
-      .customDstRGBBlendFactor = igl::BlendFactor::BlendAlpha,
-      .customDstAlphaBlendFactor = igl::BlendFactor::OneMinusBlendAlpha,
+      .customSrcRGBBlendFactor = BlendFactor::BlendColor,
+      .customSrcAlphaBlendFactor = BlendFactor::OneMinusBlendColor,
+      .customDstRGBBlendFactor = BlendFactor::BlendAlpha,
+      .customDstAlphaBlendFactor = BlendFactor::OneMinusBlendAlpha,
   };
 
   EXPECT_FLOAT_EQ(info.position.x, 10.0f);

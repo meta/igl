@@ -180,9 +180,9 @@ struct RenderPipelineDesc {
   std::shared_ptr<IShaderStages> shaderStages;
 
   TargetDesc targetDesc;
-  CullMode cullMode = igl::CullMode::Disabled;
-  WindingMode frontFaceWinding = igl::WindingMode::CounterClockwise;
-  PolygonFillMode polygonFillMode = igl::PolygonFillMode::Fill;
+  CullMode cullMode = CullMode::Disabled;
+  WindingMode frontFaceWinding = WindingMode::CounterClockwise;
+  PolygonFillMode polygonFillMode = PolygonFillMode::Fill;
 
   /*
    * GL Only: Mapping of Texture Unit <-> Sampler Name

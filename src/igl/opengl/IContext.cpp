@@ -4827,7 +4827,7 @@ GLVersion IContext::initializeGLVersion(Result* result) {
     Result::setResult(result, Result::Code::RuntimeError, "Unable to get GL version string\n");
     return DeviceFeatureSet::usesOpenGLES() ? GLVersion::v2_0_ES : GLVersion::v2_0;
   }
-  const GLVersion glVersion = ::igl::opengl::getGLVersion(version);
+  const GLVersion glVersion = getGLVersion(version);
   if (glVersion == GLVersion::NotAvailable) {
     IGL_DEBUG_ASSERT_NOT_IMPLEMENTED();
     Result::setResult(result, Result::Code::RuntimeError, "Unable to get GL version\n");

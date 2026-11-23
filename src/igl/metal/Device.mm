@@ -879,7 +879,7 @@ std::shared_ptr<IRenderPipelineState> Device::createMeshRenderPipeline(
     // Framebuffer
     for (uint32_t i = 0; i < desc.targetDesc.colorAttachments.size(); ++i) {
       const auto& src = desc.targetDesc.colorAttachments[i];
-      if (igl::TextureFormat::Invalid == src.textureFormat) {
+      if (TextureFormat::Invalid == src.textureFormat) {
         continue;
       }
 

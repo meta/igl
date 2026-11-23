@@ -563,7 +563,7 @@ TextureRangeDesc TextureDesc::asRange() const noexcept {
   range.width = width;
   range.height = height;
   range.depth = depth;
-  range.numFaces = type == igl::TextureType::Cube ? 6u : 1u;
+  range.numFaces = type == TextureType::Cube ? 6u : 1u;
   range.numLayers = numLayers;
   range.numMipLevels = numMipLevels;
 

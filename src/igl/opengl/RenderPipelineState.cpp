@@ -256,8 +256,8 @@ void RenderPipelineState::bind() {
 
   // polygon rasterization mode
   if (getContext().deviceFeatures().hasInternalFeature(InternalFeatures::PolygonFillMode)) {
-    getContext().polygonFillMode((desc_.polygonFillMode == igl::PolygonFillMode::Fill) ? GL_FILL
-                                                                                       : GL_LINE);
+    getContext().polygonFillMode((desc_.polygonFillMode == PolygonFillMode::Fill) ? GL_FILL
+                                                                                  : GL_LINE);
   }
 
   // alpha-to-coverage (only meaningful when MSAA is active)
@@ -328,9 +328,9 @@ void RenderPipelineState::bindVertexAttributes(size_t bufferIndex,
             bufferOffset);
 
     if (getContext().deviceFeatures().hasInternalFeature(InternalFeatures::VertexAttribDivisor)) {
-      if (attribute.sampleFunction == igl::VertexSampleFunction::PerVertex) {
+      if (attribute.sampleFunction == VertexSampleFunction::PerVertex) {
         getContext().vertexAttribDivisor(location, 0);
-      } else if (attribute.sampleFunction == igl::VertexSampleFunction::Instance) {
+      } else if (attribute.sampleFunction == VertexSampleFunction::Instance) {
         getContext().vertexAttribDivisor(location, static_cast<GLuint>(attribute.sampleRate));
       } else {
         getContext().vertexAttribDivisor(location, 0);
@@ -370,7 +370,7 @@ Result RenderPipelineState::bindTextureUnit(size_t unit, uint8_t bindTarget, Tex
   }
 
   GLint samplerLocation = -1;
-  if (bindTarget == igl::BindTarget::kVertex) {
+  if (bindTarget == BindTarget::kVertex) {
     auto it = vertexTextureUnitRemap_.find(unit);
     if (it == vertexTextureUnitRemap_.end()) {
       return Result{Result::Code::RuntimeError, "Unable to find sampler location\n"};

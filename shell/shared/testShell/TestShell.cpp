@@ -70,7 +70,7 @@ void ensureCommandLineArgsInitialized() {
 #endif
   if (!sInitialized) {
     sInitialized = true;
-    igl::shell::Platform::initializeCommandLineArgs(0, nullptr);
+    Platform::initializeCommandLineArgs(0, nullptr);
   }
 }
 
@@ -97,7 +97,7 @@ void TestShellBase::setUpInternal(ScreenSize screenSize, bool prefersRGB) {
 
   IGL_DEBUG_ASSERT(platform_);
 
-  if (platform_->getDevice().getBackendType() == igl::BackendType::OpenGL) {
+  if (platform_->getDevice().getBackendType() == BackendType::OpenGL) {
     auto version = platform_->getDevice().getBackendVersion();
     if (version.majorVersion < 2) {
       GTEST_SKIP() << "OpenGL version " << static_cast<int>(version.majorVersion) << "."
@@ -107,8 +107,8 @@ void TestShellBase::setUpInternal(ScreenSize screenSize, bool prefersRGB) {
   // Create an offscreen texture to render to
   Result ret;
   auto hasNativesRGBSupport = platform_->getDevice().hasFeature(DeviceFeatures::SRGB);
-  auto colorFormat = prefersRGB && hasNativesRGBSupport ? igl::TextureFormat::RGBA_SRGB
-                                                        : igl::TextureFormat::RGBA_UNorm8;
+  auto colorFormat = prefersRGB && hasNativesRGBSupport ? TextureFormat::RGBA_SRGB
+                                                        : TextureFormat::RGBA_UNorm8;
 
   TextureDesc texDesc = igl::TextureDesc::new2D(colorFormat,
                                                 screenSize.width,
@@ -119,11 +119,11 @@ void TestShellBase::setUpInternal(ScreenSize screenSize, bool prefersRGB) {
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_TRUE(offscreenTexture_ != nullptr);
   TextureDesc depthDextureDesc = igl::TextureDesc::new2D(
-      igl::TextureFormat::Z_UNorm24,
+      TextureFormat::Z_UNorm24,
       screenSize.width,
       screenSize.height,
       igl::TextureDesc::TextureUsageBits::Sampled | igl::TextureDesc::TextureUsageBits::Attachment);
-  depthDextureDesc.storage = igl::ResourceStorage::Private;
+  depthDextureDesc.storage = ResourceStorage::Private;
   offscreenDepthTexture_ = platform_->getDevice().createTexture(depthDextureDesc, &ret);
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_TRUE(offscreenDepthTexture_ != nullptr);

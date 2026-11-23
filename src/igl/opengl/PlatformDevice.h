@@ -74,7 +74,7 @@ class TextureBufferExternal;
 ///
 class PlatformDevice : public IPlatformDevice {
  public:
-  static constexpr PlatformDeviceType kType = igl::PlatformDeviceType::OpenGL;
+  static constexpr PlatformDeviceType kType = PlatformDeviceType::OpenGL;
 
   explicit PlatformDevice(Device& owner) : owner_(owner) {}
 

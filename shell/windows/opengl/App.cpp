@@ -51,7 +51,7 @@ class OpenGlShell final : public GlfwShell {
 SurfaceTextures OpenGlShell::createSurfaceTextures() noexcept {
   auto& device = platform().getDevice();
   if (IGL_DEBUG_VERIFY(device.getBackendType() == igl::BackendType::OpenGL)) {
-    auto& oglDevice = static_cast<igl::opengl::Device&>(device);
+    auto& oglDevice = static_cast<opengl::Device&>(device);
     oglDevice.getContext().setCurrent();
     TextureDesc desc = {
         .width = static_cast<uint32_t>(shellParams().viewportSize.x),
@@ -64,12 +64,10 @@ SurfaceTextures OpenGlShell::createSurfaceTextures() noexcept {
         .type = TextureType::TwoD,
         .format = sessionConfig().swapchainColorTextureFormat,
     };
-    auto color =
-        std::make_shared<igl::opengl::ViewTextureTarget>(oglDevice.getContext(), desc.format);
+    auto color = std::make_shared<opengl::ViewTextureTarget>(oglDevice.getContext(), desc.format);
     color->create(desc, true);
     desc.format = TextureFormat::Z_UNorm24;
-    auto depth =
-        std::make_shared<igl::opengl::ViewTextureTarget>(oglDevice.getContext(), desc.format);
+    auto depth = std::make_shared<opengl::ViewTextureTarget>(oglDevice.getContext(), desc.format);
     depth->create(desc, true);
     return SurfaceTextures{.color = std::move(color), .depth = std::move(depth)};
   }
@@ -107,19 +105,19 @@ void OpenGlShell::didCreateWindow() noexcept {
 
 std::shared_ptr<Platform> OpenGlShell::createPlatform() noexcept {
 #if defined(_WIN32)
-  auto context = std::make_unique<igl::opengl::wgl::Context>(GetDC(glfwGetWin32Window(window())),
-                                                             glfwGetWGLContext(window()));
-  auto glDevice = std::make_unique<shell::util::WGLDevice>(std::move(context));
+  auto context = std::make_unique<opengl::wgl::Context>(GetDC(glfwGetWin32Window(window())),
+                                                        glfwGetWGLContext(window()));
+  auto glDevice = std::make_unique<util::WGLDevice>(std::move(context));
 
-  return std::make_shared<igl::shell::PlatformWin>(std::move(glDevice));
+  return std::make_shared<PlatformWin>(std::move(glDevice));
 #elif IGL_PLATFORM_LINUX
-  auto context = std::make_unique<igl::opengl::glx::Context>(
+  auto context = std::make_unique<opengl::glx::Context>(
       nullptr,
       glfwGetX11Display(),
-      static_cast<igl::opengl::glx::GLXDrawable>(glfwGetX11Window(window())),
-      reinterpret_cast<igl::opengl::glx::GLXContext>(glfwGetGLXContext(window())));
+      static_cast<opengl::glx::GLXDrawable>(glfwGetX11Window(window())),
+      reinterpret_cast<opengl::glx::GLXContext>(glfwGetGLXContext(window())));
 
-  auto glDevice = std::make_unique<igl::opengl::glx::Device>(std::move(context));
+  auto glDevice = std::make_unique<opengl::glx::Device>(std::move(context));
 
   return std::make_shared<PlatformWin>(std::move(glDevice));
 #endif
@@ -127,9 +125,9 @@ std::shared_ptr<Platform> OpenGlShell::createPlatform() noexcept {
 
 void OpenGlShell::willTick() noexcept {
 #if defined(_WIN32)
-  static_cast<shell::util::WGLDevice&>(platform().getDevice()).getContext().setCurrent();
+  static_cast<util::WGLDevice&>(platform().getDevice()).getContext().setCurrent();
 #elif IGL_PLATFORM_LINUX
-  static_cast<shell::util::GLXDevice&>(platform().getDevice()).getContext().setCurrent();
+  static_cast<util::GLXDevice&>(platform().getDevice()).getContext().setCurrent();
 #endif
 }
 

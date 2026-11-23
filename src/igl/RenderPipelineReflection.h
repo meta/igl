@@ -26,7 +26,7 @@ struct BufferArgDesc {
    */
   struct BufferMemberDesc {
     NameHandle name; ///< The name of the member
-    UniformType type = igl::UniformType::Invalid; ///< The type of the member
+    UniformType type = UniformType::Invalid; ///< The type of the member
     size_t offset = 0; ///< The offset from the beginning of the structure
     size_t arrayLength = 1; ///< The number of elements if the member is an array
     size_t arrayStride = 0; ///< The per-element byte stride reported by the backend for an

@@ -118,7 +118,7 @@ void CommandBuffer::copyBuffer(IBuffer& src,
   IGL_PROFILER_FUNCTION();
   IContext& ctx = getContext();
 
-  if (!ctx.deviceFeatures().hasFeature(igl::DeviceFeatures::CopyBuffer)) {
+  if (!ctx.deviceFeatures().hasFeature(DeviceFeatures::CopyBuffer)) {
     IGL_LOG_ERROR_ONCE("CommandBuffer::copyBuffer() not supported in this context!\n");
     return;
   }

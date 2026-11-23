@@ -77,8 +77,8 @@ std::unique_ptr<IShaderLibrary> ShaderLibraryCreator::fromStringInput(
   const auto libraryDesc = igl::ShaderLibraryDesc::fromStringInput(
       librarySource,
       {
-          {.stage = igl::ShaderStage::Vertex, .entryPoint = std::move(vertexEntryPoint)},
-          {.stage = igl::ShaderStage::Fragment, .entryPoint = std::move(fragmentEntryPoint)},
+          {.stage = ShaderStage::Vertex, .entryPoint = std::move(vertexEntryPoint)},
+          {.stage = ShaderStage::Fragment, .entryPoint = std::move(fragmentEntryPoint)},
       },
       std::move(libraryDebugName));
 
@@ -102,8 +102,8 @@ std::unique_ptr<IShaderLibrary> ShaderLibraryCreator::fromBinaryInput(
       libraryData,
       libraryDataLength,
       {
-          {.stage = igl::ShaderStage::Vertex, .entryPoint = std::move(vertexEntryPoint)},
-          {.stage = igl::ShaderStage::Fragment, .entryPoint = std::move(fragmentEntryPoint)},
+          {.stage = ShaderStage::Vertex, .entryPoint = std::move(vertexEntryPoint)},
+          {.stage = ShaderStage::Fragment, .entryPoint = std::move(fragmentEntryPoint)},
       },
       std::move(libraryDebugName));
 

@@ -45,7 +45,7 @@ class EGLDevice final : public ::igl::opengl::Device {
     }
   }
 
-  [[nodiscard]] const igl::opengl::PlatformDevice& getPlatformDevice() const noexcept override {
+  [[nodiscard]] const opengl::PlatformDevice& getPlatformDevice() const noexcept override {
     return platformDevice;
   }
 
