@@ -439,8 +439,8 @@ void ClothSimulationSession::update(SurfaceTextures surfaceTextures) noexcept {
                                           surfaceTextures.color->getProperties().format}},
                 .depthAttachmentFormat = depthFormat,
             },
-        .cullMode = igl::CullMode::Disabled,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Disabled,
+        .frontFaceWinding = WindingMode::Clockwise,
     };
 
     clothRenderPipelineState_ = device.createRenderPipeline(graphicsDesc, nullptr);
@@ -460,8 +460,8 @@ void ClothSimulationSession::update(SurfaceTextures surfaceTextures) noexcept {
                                           surfaceTextures.color->getProperties().format}},
                 .depthAttachmentFormat = depthFormat,
             },
-        .cullMode = igl::CullMode::Disabled,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Disabled,
+        .frontFaceWinding = WindingMode::Clockwise,
     };
 
     obstacleRenderPipelineState_ = device.createRenderPipeline(graphicsDesc, nullptr);

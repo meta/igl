@@ -16,17 +16,17 @@ namespace {
 #ifdef XR_FB_composition_layer_alpha_blend
 inline XrBlendFactorFB iglToOpenXR(BlendFactor factor) noexcept {
   switch (factor) {
-  case igl::BlendFactor::Zero:
+  case BlendFactor::Zero:
     return XR_BLEND_FACTOR_ZERO_FB;
-  case igl::BlendFactor::One:
+  case BlendFactor::One:
     return XR_BLEND_FACTOR_ONE_FB;
-  case igl::BlendFactor::SrcAlpha:
+  case BlendFactor::SrcAlpha:
     return XR_BLEND_FACTOR_SRC_ALPHA_FB;
-  case igl::BlendFactor::OneMinusSrcAlpha:
+  case BlendFactor::OneMinusSrcAlpha:
     return XR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA_FB;
-  case igl::BlendFactor::DstAlpha:
+  case BlendFactor::DstAlpha:
     return XR_BLEND_FACTOR_DST_ALPHA_FB;
-  case igl::BlendFactor::OneMinusDstAlpha:
+  case BlendFactor::OneMinusDstAlpha:
     return XR_BLEND_FACTOR_ONE_MINUS_DST_ALPHA_FB;
   default:
     IGL_DEBUG_ABORT("Not supported blend factor (%d)", static_cast<int>(factor));
@@ -69,7 +69,7 @@ void XrCompositionQuad::doComposition(
     XrSpace currentSpace,
     XrCompositionLayerFlags compositionFlags,
     std::vector<const XrCompositionLayerBaseHeader*>& layers) noexcept {
-  compositionFlags |= (info_.blendMode == igl::shell::LayerBlendMode::AlphaBlend)
+  compositionFlags |= (info_.blendMode == LayerBlendMode::AlphaBlend)
                           ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT
                           : 0;
 
@@ -89,8 +89,7 @@ void XrCompositionQuad::doComposition(
     quadLayers_[view] = {
         .type = XR_TYPE_COMPOSITION_LAYER_QUAD,
 #ifdef XR_FB_composition_layer_alpha_blend
-        .next = (isAlphaBlendCompositionSupported_ &&
-                 info_.blendMode == igl::shell::LayerBlendMode::Custom)
+        .next = (isAlphaBlendCompositionSupported_ && info_.blendMode == LayerBlendMode::Custom)
                     ? &customBlending_
                     : nullptr,
 #else

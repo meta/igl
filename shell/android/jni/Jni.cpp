@@ -274,19 +274,19 @@ Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env,
     factory = shell::createDefaultRenderSessionFactory();
   }
 
-  constexpr TextureFormat kSwapchainColorTextureFormat = igl::TextureFormat::BGRA_SRGB;
-  std::vector<igl::shell::RenderSessionConfig> suggestedConfigs = {
+  constexpr TextureFormat kSwapchainColorTextureFormat = TextureFormat::BGRA_SRGB;
+  std::vector<shell::RenderSessionConfig> suggestedConfigs = {
 #if IGL_BACKEND_OPENGL
       {
           .displayName = "OpenGL ES 3",
-          .backendVersion = {.flavor = igl::BackendFlavor::OpenGL_ES,
+          .backendVersion = {.flavor = BackendFlavor::OpenGL_ES,
                              .majorVersion = 3,
                              .minorVersion = 0},
           .swapchainColorTextureFormat = kSwapchainColorTextureFormat,
       },
       {
           .displayName = "OpenGL ES 2",
-          .backendVersion = {.flavor = igl::BackendFlavor::OpenGL_ES,
+          .backendVersion = {.flavor = BackendFlavor::OpenGL_ES,
                              .majorVersion = 2,
                              .minorVersion = 0},
           .swapchainColorTextureFormat = kSwapchainColorTextureFormat,
@@ -295,9 +295,7 @@ Java_com_facebook_igl_shell_SampleLib_getRenderSessionConfigs(JNIEnv* env,
 #if IGL_BACKEND_VULKAN
       {
           .displayName = "Vulkan",
-          .backendVersion = {.flavor = igl::BackendFlavor::Vulkan,
-                             .majorVersion = 1,
-                             .minorVersion = 1},
+          .backendVersion = {.flavor = BackendFlavor::Vulkan, .majorVersion = 1, .minorVersion = 1},
           .swapchainColorTextureFormat = kSwapchainColorTextureFormat,
       },
 #endif
@@ -786,8 +784,8 @@ JNIEXPORT bool JNICALL
 Java_com_facebook_igl_shell_SampleLib_isSRGBTextureFormat(JNIEnv* env,
                                                           jobject obj,
                                                           int textureFormat) {
-  return textureFormat == static_cast<int>(igl::TextureFormat::RGBA_SRGB) ||
-         textureFormat == static_cast<int>(igl::TextureFormat::BGRA_SRGB);
+  return textureFormat == static_cast<int>(TextureFormat::RGBA_SRGB) ||
+         textureFormat == static_cast<int>(TextureFormat::BGRA_SRGB);
 }
 
 } // namespace igl::samples

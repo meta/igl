@@ -333,7 +333,7 @@ void BindGroupSession::createSamplerAndTextures(const IDevice& device) {
 
   {
     const auto imageData = getPlatform().getImageLoader().loadImageData("igl.png");
-    TextureDesc desc = igl::TextureDesc::new2D(igl::TextureFormat::RGBA_UNorm8,
+    TextureDesc desc = igl::TextureDesc::new2D(TextureFormat::RGBA_UNorm8,
                                                imageData.desc.width,
                                                imageData.desc.height,
                                                igl::TextureDesc::TextureUsageBits::Sampled |
@@ -348,7 +348,7 @@ void BindGroupSession::createSamplerAndTextures(const IDevice& device) {
   {
     const uint32_t texWidth = 256;
     const uint32_t texHeight = 256;
-    TextureDesc desc = TextureDesc::new2D(igl::TextureFormat::BGRA_UNorm8,
+    TextureDesc desc = TextureDesc::new2D(TextureFormat::BGRA_UNorm8,
                                           texWidth,
                                           texHeight,
                                           TextureDesc::TextureUsageBits::Sampled |
@@ -484,8 +484,8 @@ void BindGroupSession::update(SurfaceTextures surfaceTextures) noexcept {
                     .depthAttachmentFormat =
                         framebuffer_->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap = {{0, IGL_NAMEHANDLE("input2D")},
                                        {1, IGL_NAMEHANDLE("inputXOR")}},
         },
@@ -502,7 +502,7 @@ void BindGroupSession::update(SurfaceTextures surfaceTextures) noexcept {
       .index = 1,
       .length = sizeof(VertexFormat),
       .uniforms = {{.name = "mvpMatrix",
-                    .type = igl::UniformType::Mat4x4,
+                    .type = UniformType::Mat4x4,
                     .offset = offsetof(VertexFormat, mvpMatrix)}},
   };
 

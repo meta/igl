@@ -233,8 +233,8 @@ fn fragmentShader(v : VertexOut) -> @location(0) vec4f {
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
   default:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
@@ -248,7 +248,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
         // @fb-only
         // @fb-only
         // @fb-only
-  case igl::BackendType::Vulkan: {
+  case BackendType::Vulkan: {
     auto vertexSource = getVulkanVertexShaderSource();
     if (device.hasFeature(DeviceFeatures::Multiview)) {
       vertexSource = R"(#version 450
@@ -263,13 +263,13 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device) {
                                                            "",
                                                            nullptr);
   }
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -411,8 +411,8 @@ void CheckerboardMipmapSession::update(SurfaceTextures surfaceTextures) noexcept
                 }},
                 .depthAttachmentFormat = framebuffer_->getDepthAttachment()->getProperties().format,
             },
-        .cullMode = igl::CullMode::Disabled,
-        .frontFaceWinding = igl::WindingMode::Clockwise,
+        .cullMode = CullMode::Disabled,
+        .frontFaceWinding = WindingMode::Clockwise,
         .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
     };
     pipelineState_ = getPlatform().getDevice().createRenderPipeline(graphicsDesc, nullptr);

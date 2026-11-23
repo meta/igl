@@ -22,8 +22,8 @@ void BasicFramebufferSession::initialize() noexcept {
 
   renderPass_ = {
       .colorAttachments = {{
-          .loadAction = igl::LoadAction::Clear,
-          .storeAction = igl::StoreAction::Store,
+          .loadAction = LoadAction::Clear,
+          .storeAction = StoreAction::Store,
           .clearColor = getPreferredClearColor(),
       }},
   };

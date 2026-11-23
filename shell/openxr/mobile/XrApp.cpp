@@ -427,7 +427,7 @@ bool XrApp::initialize(const struct android_app* app, const InitParams& params) 
   // Single stereo render pass is not supported for OpenGL on Windows.
   useSinglePassStereo_ = false;
 #else
-  useSinglePassStereo_ = useSinglePassStereo_ && device->hasFeature(igl::DeviceFeatures::Multiview);
+  useSinglePassStereo_ = useSinglePassStereo_ && device->hasFeature(DeviceFeatures::Multiview);
 #endif
 
 #if IGL_PLATFORM_ANDROID
@@ -579,9 +579,9 @@ void XrApp::createShellSession(std::unique_ptr<IDevice> device, AAssetManager* a
   platform_ = std::make_shared<igl::shell::PlatformWin>(std::move(device));
 #endif
 
-  auto factory = igl::shell::createDefaultRenderSessionFactory();
+  auto factory = createDefaultRenderSessionFactory();
   const auto requestedSessionConfigs =
-      factory->requestedSessionConfigs(shell::ShellType::OpenXR, {impl_->suggestedSessionConfig()});
+      factory->requestedSessionConfigs(ShellType::OpenXR, {impl_->suggestedSessionConfig()});
   if (IGL_DEBUG_VERIFY_NOT(requestedSessionConfigs.size() != 1)) {
     return;
   }
@@ -853,7 +853,7 @@ void XrApp::handleXrEvents() {
 void XrApp::handleActionView(const std::string& data) {
   if (platform_ != nullptr) {
     IntentEvent event;
-    event.type = igl::shell::IntentType::ActionView;
+    event.type = IntentType::ActionView;
     event.data = data;
     platform_->getInputDispatcher().queueEvent(event);
   }

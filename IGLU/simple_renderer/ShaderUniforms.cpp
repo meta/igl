@@ -379,102 +379,102 @@ void ShaderUniforms::setBoolArray(const igl::NameHandle& blockTypeName,
 }
 
 void ShaderUniforms::setFloat(const igl::NameHandle& uniformName,
-                              const iglu::simdtypes::float1& value,
+                              const simdtypes::float1& value,
                               size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float1), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::float1), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat(const igl::NameHandle& blockTypeName,
                               const igl::NameHandle& blockInstanceName,
                               const igl::NameHandle& memberName,
-                              const iglu::simdtypes::float1& value,
+                              const simdtypes::float1& value,
                               size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   &value,
-                  sizeof(iglu::simdtypes::float1),
+                  sizeof(simdtypes::float1),
                   1,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloatArray(const igl::NameHandle& uniformName,
-                                   const iglu::simdtypes::float1* value,
+                                   const simdtypes::float1* value,
                                    size_t count,
                                    size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float1), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::float1), count, arrayIndex);
 }
 
 void ShaderUniforms::setFloatArray(const igl::NameHandle& blockTypeName,
                                    const igl::NameHandle& blockInstanceName,
                                    const igl::NameHandle& memberName,
-                                   const iglu::simdtypes::float1* value,
+                                   const simdtypes::float1* value,
                                    size_t count,
                                    size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::float1),
+                  sizeof(simdtypes::float1),
                   count,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat2(const igl::NameHandle& uniformName,
-                               const iglu::simdtypes::float2& value,
+                               const simdtypes::float2& value,
                                size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float2), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::float2), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat2(const igl::NameHandle& blockTypeName,
                                const igl::NameHandle& blockInstanceName,
                                const igl::NameHandle& memberName,
-                               const iglu::simdtypes::float2& value,
+                               const simdtypes::float2& value,
                                size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   &value,
-                  sizeof(iglu::simdtypes::float2),
+                  sizeof(simdtypes::float2),
                   1,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat2Array(const igl::NameHandle& uniformName,
-                                    const iglu::simdtypes::float2* value,
+                                    const simdtypes::float2* value,
                                     size_t count,
                                     size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float2), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::float2), count, arrayIndex);
 }
 
 void ShaderUniforms::setFloat2Array(const igl::NameHandle& blockTypeName,
                                     const igl::NameHandle& blockInstanceName,
                                     const igl::NameHandle& memberName,
-                                    const iglu::simdtypes::float2* value,
+                                    const simdtypes::float2* value,
                                     size_t count,
                                     size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::float2),
+                  sizeof(simdtypes::float2),
                   count,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat3(const igl::NameHandle& uniformName,
-                               const iglu::simdtypes::float3& value,
+                               const simdtypes::float3& value,
                                size_t arrayIndex) {
   setUniformBytes(uniformName, &value, sizeof(float[3]), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat3Array(const igl::NameHandle& uniformName,
-                                    const iglu::simdtypes::float3* value,
+                                    const simdtypes::float3* value,
                                     size_t count,
                                     size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
   if (device_.getBackendType() == igl::BackendType::Metal) {
-    setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float3), count, arrayIndex);
+    setUniformBytes(uniformName, value, sizeof(simdtypes::float3), count, arrayIndex);
   } else {
     // simdtypes::float3 is padded to have an extra float.
     // This code path should not be used for Vulkan. (it should only be used for OpenGL when uniform
@@ -495,97 +495,97 @@ void ShaderUniforms::setFloat3Array(const igl::NameHandle& uniformName,
 }
 
 void ShaderUniforms::setFloat4(const igl::NameHandle& uniformName,
-                               const iglu::simdtypes::float4& value,
+                               const simdtypes::float4& value,
                                size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float4), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::float4), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat4(const igl::NameHandle& blockTypeName,
                                const igl::NameHandle& blockInstanceName,
                                const igl::NameHandle& memberName,
-                               const iglu::simdtypes::float4& value,
+                               const simdtypes::float4& value,
                                size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   &value,
-                  sizeof(iglu::simdtypes::float4),
+                  sizeof(simdtypes::float4),
                   1,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat4Array(const igl::NameHandle& uniformName,
-                                    const iglu::simdtypes::float4* value,
+                                    const simdtypes::float4* value,
                                     size_t count,
                                     size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float4), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::float4), count, arrayIndex);
 }
 
 void ShaderUniforms::setFloat4Array(const igl::NameHandle& blockTypeName,
                                     const igl::NameHandle& blockInstanceName,
                                     const igl::NameHandle& memberName,
-                                    const iglu::simdtypes::float4* value,
+                                    const simdtypes::float4* value,
                                     size_t count,
                                     size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::float4),
+                  sizeof(simdtypes::float4),
                   count,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat2x2(const igl::NameHandle& uniformName,
-                                 const iglu::simdtypes::float2x2& value,
+                                 const simdtypes::float2x2& value,
                                  size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float2x2), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::float2x2), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat2x2(const igl::NameHandle& blockTypeName,
                                  const igl::NameHandle& blockInstanceName,
                                  const igl::NameHandle& memberName,
-                                 const iglu::simdtypes::float2x2& value,
+                                 const simdtypes::float2x2& value,
                                  size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   &value,
-                  sizeof(iglu::simdtypes::float2x2),
+                  sizeof(simdtypes::float2x2),
                   1,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat2x2Array(const igl::NameHandle& uniformName,
-                                      const iglu::simdtypes::float2x2* value,
+                                      const simdtypes::float2x2* value,
                                       size_t count,
                                       size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float2x2), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::float2x2), count, arrayIndex);
 }
 
 void ShaderUniforms::setFloat2x2Array(const igl::NameHandle& blockTypeName,
                                       const igl::NameHandle& blockInstanceName,
                                       const igl::NameHandle& memberName,
-                                      const iglu::simdtypes::float2x2* value,
+                                      const simdtypes::float2x2* value,
                                       size_t count,
                                       size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::float2x2),
+                  sizeof(simdtypes::float2x2),
                   count,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat3x3(const igl::NameHandle& uniformName,
-                                 const iglu::simdtypes::float3x3& value,
+                                 const simdtypes::float3x3& value,
                                  size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
   if (device_.getBackendType() == igl::BackendType::Metal ||
       device_.getBackendType() == igl::BackendType::Vulkan ||
       device_.getBackendType() == igl::BackendType::WebGPU) {
-    setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float3x3), 1, arrayIndex);
+    setUniformBytes(uniformName, &value, sizeof(simdtypes::float3x3), 1, arrayIndex);
   } else {
     // simdtypes::float3x3 has an extra float per float-vector.
     // Remove it so we can send the packed version to OpenGL
@@ -605,7 +605,7 @@ void ShaderUniforms::setFloat3x3(const igl::NameHandle& uniformName,
 void ShaderUniforms::setFloat3x3(const igl::NameHandle& blockTypeName,
                                  const igl::NameHandle& blockInstanceName,
                                  const igl::NameHandle& uniformName,
-                                 const iglu::simdtypes::float3x3& value,
+                                 const simdtypes::float3x3& value,
                                  size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
   const bool isOglBlock = device_.getBackendType() == igl::BackendType::OpenGL &&
@@ -617,7 +617,7 @@ void ShaderUniforms::setFloat3x3(const igl::NameHandle& blockTypeName,
                     blockInstanceName,
                     uniformName,
                     &value,
-                    sizeof(iglu::simdtypes::float3x3),
+                    sizeof(simdtypes::float3x3),
                     1,
                     arrayIndex);
   } else {
@@ -643,14 +643,14 @@ void ShaderUniforms::setFloat3x3(const igl::NameHandle& blockTypeName,
 }
 
 void ShaderUniforms::setFloat3x3Array(const igl::NameHandle& uniformName,
-                                      const iglu::simdtypes::float3x3* value,
+                                      const simdtypes::float3x3* value,
                                       size_t count,
                                       size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
   if (device_.getBackendType() == igl::BackendType::Metal ||
       device_.getBackendType() == igl::BackendType::Vulkan ||
       device_.getBackendType() == igl::BackendType::WebGPU) {
-    setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float3x3), count, arrayIndex);
+    setUniformBytes(uniformName, value, sizeof(simdtypes::float3x3), count, arrayIndex);
   } else {
     // simdtypes::float3x3 has an extra float per float-vector.
     // Remove it so we can send the packed version to OpenGL
@@ -673,7 +673,7 @@ void ShaderUniforms::setFloat3x3Array(const igl::NameHandle& uniformName,
 void ShaderUniforms::setFloat3x3Array(const igl::NameHandle& blockTypeName,
                                       const igl::NameHandle& blockInstanceName,
                                       const igl::NameHandle& memberName,
-                                      const iglu::simdtypes::float3x3* value,
+                                      const simdtypes::float3x3* value,
                                       size_t count,
                                       size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
@@ -687,7 +687,7 @@ void ShaderUniforms::setFloat3x3Array(const igl::NameHandle& blockTypeName,
                     blockInstanceName,
                     memberName,
                     value,
-                    sizeof(iglu::simdtypes::float3x3),
+                    sizeof(simdtypes::float3x3),
                     count,
                     arrayIndex);
   } else {
@@ -719,105 +719,95 @@ void ShaderUniforms::setFloat3x3Array(const igl::NameHandle& blockTypeName,
 }
 
 void ShaderUniforms::setFloat4x4(const igl::NameHandle& uniformName,
-                                 const iglu::simdtypes::float4x4& value,
+                                 const simdtypes::float4x4& value,
                                  size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::float4x4), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::float4x4), 1, arrayIndex);
 }
 
 void ShaderUniforms::setFloat4x4(const igl::NameHandle& blockTypeName,
                                  const igl::NameHandle& blockInstanceName,
                                  const igl::NameHandle& memberName,
-                                 const iglu::simdtypes::float4x4& value,
+                                 const simdtypes::float4x4& value,
                                  size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   &value,
-                  sizeof(iglu::simdtypes::float4x4),
+                  sizeof(simdtypes::float4x4),
                   1,
                   arrayIndex);
 }
 
 void ShaderUniforms::setFloat4x4Array(const igl::NameHandle& uniformName,
-                                      const iglu::simdtypes::float4x4* value,
+                                      const simdtypes::float4x4* value,
                                       size_t count,
                                       size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::float4x4), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::float4x4), count, arrayIndex);
 }
 
 void ShaderUniforms::setFloat4x4Array(const igl::NameHandle& blockTypeName,
                                       const igl::NameHandle& blockInstanceName,
                                       const igl::NameHandle& memberName,
-                                      const iglu::simdtypes::float4x4* value,
+                                      const simdtypes::float4x4* value,
                                       size_t count,
                                       size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::float4x4),
+                  sizeof(simdtypes::float4x4),
                   count,
                   arrayIndex);
 }
 
 void ShaderUniforms::setInt(const igl::NameHandle& uniformName,
-                            const iglu::simdtypes::int1& value,
+                            const simdtypes::int1& value,
                             size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::int1), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::int1), 1, arrayIndex);
 }
 
 void ShaderUniforms::setInt(const igl::NameHandle& blockTypeName,
                             const igl::NameHandle& blockInstanceName,
                             const igl::NameHandle& memberName,
-                            const iglu::simdtypes::int1& value,
+                            const simdtypes::int1& value,
                             size_t arrayIndex) {
-  setUniformBytes(blockTypeName,
-                  blockInstanceName,
-                  memberName,
-                  &value,
-                  sizeof(iglu::simdtypes::int1),
-                  1,
-                  arrayIndex);
+  setUniformBytes(
+      blockTypeName, blockInstanceName, memberName, &value, sizeof(simdtypes::int1), 1, arrayIndex);
 }
 
 void ShaderUniforms::setInt2(const igl::NameHandle& uniformName,
-                             const iglu::simdtypes::int2& value,
+                             const simdtypes::int2& value,
                              size_t arrayIndex) {
-  setUniformBytes(uniformName, &value, sizeof(iglu::simdtypes::int2), 1, arrayIndex);
+  setUniformBytes(uniformName, &value, sizeof(simdtypes::int2), 1, arrayIndex);
 }
 
 void ShaderUniforms::setInt2(const igl::NameHandle& blockTypeName,
                              const igl::NameHandle& blockInstanceName,
                              const igl::NameHandle& memberName,
-                             const iglu::simdtypes::int2& value,
+                             const simdtypes::int2& value,
                              size_t arrayIndex) {
-  setUniformBytes(blockTypeName,
-                  blockInstanceName,
-                  memberName,
-                  &value,
-                  sizeof(iglu::simdtypes::int2),
-                  1,
-                  arrayIndex);
+  setUniformBytes(
+      blockTypeName, blockInstanceName, memberName, &value, sizeof(simdtypes::int2), 1, arrayIndex);
 }
 
 void ShaderUniforms::setIntArray(const igl::NameHandle& uniformName,
-                                 const iglu::simdtypes::int1* value,
+                                 const simdtypes::int1* value,
                                  size_t count,
                                  size_t arrayIndex) {
-  setUniformBytes(uniformName, value, sizeof(iglu::simdtypes::int1), count, arrayIndex);
+  setUniformBytes(uniformName, value, sizeof(simdtypes::int1), count, arrayIndex);
 }
 
 void ShaderUniforms::setIntArray(const igl::NameHandle& blockTypeName,
                                  const igl::NameHandle& blockInstanceName,
                                  const igl::NameHandle& memberName,
-                                 const iglu::simdtypes::int1* value,
+                                 const simdtypes::int1* value,
                                  size_t count,
                                  size_t arrayIndex) {
   setUniformBytes(blockTypeName,
                   blockInstanceName,
                   memberName,
                   value,
-                  sizeof(iglu::simdtypes::int1),
+                  sizeof(simdtypes::int1),
                   count,
                   arrayIndex);
 }

@@ -19,10 +19,8 @@
 namespace igl::shell::openxr::mobile {
 RenderSessionConfig XrAppImplVulkan::suggestedSessionConfig() const {
   return {.displayName = "Vulkan 1.1",
-          .backendVersion = {.flavor = igl::BackendFlavor::Vulkan,
-                             .majorVersion = 1,
-                             .minorVersion = 1},
-          .swapchainColorTextureFormat = igl::TextureFormat::RGBA_SRGB};
+          .backendVersion = {.flavor = BackendFlavor::Vulkan, .majorVersion = 1, .minorVersion = 1},
+          .swapchainColorTextureFormat = TextureFormat::RGBA_SRGB};
 }
 
 std::vector<const char*> XrAppImplVulkan::getXrRequiredExtensions() const {
@@ -86,7 +84,7 @@ std::unique_ptr<IDevice> XrAppImplVulkan::initIGL(XrInstance instance, XrSystemI
 
   requiredVkDeviceExtensions_ = processExtensionsBuffer(requiredVkDeviceExtensionsBuffer_);
 
-  const igl::vulkan::VulkanContextConfig cfg = {
+  const vulkan::VulkanContextConfig cfg = {
       .numExtraInstanceExtensions = requiredVkInstanceExtensions_.size(),
       .extraInstanceExtensions = requiredVkInstanceExtensions_.data(),
   };
@@ -146,7 +144,7 @@ XrSession XrAppImplVulkan::initXrSession(XrInstance instance,
                                          const RenderSessionConfig& sessionConfig) {
   IGL_DEBUG_ASSERT(sessionConfig.backendVersion.flavor == igl::BackendFlavor::Vulkan);
   sessionConfig_ = sessionConfig;
-  const auto& vkDevice = static_cast<igl::vulkan::Device&>(device); // Downcast is safe here
+  const auto& vkDevice = static_cast<vulkan::Device&>(device); // Downcast is safe here
 
   // Bind Vulkan to XR session
   const XrGraphicsBindingVulkanKHR graphicsBinding = {

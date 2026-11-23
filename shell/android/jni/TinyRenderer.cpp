@@ -587,7 +587,7 @@ void TinyRenderer::init(AAssetManager* mgr,
 
   switch (backendVersion_.flavor) {
 #if IGL_BACKEND_OPENGL
-  case igl::BackendFlavor::OpenGL_ES: {
+  case BackendFlavor::OpenGL_ES: {
     auto hwDevice = opengl::egl::HWDevice();
     // Decide which backend api to use, default as GLES3
     d = hwDevice.create(backendVersion_, &result);
@@ -611,7 +611,7 @@ void TinyRenderer::init(AAssetManager* mgr,
 #endif
 
 #if IGL_BACKEND_VULKAN
-  case igl::BackendFlavor::Vulkan: {
+  case BackendFlavor::Vulkan: {
     if (!nativeWindow) {
       hdrDisplayUnsupportedReason_ = "native window unavailable";
       return;
@@ -645,7 +645,7 @@ void TinyRenderer::init(AAssetManager* mgr,
         __android_log_print(ANDROID_LOG_ERROR, "igl", "Error: %s\n", result.message.c_str());
         return nullptr;
       }
-      igl::vulkan::VulkanFeatures vulkanFeatures(config);
+      vulkan::VulkanFeatures vulkanFeatures(config);
       vulkanFeatures.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
       factory.addVulkanFeatureRequests(vulkanFeatures);
 
@@ -707,14 +707,14 @@ void TinyRenderer::init(AAssetManager* mgr,
           "[IGL Shell] --force-multiview: multiview is not supported by this device. "
           "Running in normal mono mode.\n");
       shellParams_.forceMultiview = false;
-      shellParams_.renderMode = igl::shell::RenderMode::Mono;
+      shellParams_.renderMode = shell::RenderMode::Mono;
       shellParams_.viewParams.clear();
       shellParams_.shouldPresent = true;
     }
 
-    platform_ = std::make_shared<igl::shell::PlatformAndroid>(std::move(d));
+    platform_ = std::make_shared<shell::PlatformAndroid>(std::move(d));
     IGL_DEBUG_ASSERT(platform_ != nullptr);
-    static_cast<igl::shell::FileLoaderAndroid&>(platform_->getFileLoader()).setAssetManager(mgr);
+    static_cast<shell::FileLoaderAndroid&>(platform_->getFileLoader()).setAssetManager(mgr);
 
     // Sync surface dimensions to ShellParams for multiview
     if (shellParams_.forceMultiview) {
@@ -767,9 +767,9 @@ void TinyRenderer::installPresentationRateBackend() {
     (void)igl::shell::setNativeWindowFrameRate(nativeWindow_, displayRates_->maxHz);
   }
 
-  igl::shell::FrameDivider divider;
+  shell::FrameDivider divider;
 #if IGL_BACKEND_OPENGL
-  if (backendVersion_.flavor == igl::BackendFlavor::OpenGL_ES) {
+  if (backendVersion_.flavor == BackendFlavor::OpenGL_ES) {
     divider = eglSwapIntervalDivider();
   }
 #endif
@@ -813,11 +813,11 @@ void TinyRenderer::rebuildSwapchain(bool createSurface) {
   // May be the first device use on a new render thread, before render() claims the context.
   platform_->getDevice().setCurrentThread();
 
-  auto* platformDevice = platform_->getDevice().getPlatformDevice<igl::vulkan::PlatformDevice>();
+  auto* platformDevice = platform_->getDevice().getPlatformDevice<vulkan::PlatformDevice>();
   // need clear the cached textures before recreate swap chain.
   platformDevice->clear();
 
-  auto& vulkanDevice = static_cast<igl::vulkan::Device&>(platform_->getDevice());
+  auto& vulkanDevice = static_cast<vulkan::Device&>(platform_->getDevice());
   auto& vkContext = vulkanDevice.getVulkanContext();
 
   if (createSurface) {
@@ -1002,19 +1002,19 @@ bool TinyRenderer::render(float displayScale) {
     // Normal mode: create surface textures from native drawable
     switch (backendVersion_.flavor) {
 #if IGL_BACKEND_OPENGL
-    case igl::BackendFlavor::OpenGL_ES: {
+    case BackendFlavor::OpenGL_ES: {
       auto* platformDevice =
           platform_->getDevice().getPlatformDevice<opengl::egl::PlatformDevice>();
       surfaceTextures.color =
           platformDevice->createTextureFromNativeDrawable(swapchainColorTextureFormat_, &result);
       surfaceTextures.depth =
-          platformDevice->createTextureFromNativeDepth(igl::TextureFormat::Z_UNorm24, &result);
+          platformDevice->createTextureFromNativeDepth(TextureFormat::Z_UNorm24, &result);
       break;
     }
 #endif
 
 #if IGL_BACKEND_VULKAN
-    case igl::BackendFlavor::Vulkan: {
+    case BackendFlavor::Vulkan: {
       auto* platformDevice = platform_->getDevice().getPlatformDevice<vulkan::PlatformDevice>();
       surfaceTextures.color = platformDevice->createTextureFromNativeDrawable(&result);
       surfaceTextures.depth =
@@ -1111,7 +1111,7 @@ void TinyRenderer::onSurfacesChanged(ANativeWindow* nativeWindow, int width, int
   width_ = static_cast<uint32_t>(width);
   height_ = static_cast<uint32_t>(height);
 #if IGL_BACKEND_OPENGL
-  if (backendVersion_.flavor == igl::BackendFlavor::OpenGL_ES) {
+  if (backendVersion_.flavor == BackendFlavor::OpenGL_ES) {
     auto* readSurface = eglGetCurrentSurface(EGL_READ);
     auto* drawSurface = eglGetCurrentSurface(EGL_DRAW);
 
@@ -1131,7 +1131,7 @@ void TinyRenderer::onSurfacesChanged(ANativeWindow* nativeWindow, int width, int
 #endif
 
 #if IGL_BACKEND_VULKAN
-  if (backendVersion_.flavor == igl::BackendFlavor::Vulkan) {
+  if (backendVersion_.flavor == BackendFlavor::Vulkan) {
     // rebuildSwapchain() rather than recreateSwapchain(): the window was already adopted at
     // the top of this function, so going back through the adopt would release a reference
     // this path never acquired.
@@ -1148,7 +1148,7 @@ void TinyRenderer::touchEvent(bool isDown, float x, float y, float dx, float dy)
   const float scale = platform_->getDisplayContext().pixelsPerPoint;
   IGL_DEBUG_ASSERT(scale > 0.0f);
   platform_->getInputDispatcher().queueEvent(
-      igl::shell::TouchEvent(isDown, x / scale, y / scale, dx / scale, dy / scale));
+      shell::TouchEvent(isDown, x / scale, y / scale, dx / scale, dy / scale));
 }
 
 void TinyRenderer::setClearColorValue(float r, float g, float b, float a) {

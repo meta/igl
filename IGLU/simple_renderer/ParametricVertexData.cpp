@@ -46,10 +46,10 @@ igl::VertexInputStateDesc inputStateDesc() {
 }
 
 std::shared_ptr<VertexData> create(igl::IDevice& device,
-                                   iglu::simdtypes::float2 posMin,
-                                   iglu::simdtypes::float2 posMax,
-                                   iglu::simdtypes::float2 uvMin,
-                                   iglu::simdtypes::float2 uvMax) {
+                                   simdtypes::float2 posMin,
+                                   simdtypes::float2 posMax,
+                                   simdtypes::float2 uvMin,
+                                   simdtypes::float2 uvMax) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
   // - UV origin: bottom left
   // - Vertex layout:
@@ -109,13 +109,13 @@ igl::VertexInputStateDesc inputStateDesc() {
 }
 
 std::shared_ptr<VertexData> create(igl::IDevice& device,
-                                   iglu::simdtypes::float2 posMin,
-                                   iglu::simdtypes::float2 posMax,
-                                   iglu::simdtypes::float2 uvMin,
-                                   iglu::simdtypes::float2 uvMax) {
+                                   simdtypes::float2 posMin,
+                                   simdtypes::float2 posMax,
+                                   simdtypes::float2 uvMin,
+                                   simdtypes::float2 uvMax) {
   IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
-  iglu::simdtypes::float2 uvMinAdjusted = uvMin;
-  iglu::simdtypes::float2 uvMaxAdjusted = uvMax;
+  simdtypes::float2 uvMinAdjusted = uvMin;
+  simdtypes::float2 uvMaxAdjusted = uvMax;
 
   // Here's how to think about the conventions that led to this workaround.
   //

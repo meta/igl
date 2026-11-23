@@ -40,7 +40,7 @@ class XrSwapchainProviderImplVulkan final : public impl::XrSwapchainProviderImpl
 
  private:
   int64_t preferredColorFormat_;
-  std::vector<std::shared_ptr<igl::vulkan::VulkanTexture>> vulkanColorTextures_;
-  std::vector<std::shared_ptr<igl::vulkan::VulkanTexture>> vulkanDepthTextures_;
+  std::vector<std::shared_ptr<vulkan::VulkanTexture>> vulkanColorTextures_;
+  std::vector<std::shared_ptr<vulkan::VulkanTexture>> vulkanDepthTextures_;
 };
 } // namespace igl::shell::openxr::mobile

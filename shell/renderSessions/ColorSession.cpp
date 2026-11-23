@@ -353,11 +353,11 @@ fn fragmentShaderGradient(v : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& device) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU: {
+  case BackendType::WebGPU: {
     const bool gradient = colorTestModes_ == ColorTestModes::Gradient;
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
@@ -367,7 +367,7 @@ std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& 
         "",
         nullptr);
   }
-  case igl::BackendType::Vulkan: {
+  case BackendType::Vulkan: {
     auto vertexSource = getVulkanVertexShaderSource();
     if (device.hasFeature(DeviceFeatures::Multiview)) {
       vertexSource = R"(#version 450
@@ -399,7 +399,7 @@ std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& 
         // @fb-only
         // @fb-only
         // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device,
         colorTestModes_ == ColorTestModes::Gradient ? getMetalShaderSourceGradient().c_str()
@@ -408,7 +408,7 @@ std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& 
         "fragmentShader",
         "",
         nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     if (colorTestModes_ == ColorTestModes::Gradient) {
       // Gradient mode - no MVP matrix, just positional gradient
       static const char* kVS = R"(
@@ -517,7 +517,7 @@ std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& 
           device, kVS, "main", "", kPS, "main", "", nullptr);
     }
   }
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(
         device,
         getOpenGLVertexShaderSource().c_str(),
@@ -537,7 +537,7 @@ std::unique_ptr<IShaderStages> ColorSession::getShaderStagesForBackend(IDevice& 
 void ColorSession::initializeImpl() noexcept {
   IDevice& device = getPlatform().getDevice();
   const glm::vec3 fLinearOrangeColor =
-      (swapchainColorTextureformat_ == igl::TextureFormat::RGBA_SRGB &&
+      (swapchainColorTextureformat_ == TextureFormat::RGBA_SRGB &&
        device.hasFeature(DeviceFeatures::SRGB))
           ? glm::vec3(glm::convertSRGBToLinear(glm::dvec3{1.0, 0.5, 0.0}))
           : glm::vec3{1.0f, 0.5f, 0.0f};
@@ -609,11 +609,11 @@ void ColorSession::initializeImpl() noexcept {
   } else if (colorTestModes_ == ColorTestModes::OrangeTexture) {
     tex0_ = getPlatform().loadTexture("orange.png", withMipmaps, swapchainColorTextureformat_);
   } else if (colorTestModes_ == ColorTestModes::OrangeClear) {
-    tex0_ = getPlatform().loadTexture(igl::shell::ImageLoader::white());
+    tex0_ = getPlatform().loadTexture(ImageLoader::white());
     setPreferredClearColor(
         Color{fLinearOrangeColor.x, fLinearOrangeColor.y, fLinearOrangeColor.z, 1.0f});
   } else if (colorTestModes_ == ColorTestModes::Gradient) {
-    tex0_ = getPlatform().loadTexture(igl::shell::ImageLoader::white());
+    tex0_ = getPlatform().loadTexture(ImageLoader::white());
   }
   shaderStages_ = getShaderStagesForBackend(device);
   IGL_DEBUG_ASSERT(shaderStages_ != nullptr);
@@ -694,8 +694,8 @@ void ColorSession::updateImpl(const SurfaceTextures& surfaceTextures) noexcept {
                     .depthAttachmentFormat =
                         framebuffer_->getDepthAttachment()->getProperties().format,
                 },
-            .cullMode = igl::CullMode::Back,
-            .frontFaceWinding = igl::WindingMode::Clockwise,
+            .cullMode = CullMode::Back,
+            .frontFaceWinding = WindingMode::Clockwise,
             .fragmentUnitSamplerMap = {{textureUnit, IGL_NAMEHANDLE("inputImage")}},
         },
         nullptr);
@@ -719,7 +719,7 @@ void ColorSession::updateImpl(const SurfaceTextures& surfaceTextures) noexcept {
   // @fb-only
     if (getPlatform().getDevice().hasFeature(DeviceFeatures::BindUniform)) {
       fragmentUniformDescriptors_.back().location =
-          pipelineState_->getIndexByName("color", igl::ShaderStage::Fragment);
+          pipelineState_->getIndexByName("color", ShaderStage::Fragment);
     }
   fragmentUniformDescriptors_.back().type = UniformType::Float3;
   fragmentUniformDescriptors_.back().offset = offsetof(FragmentFormat, color);
@@ -733,7 +733,7 @@ void ColorSession::updateImpl(const SurfaceTextures& surfaceTextures) noexcept {
   // @fb-only
     if (getPlatform().getDevice().hasFeature(DeviceFeatures::BindUniform)) {
       fragmentUniformDescriptors_.back().location =
-          pipelineState_->getIndexByName("mvp", igl::ShaderStage::Fragment);
+          pipelineState_->getIndexByName("mvp", ShaderStage::Fragment);
     }
   fragmentUniformDescriptors_.back().type = UniformType::Mat4x4;
   fragmentUniformDescriptors_.back().offset = offsetof(FragmentFormat, mvp);

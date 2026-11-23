@@ -281,12 +281,12 @@ std::unique_ptr<igl::IShaderStages> getShaderStagesForBackend(igl::IDevice& devi
 
 namespace {
 struct DrawableData {
-  std::shared_ptr<iglu::vertexdata::VertexData> vertexData;
+  std::shared_ptr<vertexdata::VertexData> vertexData;
   std::shared_ptr<iglu::drawable::Drawable> drawable;
 
   DrawableData(igl::IDevice& device,
                const std::shared_ptr<igl::IVertexInputState>& inputState,
-               const std::shared_ptr<iglu::material::Material>& material) {
+               const std::shared_ptr<material::Material>& material) {
     IGL_PROFILER_FUNCTION_COLOR(IGL_PROFILER_COLOR_CREATE);
     IGL_DEBUG_ASSERT(sizeof(ImDrawIdx) == 2,
                      "The constants below may not work with the ImGui data.");
@@ -307,7 +307,7 @@ struct DrawableData {
                                  .hint = 0,
                                  .debugName = "index (" + material->name + ")"};
 
-    iglu::vertexdata::PrimitiveDesc primitiveDesc;
+    vertexdata::PrimitiveDesc primitiveDesc;
     primitiveDesc.numEntries = 0;
 
     // Per IGL Error Handling rule #24, every resource creation call must pass
@@ -320,7 +320,7 @@ struct DrawableData {
     IGL_DEBUG_ASSERT(result.isOk(), "createBuffer(index) failed: %s", result.message.c_str());
     IGL_DEBUG_ASSERT(ib != nullptr);
 
-    vertexData = std::make_shared<iglu::vertexdata::VertexData>(
+    vertexData = std::make_shared<vertexdata::VertexData>(
         inputState,
         std::move(vb),
         std::move(ib),
@@ -350,7 +350,7 @@ class Session::Renderer {
 
  private:
   std::shared_ptr<igl::IVertexInputState> vertexInputState_;
-  std::shared_ptr<iglu::material::Material> material_;
+  std::shared_ptr<material::Material> material_;
   std::vector<DrawableData> drawables_[3]; // list of drawables to be reused every 3 frames
   size_t nextBufferingIndex_ = 0;
 
@@ -425,13 +425,13 @@ Session::Renderer::Renderer(igl::IDevice& device) {
 
   {
     auto stages = getShaderStagesForBackend(device);
-    auto program = std::make_shared<iglu::material::ShaderProgram>(
-        device, std::move(stages), vertexInputState_);
+    auto program =
+        std::make_shared<material::ShaderProgram>(device, std::move(stages), vertexInputState_);
 
-    material_ = std::make_shared<iglu::material::Material>(device, "imgui");
+    material_ = std::make_shared<material::Material>(device, "imgui");
     material_->setShaderProgram(device, program);
     material_->cullMode = igl::CullMode::Disabled;
-    material_->blendMode = iglu::material::BlendMode::Translucent();
+    material_->blendMode = material::BlendMode::Translucent();
 
     // D3D12, Vulkan and WebGPU use direct slot binding, OpenGL/Metal use named binding
     const bool usesDirectBinding = (device.getBackendType() == igl::BackendType::Vulkan ||

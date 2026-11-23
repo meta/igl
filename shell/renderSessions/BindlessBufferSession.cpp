@@ -183,14 +183,14 @@ fn fragmentShader(in : VertexOut) -> @location(0) vec4f {
 
 std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device, bool useBindlessShader) {
   switch (device.getBackendType()) {
-  case igl::BackendType::Invalid:
-  case igl::BackendType::Custom:
+  case BackendType::Invalid:
+  case BackendType::Custom:
     IGL_DEBUG_ASSERT_NOT_REACHED();
     return nullptr;
-  case igl::BackendType::WebGPU:
+  case BackendType::WebGPU:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getWgslShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::Vulkan: {
+  case BackendType::Vulkan: {
     const auto& vsSource = useBindlessShader ? getVulkanBindlessVertexShaderSource()
                                              : getVulkanStandardVertexShaderSource();
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
@@ -205,10 +205,10 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device, bool u
   // @fb-only
     // @fb-only
     // @fb-only
-  case igl::BackendType::Metal:
+  case BackendType::Metal:
     return igl::ShaderStagesCreator::fromLibraryStringInput(
         device, getMetalShaderSource().c_str(), "vertexShader", "fragmentShader", "", nullptr);
-  case igl::BackendType::OpenGL:
+  case BackendType::OpenGL:
     return igl::ShaderStagesCreator::fromModuleStringInput(device,
                                                            getOpenGLVertexShaderSource().c_str(),
                                                            "main",
@@ -217,7 +217,7 @@ std::unique_ptr<IShaderStages> getShaderStagesForBackend(IDevice& device, bool u
                                                            "main",
                                                            "",
                                                            nullptr);
-  case igl::BackendType::D3D12: {
+  case BackendType::D3D12: {
     static const char* kVS = R"(
       struct VSIn { float3 position : POSITION; float4 color : COLOR; };
       struct VSOut { float4 position : SV_POSITION; float4 color : COLOR; };
@@ -242,7 +242,7 @@ void BindlessBufferSession::initialize() noexcept {
 
   // Check if buffer device address (bindless buffers) is supported.
   isBindlessSupported_ = device.hasFeature(DeviceFeatures::BufferDeviceAddress) &&
-                         device.getBackendType() == igl::BackendType::Vulkan;
+                         device.getBackendType() == BackendType::Vulkan;
 
   if (isBindlessSupported_) {
     IGL_LOG_INFO(
@@ -368,10 +368,10 @@ void BindlessBufferSession::update(SurfaceTextures textures) noexcept {
                     .stencilAttachmentFormat =
                         framebuffer_->getStencilAttachment()
                             ? framebuffer_->getStencilAttachment()->getFormat()
-                            : igl::TextureFormat::Invalid,
+                            : TextureFormat::Invalid,
                 },
-            .cullMode = igl::CullMode::Disabled,
-            .frontFaceWinding = igl::WindingMode::CounterClockwise,
+            .cullMode = CullMode::Disabled,
+            .frontFaceWinding = WindingMode::CounterClockwise,
         },
         nullptr);
     IGL_DEBUG_ASSERT(pipelineState_ != nullptr);

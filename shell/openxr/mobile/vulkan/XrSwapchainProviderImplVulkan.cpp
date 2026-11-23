@@ -26,7 +26,7 @@ void enumerateSwapchainImages(
     uint8_t numViews,
     VkImageUsageFlags usageFlags,
     VkImageAspectFlags aspectMask,
-    std::vector<std::shared_ptr<igl::vulkan::VulkanTexture>>& outVulkanTextures) {
+    std::vector<std::shared_ptr<vulkan::VulkanTexture>>& outVulkanTextures) {
   uint32_t numImages = 0;
   XR_CHECK(xrEnumerateSwapchainImages(swapchain, 0, &numImages, nullptr));
 
@@ -40,14 +40,14 @@ void enumerateSwapchainImages(
                                  &numImages,
                                  reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())));
 
-  const auto& actualDevice = static_cast<igl::vulkan::Device&>(device);
+  const auto& actualDevice = static_cast<vulkan::Device&>(device);
   const auto& ctx = actualDevice.getVulkanContext();
   outVulkanTextures.reserve(numImages);
 
   const bool isDepth = ((aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) != 0);
 
   for (uint32_t i = 0; i < numImages; ++i) {
-    auto image = igl::vulkan::VulkanImage(
+    auto image = vulkan::VulkanImage(
         ctx,
         images[i].image,
         fmt::format("Image: swapchain {} #{}", isDepth ? "depth" : "color", i).c_str(),
@@ -71,7 +71,7 @@ void enumerateSwapchainImages(
         numViews,
         fmt::format("Image View: swapchain {} #{}", isDepth ? "depth" : "color", i).c_str());
     outVulkanTextures.emplace_back(
-        std::make_shared<igl::vulkan::VulkanTexture>(std::move(image), std::move(imageView)));
+        std::make_shared<vulkan::VulkanTexture>(std::move(image), std::move(imageView)));
   }
 }
 
@@ -80,7 +80,7 @@ std::shared_ptr<ITexture> getSurfaceTexture(
     const XrSwapchain& swapchain,
     const impl::SwapchainImageInfo& swapchainImageInfo,
     uint8_t numViews,
-    const std::vector<std::shared_ptr<igl::vulkan::VulkanTexture>>& vulkanTextures,
+    const std::vector<std::shared_ptr<vulkan::VulkanTexture>>& vulkanTextures,
     VkFormat externalTextureFormat,
     std::vector<std::shared_ptr<ITexture>>& inOutTextures) {
   uint32_t imageIndex = 0;
@@ -97,7 +97,7 @@ std::shared_ptr<ITexture> getSurfaceTexture(
     inOutTextures.resize(static_cast<size_t>(imageIndex) + 1, nullptr);
   }
 
-  auto& actualDevice = static_cast<igl::vulkan::Device&>(device);
+  auto& actualDevice = static_cast<vulkan::Device&>(device);
   const auto iglFormat = vulkan::vkFormatToTextureFormat(externalTextureFormat);
   const auto texture = inOutTextures[imageIndex];
   // allocate new drawable textures if its null or mismatches in size or format
@@ -118,7 +118,7 @@ std::shared_ptr<ITexture> getSurfaceTexture(
                                           "SwapChain Texture");
 
     inOutTextures[imageIndex] =
-        std::make_shared<igl::vulkan::Texture>(actualDevice, vulkanTexture, textureDesc);
+        std::make_shared<vulkan::Texture>(actualDevice, vulkanTexture, textureDesc);
   }
 
   return inOutTextures[imageIndex];

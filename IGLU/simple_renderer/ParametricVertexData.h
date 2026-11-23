@@ -19,8 +19,8 @@ namespace iglu::vertexdata {
 // [Convention] UV origin is bottom left and +Y points up.
 
 struct VertexPosUv {
-  iglu::simdtypes::float3 position;
-  iglu::simdtypes::float2 uv;
+  simdtypes::float3 position;
+  simdtypes::float2 uv;
 };
 
 /// Simple XY-aligned quad.
@@ -30,10 +30,10 @@ namespace Quad {
 igl::VertexInputStateDesc inputStateDesc();
 
 std::shared_ptr<VertexData> create(igl::IDevice& device,
-                                   iglu::simdtypes::float2 posMin,
-                                   iglu::simdtypes::float2 posMax,
-                                   iglu::simdtypes::float2 uvMin,
-                                   iglu::simdtypes::float2 uvMax);
+                                   simdtypes::float2 posMin,
+                                   simdtypes::float2 posMax,
+                                   simdtypes::float2 uvMin,
+                                   simdtypes::float2 uvMax);
 
 } // namespace Quad
 
@@ -52,10 +52,10 @@ namespace RenderToTextureQuad {
 igl::VertexInputStateDesc inputStateDesc();
 
 std::shared_ptr<VertexData> create(igl::IDevice& device,
-                                   iglu::simdtypes::float2 posMin,
-                                   iglu::simdtypes::float2 posMax,
-                                   iglu::simdtypes::float2 uvMin,
-                                   iglu::simdtypes::float2 uvMax);
+                                   simdtypes::float2 posMin,
+                                   simdtypes::float2 posMax,
+                                   simdtypes::float2 uvMin,
+                                   simdtypes::float2 uvMax);
 
 } // namespace RenderToTextureQuad
 

@@ -24,11 +24,10 @@
 
 namespace igl::shell::openxr::mobile {
 RenderSessionConfig XrAppImplGLES::suggestedSessionConfig() const {
-  return {.displayName = "OpenGL ES 3.2",
-          .backendVersion = {.flavor = igl::BackendFlavor::OpenGL_ES,
-                             .majorVersion = 3,
-                             .minorVersion = 2},
-          .swapchainColorTextureFormat = igl::TextureFormat::RGBA_SRGB};
+  return {
+      .displayName = "OpenGL ES 3.2",
+      .backendVersion = {.flavor = BackendFlavor::OpenGL_ES, .majorVersion = 3, .minorVersion = 2},
+      .swapchainColorTextureFormat = TextureFormat::RGBA_SRGB};
 }
 
 std::vector<const char*> XrAppImplGLES::getXrRequiredExtensions() const {
@@ -82,7 +81,7 @@ XrSession XrAppImplGLES::initXrSession(XrInstance instance,
   IGL_DEBUG_ASSERT(sessionConfig.backendVersion.flavor == igl::BackendFlavor::OpenGL_ES);
   sessionConfig_ = sessionConfig;
   device_ = &device;
-  const auto& glDevice = static_cast<igl::opengl::Device&>(device); // Downcast is safe here
+  const auto& glDevice = static_cast<opengl::Device&>(device); // Downcast is safe here
 
 #if IGL_WGL
   const auto& context =
@@ -94,7 +93,7 @@ XrSession XrAppImplGLES::initXrSession(XrInstance instance,
       .hGLRC = context.getRenderContext()};
 #else
   const auto& context =
-      static_cast<igl::opengl::egl::Context&>(glDevice.getContext()); // Downcast is safe here
+      static_cast<opengl::egl::Context&>(glDevice.getContext()); // Downcast is safe here
   XrGraphicsBindingOpenGLESAndroidKHR graphicsBindingGL = {
       .type = XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR,
       .next = nullptr,

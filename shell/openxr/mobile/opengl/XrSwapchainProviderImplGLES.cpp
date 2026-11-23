@@ -81,7 +81,7 @@ std::shared_ptr<ITexture> getSurfaceTexture(IDevice& device,
   auto texture = inOutTextures[imageIndex];
   if (!texture || swapchainImageInfo.imageWidth != texture->getSize().width ||
       swapchainImageInfo.imageHeight != texture->getSize().height) {
-    auto* const platformDevice = device.getPlatformDevice<igl::opengl::PlatformDevice>();
+    auto* const platformDevice = device.getPlatformDevice<opengl::PlatformDevice>();
     texture = platformDevice->createTextureBufferExternal(
         glTexture,
         numViews > 1 ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
@@ -103,8 +103,8 @@ std::shared_ptr<ITexture> getSurfaceTexture(IDevice& device,
 
 XrSwapchainProviderImplGLES::XrSwapchainProviderImplGLES(const IDevice& device,
                                                          TextureFormat preferredColorFormat) {
-  const auto& openglDevice = static_cast<const igl::opengl::Device&>(device);
-  igl::opengl::Texture::FormatDescGL formatDescGL;
+  const auto& openglDevice = static_cast<const opengl::Device&>(device);
+  opengl::Texture::FormatDescGL formatDescGL;
   igl::opengl::Texture::toFormatDescGL(openglDevice.getContext(),
                                        preferredColorFormat,
                                        TextureDesc::TextureUsageBits::Attachment |
@@ -131,7 +131,7 @@ SurfaceTextures XrSwapchainProviderImplGLES::getSurfaceTextures(
     const impl::SwapchainImageInfo& swapchainImageInfo,
     uint8_t numViews) noexcept { // NOLINT(bugprone-exception-escape)
   // Assume sized format so format / type are not needed.
-  auto iglColorFormat = igl::opengl::Texture::glInternalFormatToTextureFormat(
+  auto iglColorFormat = opengl::Texture::glInternalFormatToTextureFormat(
       static_cast<GLuint>(swapchainImageInfo.colorFormat), 0, 0);
   auto colorTexture = getSurfaceTexture(device,
                                         colorSwapchain,
@@ -141,7 +141,7 @@ SurfaceTextures XrSwapchainProviderImplGLES::getSurfaceTextures(
                                         iglColorFormat,
                                         colorTextures_);
 
-  auto iglDepthFormat = igl::opengl::Texture::glInternalFormatToTextureFormat(
+  auto iglDepthFormat = opengl::Texture::glInternalFormatToTextureFormat(
       static_cast<GLuint>(swapchainImageInfo.depthFormat), 0, 0);
   auto depthTexture = getSurfaceTexture(device,
                                         depthSwapchain,

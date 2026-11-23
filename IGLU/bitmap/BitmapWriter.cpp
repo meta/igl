@@ -58,14 +58,14 @@ struct BufferOffsets {
 BufferOffsets getBufferOffsets(TextureFormat format) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (format) {
-  case igl::TextureFormat::RGBA_UNorm8:
-  case igl::TextureFormat::RGBX_UNorm8:
-  case igl::TextureFormat::RGBA_SRGB: {
+  case TextureFormat::RGBA_UNorm8:
+  case TextureFormat::RGBX_UNorm8:
+  case TextureFormat::RGBA_SRGB: {
     return {.r = 0, .g = 1, .b = 2};
   }
 
-  case igl::TextureFormat::BGRA_UNorm8:
-  case igl::TextureFormat::BGRA_SRGB: {
+  case TextureFormat::BGRA_UNorm8:
+  case TextureFormat::BGRA_SRGB: {
     return {.r = 2, .g = 1, .b = 0};
   }
 
@@ -80,11 +80,11 @@ BufferOffsets getBufferOffsets(TextureFormat format) {
 bool isSupportedBitmapTextureFormat(TextureFormat format) {
   // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
   switch (format) {
-  case igl::TextureFormat::RGBA_UNorm8:
-  case igl::TextureFormat::RGBX_UNorm8:
-  case igl::TextureFormat::RGBA_SRGB:
-  case igl::TextureFormat::BGRA_UNorm8:
-  case igl::TextureFormat::BGRA_SRGB:
+  case TextureFormat::RGBA_UNorm8:
+  case TextureFormat::RGBX_UNorm8:
+  case TextureFormat::RGBA_SRGB:
+  case TextureFormat::BGRA_UNorm8:
+  case TextureFormat::BGRA_SRGB:
     return true;
 
   default:

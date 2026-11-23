@@ -103,8 +103,8 @@ class TinyRenderer final {
 
  private:
   BackendVersion backendVersion_;
-  std::shared_ptr<igl::shell::PlatformAndroid> platform_;
-  std::unique_ptr<igl::shell::RenderSession> session_;
+  std::shared_ptr<shell::PlatformAndroid> platform_;
+  std::unique_ptr<shell::RenderSession> session_;
 
   shell::ShellParams shellParams_;
   uint32_t width_ = 0;
@@ -117,8 +117,7 @@ class TinyRenderer final {
   /// backend that is already running rather than only to the next one. Written and read on
   /// the shell's render thread, which is where every JNI entry point that touches it and
   /// every rate request both land.
-  std::shared_ptr<igl::shell::DisplayRates> displayRates_ =
-      std::make_shared<igl::shell::DisplayRates>();
+  std::shared_ptr<shell::DisplayRates> displayRates_ = std::make_shared<shell::DisplayRates>();
 
   // Offscreen textures for headless rendering
   std::shared_ptr<ITexture> offscreenColorTexture_;
