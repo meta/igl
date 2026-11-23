@@ -23,7 +23,7 @@ class TextureVulkanTest : public ::testing::Test {
   // Set up common resources. This will create a device
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
@@ -38,8 +38,8 @@ class TextureVulkanTest : public ::testing::Test {
 
 TEST_F(TextureVulkanTest, MipmapGenerationFlagInitialization) {
   // Create a texture with default TextureDesc
-  const TextureDesc texDesc = igl::TextureDesc::new2D(
-      igl::TextureFormat::RGBA_UNorm8, 2, 2, igl::TextureDesc::TextureUsageBits::Sampled);
+  const TextureDesc texDesc =
+      TextureDesc::new2D(TextureFormat::RGBA_UNorm8, 2, 2, TextureDesc::TextureUsageBits::Sampled);
 
   Result result;
   auto texture = iglDev_->createTexture(texDesc, &result);

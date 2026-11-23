@@ -54,7 +54,7 @@ class DeviceVulkanTest : public ::testing::Test {
   // Set up common resources. This will create a device
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
@@ -102,13 +102,13 @@ TEST_F(DeviceVulkanTest, PlatformDevice) {
 }
 
 TEST_F(DeviceVulkanTest, Semaphores) {
-  auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  auto& device = static_cast<vulkan::Device&>(*iglDev_);
   auto& ctx = device.getVulkanContext();
 
   // binary semaphore
   {
-    auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
-        ctx.vf_, ctx.getVkDevice(), false, "semaphore");
+    auto semaphore =
+        std::make_unique<vulkan::VulkanSemaphore>(ctx.vf_, ctx.getVkDevice(), false, "semaphore");
 
     ASSERT_NE(semaphore, nullptr);
     ASSERT_NE(semaphore->getVkSemaphore(), VK_NULL_HANDLE);
@@ -116,7 +116,7 @@ TEST_F(DeviceVulkanTest, Semaphores) {
   }
   // timeline semaphore
   {
-    auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
+    auto semaphore = std::make_unique<vulkan::VulkanSemaphore>(
         ctx.vf_, ctx.getVkDevice(), 0, false, "timelineSemaphore");
 
     ASSERT_NE(semaphore, nullptr);
@@ -127,8 +127,8 @@ TEST_F(DeviceVulkanTest, Semaphores) {
 
 TEST_F(DeviceVulkanTest, PlatformDeviceSampler) {
   Result ret;
-  TextureDesc textureDesc = TextureDesc::new2D(
-      igl::TextureFormat::RGBA_UNorm8, 2, 2, TextureDesc::TextureUsageBits::Sampled);
+  TextureDesc textureDesc =
+      TextureDesc::new2D(TextureFormat::RGBA_UNorm8, 2, 2, TextureDesc::TextureUsageBits::Sampled);
   auto texture = iglDev_->createTexture(textureDesc, &ret);
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_TRUE(texture != nullptr);
@@ -156,8 +156,7 @@ TEST_F(DeviceVulkanTest, StagingDeviceLargeBufferTest) {
 
   // create a GPU device-local storage buffer large enough to force Vulkan staging device to upload
   // it in multiple chunks
-  igl::vulkan::VulkanContext& ctx =
-      static_cast<igl::vulkan::Device*>(iglDev_.get())->getVulkanContext();
+  vulkan::VulkanContext& ctx = static_cast<vulkan::Device*>(iglDev_.get())->getVulkanContext();
 
   const VkDeviceSize kMaxStagingBufferSize = ctx.stagingDevice_->getMaxStagingBufferSize();
 
@@ -223,8 +222,7 @@ TEST_F(DeviceVulkanTest, DestroyEmptyHandles) {
 }
 
 TEST_F(DeviceVulkanTest, CurrentThreadIdTest) {
-  igl::vulkan::VulkanContext& ctx =
-      static_cast<igl::vulkan::Device*>(iglDev_.get())->getVulkanContext();
+  vulkan::VulkanContext& ctx = static_cast<vulkan::Device*>(iglDev_.get())->getVulkanContext();
 
   ctx.ensureCurrentContextThread();
 }
@@ -354,8 +352,8 @@ TEST_F(DeviceVulkanTest, ImageCopyAlignmentIncludesMultiplanarFormats) {
 }
 
 TEST_F(DeviceVulkanTest, UpdateGlslangResource) {
-  const igl::vulkan::VulkanContext& ctx =
-      static_cast<const igl::vulkan::Device*>(iglDev_.get())->getVulkanContext();
+  const vulkan::VulkanContext& ctx =
+      static_cast<const vulkan::Device*>(iglDev_.get())->getVulkanContext();
 
   ivkUpdateGlslangResource(nullptr, nullptr, nullptr);
 
@@ -510,7 +508,7 @@ GTEST_TEST(GlslCompilerOptimization, SpvOptionsMapping) {
 // SPIRV-Tools optimizer alters the bytes depends on the glslang build + debug-info config; the
 // release-vs-debug GPU perf delta is validated on-device per the diff test plan, not here.
 GTEST_TEST(GlslCompilerOptimization, CompilesValidSpirvForEachOption) {
-  igl::glslang::initializeCompiler();
+  glslang::initializeCompiler();
 
   glslang_resource_t resource = {};
   glslangGetDefaultResource(&resource);
@@ -535,14 +533,14 @@ void main() {
     EXPECT_EQ(spirv.front(), kSpirvMagic);
   }
 
-  igl::glslang::finalizeCompiler();
+  glslang::finalizeCompiler();
 }
 
 // SPIR-V 1.5 is rejected on pre-1.2 devices (VUID-VkShaderModuleCreateInfo-pCode-08737),
 // so the compile target must be clampable: the default stays 1.5 (byte-for-byte stability)
 // while an explicit Vulkan 1.1 / SPIR-V 1.3 target emits version word 0x10300.
 GTEST_TEST(GlslCompilerTargetVersion, DefaultAndClampedSpirvVersion) {
-  igl::glslang::initializeCompiler();
+  glslang::initializeCompiler();
 
   glslang_resource_t resource = {};
   glslangGetDefaultResource(&resource);
@@ -572,7 +570,7 @@ void main() {
   EXPECT_EQ(spirvClamped.front(), kSpirvMagic);
   EXPECT_EQ(spirvClamped[1], 0x00010300u);
 
-  igl::glslang::finalizeCompiler();
+  glslang::finalizeCompiler();
 }
 
 // glslTargetForVulkanVersion() maps each Vulkan API version to the newest SPIR-V target it
@@ -604,8 +602,8 @@ GTEST_TEST(GlslTargetVersion, MapsVulkanApiBoundaries) {
 }
 
 TEST_F(DeviceVulkanTest, BufferDeviceAddress) {
-  const igl::vulkan::VulkanContext& ctx =
-      static_cast<const igl::vulkan::Device*>(iglDev_.get())->getVulkanContext();
+  const vulkan::VulkanContext& ctx =
+      static_cast<const vulkan::Device*>(iglDev_.get())->getVulkanContext();
 
   if (!ctx.features().has_VK_KHR_buffer_device_address) {
     return;
@@ -632,7 +630,7 @@ TEST_F(DeviceVulkanTest, BufferDeviceAddress) {
 }
 
 GTEST_TEST(VulkanContext, DescriptorIndexing) {
-  const igl::vulkan::VulkanContextConfig config = {
+  const vulkan::VulkanContextConfig config = {
 #if IGL_PLATFORM_MACOSX
       .terminateOnValidationError = false,
 #elif IGL_DEBUG
@@ -654,20 +652,20 @@ GTEST_TEST(VulkanContext, DescriptorIndexing) {
       .enableDescriptorIndexing = true,
   };
 
-  std::unique_ptr<igl::vulkan::Device> iglDev = nullptr;
+  std::unique_ptr<vulkan::Device> iglDev = nullptr;
 
-  auto ctx = igl::vulkan::HWDevice::createContext(config, nullptr);
+  auto ctx = vulkan::HWDevice::createContext(config, nullptr);
   ASSERT_NE(ctx, nullptr);
 
   Result ret;
 
   std::vector<HWDeviceDesc> devices =
-      igl::vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &ret);
+      vulkan::HWDevice::queryDevices(*ctx, HWDeviceQueryDesc(HWDeviceType::Unknown), &ret);
 
   ASSERT_TRUE(!devices.empty());
 
   if (ret.isOk()) {
-    igl::vulkan::VulkanFeatures features(config);
+    vulkan::VulkanFeatures features(config);
     features.populateWithAvailablePhysicalDeviceFeatures(
         *ctx,
         (VkPhysicalDevice)devices[0].guid); // NOLINT(performance-no-int-to-ptr)
@@ -683,15 +681,15 @@ GTEST_TEST(VulkanContext, DescriptorIndexing) {
       return;
     }
 
-    iglDev = igl::vulkan::HWDevice::create(std::move(ctx),
-                                           devices[0],
-                                           0, // width
-                                           0, // height,
-                                           0,
-                                           nullptr,
-                                           &features,
-                                           "VulkanContext Test",
-                                           &ret);
+    iglDev = vulkan::HWDevice::create(std::move(ctx),
+                                      devices[0],
+                                      0, // width
+                                      0, // height,
+                                      0,
+                                      nullptr,
+                                      &features,
+                                      "VulkanContext Test",
+                                      &ret);
     if (!ret.isOk()) {
       iglDev = nullptr;
     }

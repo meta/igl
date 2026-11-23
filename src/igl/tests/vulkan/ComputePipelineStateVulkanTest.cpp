@@ -33,12 +33,12 @@ class ComputePipelineStateVulkanTest : public ::testing::Test {
   ComputePipelineStateVulkanTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     device_ = util::createTestDevice();
     ASSERT_NE(device_, nullptr);
     ASSERT_EQ(device_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
 
-    auto& vulkanDevice = static_cast<igl::vulkan::Device&>(*device_);
+    auto& vulkanDevice = static_cast<vulkan::Device&>(*device_);
     context_ = &vulkanDevice.getVulkanContext();
     ASSERT_NE(context_, nullptr);
 

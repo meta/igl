@@ -24,7 +24,7 @@ class VulkanDescriptorSetLayoutTest : public ::testing::Test {
   VulkanDescriptorSetLayoutTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -35,8 +35,8 @@ class VulkanDescriptorSetLayoutTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
@@ -52,7 +52,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, SingleBinding) {
                                              .pImmutableSamplers = nullptr};
 
   VkDescriptorBindingFlags bindingFlags = 0;
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 1, &binding, &bindingFlags, "testSingleBinding");
 
   ASSERT_NE(layout, nullptr);
@@ -78,7 +78,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, MultipleBindings) {
                                    .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT}};
 
   const std::array<VkDescriptorBindingFlags, 3> bindingFlags = {};
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 3, bindings.data(), bindingFlags.data(), "testMultipleBindings");
 
   ASSERT_NE(layout, nullptr);
@@ -97,7 +97,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, WithBindingFlags) {
 
   VkDescriptorBindingFlags flags = 0;
 
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 1, &binding, &flags, "testWithFlags");
 
   ASSERT_NE(layout, nullptr);
@@ -108,7 +108,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, WithBindingFlags) {
 TEST_F(VulkanDescriptorSetLayoutTest, ZeroBindings) {
   auto& ctx = getVulkanContext();
 
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 0, nullptr, nullptr, "testZeroBindings");
 
   ASSERT_NE(layout, nullptr);
@@ -126,7 +126,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, NullDebugName) {
 
   VkDescriptorBindingFlags bindingFlags = 0;
   auto layout =
-      std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(ctx, 0, 1, &binding, &bindingFlags);
+      std::make_unique<vulkan::VulkanDescriptorSetLayout>(ctx, 0, 1, &binding, &bindingFlags);
 
   ASSERT_NE(layout, nullptr);
   EXPECT_NE(layout->getVkDescriptorSetLayout(), VK_NULL_HANDLE);
@@ -143,7 +143,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, DestructorCleanup) {
 
   {
     VkDescriptorBindingFlags bindingFlags = 0;
-    auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+    auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
         ctx, 0, 1, &binding, &bindingFlags, "testDestructor");
 
     ASSERT_NE(layout, nullptr);
@@ -163,7 +163,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, UpdateAfterBindFlag) {
                                                            VK_SHADER_STAGE_FRAGMENT_BIT};
 
   const VkDescriptorBindingFlags bindingFlags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx,
       VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
       1,
@@ -202,7 +202,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, MixedDescriptorTypes) {
   bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
   std::array<VkDescriptorBindingFlags, 4> bindingFlags = {};
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 4, bindings.data(), bindingFlags.data(), "testMixedTypes");
 
   ASSERT_NE(layout, nullptr);
@@ -219,7 +219,7 @@ TEST_F(VulkanDescriptorSetLayoutTest, LayoutSizeNonNegative) {
                                              .stageFlags = VK_SHADER_STAGE_VERTEX_BIT};
 
   VkDescriptorBindingFlags bindingFlags = 0;
-  auto layout = std::make_unique<igl::vulkan::VulkanDescriptorSetLayout>(
+  auto layout = std::make_unique<vulkan::VulkanDescriptorSetLayout>(
       ctx, 0, 1, &binding, &bindingFlags, "testLayoutSize");
 
   ASSERT_NE(layout, nullptr);

@@ -24,7 +24,7 @@ class InputAttachmentVulkanTest : public ::testing::Test {
   InputAttachmentVulkanTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";

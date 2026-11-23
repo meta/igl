@@ -25,7 +25,7 @@ class ImageLayoutTransitionTest : public ::testing::Test {
   ImageLayoutTransitionTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";

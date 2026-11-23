@@ -64,7 +64,7 @@ class VulkanBufferTest : public ::testing::Test {
   VulkanBufferTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -75,8 +75,8 @@ class VulkanBufferTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 
@@ -95,7 +95,7 @@ class VulkanBufferTest : public ::testing::Test {
     ASSERT_NE(buffer, nullptr);
 
     const VkBufferUsageFlags usageFlags =
-        static_cast<igl::vulkan::Buffer&>(*buffer).getBufferUsageFlags();
+        static_cast<vulkan::Buffer&>(*buffer).getBufferUsageFlags();
     EXPECT_NE(usageFlags & VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0u);
   }
 };
@@ -414,7 +414,7 @@ class VulkanBufferFaultTest : public ::testing::Test {
   using Counted = util::device::vulkan::FaultingDevice::Counted;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     if (!IGL_VULKAN_USE_VMA) {
       GTEST_SKIP() << "The allocation tests run on the VMA path";
     }
@@ -425,9 +425,8 @@ class VulkanBufferFaultTest : public ::testing::Test {
         util::device::vulkan::getContextConfig());
   }
 
-  static std::unique_ptr<igl::vulkan::VulkanBuffer> createHostBuffer(
-      igl::vulkan::VulkanContext& ctx,
-      Result* result) {
+  static std::unique_ptr<vulkan::VulkanBuffer> createHostBuffer(vulkan::VulkanContext& ctx,
+                                                                Result* result) {
     return ctx.createBuffer(256,
                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -642,12 +641,12 @@ TEST_F(VulkanBufferFaultTest, InvalidBufferOperationsAreGuarded) {
   const size_t deferredBefore = ctx.deferredTasks.size();
   const InvalidBufferAbortObserver aborts;
   {
-    igl::vulkan::VulkanBuffer buffer(ctx,
-                                     ctx.getVkDevice(),
-                                     256,
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                                     "Buffer: invalid");
+    vulkan::VulkanBuffer buffer(ctx,
+                                ctx.getVkDevice(),
+                                256,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                "Buffer: invalid");
     ASSERT_FALSE(buffer.valid());
     EXPECT_EQ(buffer.initResult(), VK_ERROR_OUT_OF_DEVICE_MEMORY);
     EXPECT_EQ(buffer.getVkBuffer(), VK_NULL_HANDLE);

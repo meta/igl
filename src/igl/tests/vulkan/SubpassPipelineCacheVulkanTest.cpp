@@ -29,7 +29,7 @@ namespace igl::tests {
 class SubpassPipelineCacheVulkanTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -94,7 +94,7 @@ void main() {
         .targetDesc = {.colorAttachments =
                            std::vector<RenderPipelineDesc::TargetDesc::ColorAttachment>(
                                numColorFormats, {.textureFormat = TextureFormat::RGBA_UNorm8})},
-        .debugName = igl::genNameHandle(name),
+        .debugName = genNameHandle(name),
     };
 
     auto pipeline = iglDev_->createRenderPipeline(desc, &ret);
@@ -164,8 +164,7 @@ void main() {
   cmdQueue_->submit(*cmdBuf);
   cmdBuf->waitUntilCompleted();
 
-  const uint32_t numPipelinesAfterFrame1 =
-      igl::vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
+  const uint32_t numPipelinesAfterFrame1 = vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
 
   // Frame 2: Load (should not create new pipelines)
   cmdBuf = cmdQueue_->createCommandBuffer({}, &ret);
@@ -184,8 +183,7 @@ void main() {
   cmdQueue_->submit(*cmdBuf);
   cmdBuf->waitUntilCompleted();
 
-  const uint32_t numPipelinesAfterFrame2 =
-      igl::vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
+  const uint32_t numPipelinesAfterFrame2 = vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
 
   // No new pipelines should be created
   EXPECT_EQ(numPipelinesAfterFrame1, numPipelinesAfterFrame2);
@@ -223,7 +221,7 @@ void main() {
   };
 
   Result ret;
-  const uint32_t numPipelinesBefore = igl::vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
+  const uint32_t numPipelinesBefore = vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
 
   auto cmdBuf = cmdQueue_->createCommandBuffer({}, &ret);
   ASSERT_TRUE(ret.isOk());
@@ -241,7 +239,7 @@ void main() {
   cmdQueue_->submit(*cmdBuf);
   cmdBuf->waitUntilCompleted();
 
-  const uint32_t numPipelinesAfter = igl::vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
+  const uint32_t numPipelinesAfter = vulkan::VulkanPipelineBuilder::getNumPipelinesCreated();
 
   // Should create exactly 2 VkPipelines: one for subpass 0, one for subpass 1
   EXPECT_EQ(numPipelinesAfter - numPipelinesBefore, 2u);

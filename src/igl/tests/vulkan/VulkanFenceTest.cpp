@@ -27,7 +27,7 @@ class VulkanFenceTest : public ::testing::Test {
   VulkanFenceTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -38,15 +38,15 @@ class VulkanFenceTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
 
 TEST_F(VulkanFenceTest, CreateSignaledFence) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(
+  vulkan::VulkanFence fence(
       ctx.vf_, ctx.getVkDevice(), VK_FENCE_CREATE_SIGNALED_BIT, false, "testSignaledFence");
 
   EXPECT_NE(fence.vkFence_, VK_NULL_HANDLE);
@@ -57,7 +57,7 @@ TEST_F(VulkanFenceTest, CreateSignaledFence) {
 
 TEST_F(VulkanFenceTest, CreateUnsignaledFence) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testUnsignaledFence");
+  vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testUnsignaledFence");
 
   EXPECT_NE(fence.vkFence_, VK_NULL_HANDLE);
   EXPECT_FALSE(fence.exportable());
@@ -65,7 +65,7 @@ TEST_F(VulkanFenceTest, CreateUnsignaledFence) {
 
 TEST_F(VulkanFenceTest, ResetFence) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(
+  vulkan::VulkanFence fence(
       ctx.vf_, ctx.getVkDevice(), VK_FENCE_CREATE_SIGNALED_BIT, false, "testResetFence");
 
   ASSERT_NE(fence.vkFence_, VK_NULL_HANDLE);
@@ -80,7 +80,7 @@ TEST_F(VulkanFenceTest, ResetFence) {
 TEST_F(VulkanFenceTest, ExportableFence) {
 #if IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(
+  vulkan::VulkanFence fence(
       ctx.vf_, ctx.getVkDevice(), VK_FENCE_CREATE_SIGNALED_BIT, true, "testExportableFence");
 
   EXPECT_NE(fence.vkFence_, VK_NULL_HANDLE);
@@ -92,13 +92,13 @@ TEST_F(VulkanFenceTest, ExportableFence) {
 
 TEST_F(VulkanFenceTest, MoveConstruction) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence original(
+  vulkan::VulkanFence original(
       ctx.vf_, ctx.getVkDevice(), VK_FENCE_CREATE_SIGNALED_BIT, false, "testMoveCtor");
 
   VkFence originalHandle = original.vkFence_;
   ASSERT_NE(originalHandle, VK_NULL_HANDLE);
 
-  igl::vulkan::VulkanFence moved(std::move(original));
+  vulkan::VulkanFence moved(std::move(original));
 
   EXPECT_EQ(moved.vkFence_, originalHandle);
   // The signaled state transfers with the move, not just the handle: an immediate wait succeeds.
@@ -108,7 +108,7 @@ TEST_F(VulkanFenceTest, MoveConstruction) {
 
 TEST_F(VulkanFenceTest, SignalWithNullQueue) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalNull");
+  vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalNull");
 
   ASSERT_NE(fence.vkFence_, VK_NULL_HANDLE);
   EXPECT_FALSE(fence.signal(VK_NULL_HANDLE));
@@ -116,7 +116,7 @@ TEST_F(VulkanFenceTest, SignalWithNullQueue) {
 
 TEST_F(VulkanFenceTest, SignalAndWait) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalAndWait");
+  vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalAndWait");
 
   ASSERT_NE(fence.vkFence_, VK_NULL_HANDLE);
 
@@ -134,7 +134,7 @@ TEST_F(VulkanFenceTest, SignalAndWait) {
 
 TEST_F(VulkanFenceTest, WaitUnsignaledTimesOut) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testWaitTimeout");
+  vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testWaitTimeout");
 
   ASSERT_NE(fence.vkFence_, VK_NULL_HANDLE);
   EXPECT_FALSE(fence.wait(0));
@@ -142,9 +142,9 @@ TEST_F(VulkanFenceTest, WaitUnsignaledTimesOut) {
 
 TEST_F(VulkanFenceTest, MoveAssignment) {
   auto& ctx = getVulkanContext();
-  igl::vulkan::VulkanFence original(
+  vulkan::VulkanFence original(
       ctx.vf_, ctx.getVkDevice(), VK_FENCE_CREATE_SIGNALED_BIT, false, "testMoveAssign1");
-  igl::vulkan::VulkanFence target(ctx.vf_, ctx.getVkDevice(), 0, false, "testMoveAssign2");
+  vulkan::VulkanFence target(ctx.vf_, ctx.getVkDevice(), 0, false, "testMoveAssign2");
 
   VkFence originalHandle = original.vkFence_;
   ASSERT_NE(originalHandle, VK_NULL_HANDLE);
@@ -167,7 +167,7 @@ TEST_F(VulkanFenceTest, SignalResetSignalCycle) {
   // apply instead.
   ASSERT_TRUE(queue != VK_NULL_HANDLE);
 
-  igl::vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalResetCycle");
+  vulkan::VulkanFence fence(ctx.vf_, ctx.getVkDevice(), 0, false, "testSignalResetCycle");
   ASSERT_NE(fence.vkFence_, VK_NULL_HANDLE);
 
   // First cycle.

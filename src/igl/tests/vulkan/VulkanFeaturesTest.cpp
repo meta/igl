@@ -92,9 +92,9 @@ TEST_F(VulkanApiVersionTest, InstanceCreationFailureKeepsContext) {
 class VulkanFeaturesTest : public ::testing::Test {};
 
 TEST_F(VulkanFeaturesTest, Construct) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_EQ(features.featuresShaderFloat16Int8.pNext, nullptr);
 }
@@ -125,15 +125,15 @@ TEST_F(VulkanFeaturesTest, MissingFeatureQueryClearsCachedValues) {
 
 // Copying ***************************************************************************
 TEST_F(VulkanFeaturesTest, CopyNotPerformed) {
-  const igl::vulkan::VulkanContextConfig configSrc;
+  const vulkan::VulkanContextConfig configSrc;
   EXPECT_FALSE(configSrc.enableDescriptorIndexing);
 
-  igl::vulkan::VulkanContextConfig configDst;
+  vulkan::VulkanContextConfig configDst;
   configDst.enableDescriptorIndexing = true;
   EXPECT_TRUE(configDst.enableDescriptorIndexing);
 
-  const igl::vulkan::VulkanFeatures featuresSrc(configSrc);
-  igl::vulkan::VulkanFeatures featuresDst(configDst);
+  const vulkan::VulkanFeatures featuresSrc(configSrc);
+  vulkan::VulkanFeatures featuresDst(configDst);
 
   featuresDst = featuresSrc;
 
@@ -143,14 +143,14 @@ TEST_F(VulkanFeaturesTest, CopyNotPerformed) {
 
 // Copy with Same Config **************************************************************
 TEST_F(VulkanFeaturesTest, CopyPerformed) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  igl::vulkan::VulkanFeatures featuresSrc(config);
+  vulkan::VulkanFeatures featuresSrc(config);
   featuresSrc.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
   featuresSrc.featuresMultiview.multiview = VK_FALSE;
   featuresSrc.featuresSynchronization2.synchronization2 = VK_FALSE;
 
-  igl::vulkan::VulkanFeatures featuresDst(config);
+  vulkan::VulkanFeatures featuresDst(config);
   EXPECT_TRUE(featuresDst.vkPhysicalDeviceFeatures2.features.dualSrcBlend);
   EXPECT_TRUE(featuresDst.featuresMultiview.multiview);
   EXPECT_TRUE(featuresDst.featuresSynchronization2.synchronization2);
@@ -164,12 +164,12 @@ TEST_F(VulkanFeaturesTest, CopyPerformed) {
 
 // Self-Assignment ******************************************************************
 TEST_F(VulkanFeaturesTest, SelfAssignment) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  igl::vulkan::VulkanFeatures features(config);
+  vulkan::VulkanFeatures features(config);
   const VkBool32 originalDualSrcBlend = features.vkPhysicalDeviceFeatures2.features.dualSrcBlend;
 
-  igl::vulkan::VulkanFeatures& ref = features;
+  vulkan::VulkanFeatures& ref = features;
   features = ref;
 
   EXPECT_EQ(features.vkPhysicalDeviceFeatures2.features.dualSrcBlend, originalDualSrcBlend);
@@ -177,10 +177,10 @@ TEST_F(VulkanFeaturesTest, SelfAssignment) {
 
 // Check Selected Features ****************************************************
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesAllPresent) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  const igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  const vulkan::VulkanFeatures available(config);
 
   const Result result = requested.checkSelectedFeatures(available);
   EXPECT_TRUE(result.isOk());
@@ -188,8 +188,8 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesAllPresent) {
 
 // Extension Bool Defaults ****************************************************
 TEST_F(VulkanFeaturesTest, ExtensionBoolsDefaultToFalse) {
-  const igl::vulkan::VulkanContextConfig config;
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.has_VK_EXT_descriptor_buffer);
   EXPECT_FALSE(features.has_VK_EXT_descriptor_indexing);
@@ -212,9 +212,9 @@ TEST_F(VulkanFeaturesTest, ExtensionBoolsDefaultToFalse) {
 
 // Enable Default Features ****************************************************
 TEST_F(VulkanFeaturesTest, EnableDefaultFeatures) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  igl::vulkan::VulkanFeatures features(config);
+  vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.featuresShaderFloat16Int8.shaderFloat16);
   EXPECT_FALSE(features.featuresShaderFloat16Int8.shaderInt8);
@@ -253,12 +253,12 @@ TEST_F(VulkanFeaturesTest, EnableDefaultFeatures) {
 }
 
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingCoreFeature) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
 
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  vulkan::VulkanFeatures available(config);
   available.vkPhysicalDeviceFeatures2.features.dualSrcBlend = VK_FALSE;
 
   const Result result = requested.checkSelectedFeatures(available);
@@ -270,12 +270,12 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingCoreFeature) {
 }
 
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingMultiview) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
 
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  vulkan::VulkanFeatures available(config);
   available.featuresMultiview.multiview = VK_FALSE;
 
   const Result result = requested.checkSelectedFeatures(available);
@@ -287,59 +287,59 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingMultiview) {
 }
 
 TEST_F(VulkanFeaturesTest, ConfigDisablesDualSrcBlend) {
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableDualSrcBlend = false;
 
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.vkPhysicalDeviceFeatures2.features.dualSrcBlend);
 }
 
 TEST_F(VulkanFeaturesTest, ConfigDisablesShaderInt16) {
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableShaderInt16 = false;
 
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.vkPhysicalDeviceFeatures2.features.shaderInt16);
 }
 
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesDescriptorIndexingEnabledAllPresent) {
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableDescriptorIndexing = true;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  const igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  const vulkan::VulkanFeatures available(config);
 
   const Result result = requested.checkSelectedFeatures(available);
   EXPECT_TRUE(result.isOk());
 }
 
 TEST_F(VulkanFeaturesTest, ConfigDisablesShaderDrawParameters) {
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableShaderDrawParameters = false;
 
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.featuresShaderDrawParameters.shaderDrawParameters);
 }
 
 TEST_F(VulkanFeaturesTest, ConfigDisables16BitStorageAccess) {
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableStorageBuffer16BitAccess = false;
 
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(features.features16BitStorage.storageBuffer16BitAccess);
 }
 
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingShaderDrawParameters) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
 
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  vulkan::VulkanFeatures available(config);
   available.featuresShaderDrawParameters.shaderDrawParameters = VK_FALSE;
 
   const Result result = requested.checkSelectedFeatures(available);
@@ -371,8 +371,8 @@ bool chainContains(const VkPhysicalDeviceFeatures2& features2, const void* wante
 // is chained on the device advertising an extension, so a caller that never heard of integer
 // dot product would silently start requesting it if this one followed that pattern.
 TEST_F(VulkanFeaturesTest, IntegerDotProductDefaultsToDisabledAndUnchained) {
-  const igl::vulkan::VulkanContextConfig config;
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_EQ(features.featuresShaderIntegerDotProduct.sType,
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES);
@@ -386,12 +386,12 @@ TEST_F(VulkanFeaturesTest, IntegerDotProductDefaultsToDisabledAndUnchained) {
 // member it forgot to copy, or a pNext it forgot to reset, would drop the request on the floor
 // while leaving the member reading VK_TRUE.
 TEST_F(VulkanFeaturesTest, IntegerDotProductChainedOnceRequestedAndSurvivesCopy) {
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  igl::vulkan::VulkanFeatures featuresSrc(config);
+  vulkan::VulkanFeatures featuresSrc(config);
   featuresSrc.featuresShaderIntegerDotProduct.shaderIntegerDotProduct = VK_TRUE;
 
-  igl::vulkan::VulkanFeatures featuresDst(config);
+  vulkan::VulkanFeatures featuresDst(config);
   ASSERT_FALSE(featuresDst.featuresShaderIntegerDotProduct.shaderIntegerDotProduct);
   featuresDst = featuresSrc;
 
@@ -411,8 +411,8 @@ TEST_F(VulkanFeaturesTest, IntegerDotProductChainedOnceRequestedAndSurvivesCopy)
 // with terminateOnValidationError). resolveMutuallyExclusiveFeatures() drops the pipeline rate
 // IGL never uses whenever the density map is enabled.
 TEST_F(VulkanFeaturesTest, ResolveFragmentDensityMapPipelineShadingRateConflict) {
-  const igl::vulkan::VulkanContextConfig config;
-  igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  vulkan::VulkanFeatures features(config);
 
   // Simulate a GPU reporting both features, as the supported-features query would fill them in.
   features.featuresFragmentDensityMap.fragmentDensityMap = VK_TRUE;
@@ -428,8 +428,8 @@ TEST_F(VulkanFeaturesTest, ResolveFragmentDensityMapPipelineShadingRateConflict)
 // VUID-VkDeviceCreateInfo-fragmentDensityMap-04482. The resolver must drop the primitive rate
 // (and attachment rate) just like the pipeline rate.
 TEST_F(VulkanFeaturesTest, ResolveFragmentDensityMapPrimitiveShadingRateConflict) {
-  const igl::vulkan::VulkanContextConfig config;
-  igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  vulkan::VulkanFeatures features(config);
 
   features.featuresFragmentDensityMap.fragmentDensityMap = VK_TRUE;
   features.featuresFragmentShadingRate.primitiveFragmentShadingRate = VK_TRUE;
@@ -447,8 +447,8 @@ TEST_F(VulkanFeaturesTest, ResolveFragmentDensityMapPrimitiveShadingRateConflict
 // The resolution is narrowly scoped: without a density map there is no conflict, so a reported
 // pipeline rate is left alone.
 TEST_F(VulkanFeaturesTest, ResolveMutuallyExclusiveFeaturesKeepsPipelineWithoutDensityMap) {
-  const igl::vulkan::VulkanContextConfig config;
-  igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  vulkan::VulkanFeatures features(config);
 
   features.featuresFragmentDensityMap.fragmentDensityMap = VK_FALSE;
   features.featuresFragmentShadingRate.pipelineFragmentShadingRate = VK_TRUE;
@@ -460,8 +460,8 @@ TEST_F(VulkanFeaturesTest, ResolveMutuallyExclusiveFeaturesKeepsPipelineWithoutD
 
 // allAvailableExtensions initial state ********************************************
 TEST_F(VulkanFeaturesTest, AllAvailableExtensionsInitiallyEmpty) {
-  const igl::vulkan::VulkanContextConfig config;
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_TRUE(features.allAvailableExtensions(igl::vulkan::VulkanFeatures::ExtensionType::Instance)
                   .empty());
@@ -471,8 +471,8 @@ TEST_F(VulkanFeaturesTest, AllAvailableExtensionsInitiallyEmpty) {
 
 // available initial state **********************************************************
 TEST_F(VulkanFeaturesTest, AvailableReturnsFalseWhenNoExtensionsEnumerated) {
-  const igl::vulkan::VulkanContextConfig config;
-  const igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  const vulkan::VulkanFeatures features(config);
 
   EXPECT_FALSE(
       features.available("VK_KHR_swapchain", igl::vulkan::VulkanFeatures::ExtensionType::Device));
@@ -482,8 +482,8 @@ TEST_F(VulkanFeaturesTest, AvailableReturnsFalseWhenNoExtensionsEnumerated) {
 
 // enableCommonInstanceExtensions without available extensions *********************
 TEST_F(VulkanFeaturesTest, EnableCommonInstanceExtensionsNoAvailableExtensions) {
-  const igl::vulkan::VulkanContextConfig config;
-  igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  vulkan::VulkanFeatures features(config);
 
   // Without enumerate(), extensions_ is empty, so enable() is a no-op for all ext.
   features.enableCommonInstanceExtensions(config);
@@ -495,8 +495,8 @@ TEST_F(VulkanFeaturesTest, EnableCommonInstanceExtensionsNoAvailableExtensions) 
 
 // enableCommonDeviceExtensions without available extensions / descriptor buffer always off
 TEST_F(VulkanFeaturesTest, EnableCommonDeviceExtensionsNoAvailableExtensions) {
-  const igl::vulkan::VulkanContextConfig config;
-  igl::vulkan::VulkanFeatures features(config);
+  const vulkan::VulkanContextConfig config;
+  vulkan::VulkanFeatures features(config);
 
   features.enableCommonDeviceExtensions(config);
 
@@ -512,13 +512,13 @@ TEST_F(VulkanFeaturesTest, EnableCommonDeviceExtensionsNoAvailableExtensions) {
 
 // checkSelectedFeatures negative case with descriptor indexing enabled ***********
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesDescriptorIndexingEnabledMissingFeature) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
 
-  igl::vulkan::VulkanContextConfig config;
+  vulkan::VulkanContextConfig config;
   config.enableDescriptorIndexing = true;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  vulkan::VulkanFeatures available(config);
   // Remove one of the required descriptor-indexing features from "available"
   available.featuresDescriptorIndexing.shaderSampledImageArrayNonUniformIndexing = VK_FALSE;
 
@@ -531,12 +531,12 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesDescriptorIndexingEnabledMissing
 }
 
 TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingSynchronization2) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
 
-  const igl::vulkan::VulkanContextConfig config;
+  const vulkan::VulkanContextConfig config;
 
-  const igl::vulkan::VulkanFeatures requested(config);
-  igl::vulkan::VulkanFeatures available(config);
+  const vulkan::VulkanFeatures requested(config);
+  vulkan::VulkanFeatures available(config);
   available.featuresSynchronization2.synchronization2 = VK_FALSE;
 
   const Result result = requested.checkSelectedFeatures(available);
@@ -551,7 +551,7 @@ TEST_F(VulkanFeaturesTest, CheckSelectedFeaturesMissingSynchronization2) {
 class VulkanFeatureRequestTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 #if IGL_PLATFORM_MACOSX && !defined(IGL_USE_STATIC_KOSMICKRISP)
     vulkan::setupMoltenVKEnvironment();
 #endif

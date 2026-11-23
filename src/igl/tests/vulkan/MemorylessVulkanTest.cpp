@@ -28,10 +28,10 @@ constexpr VkFormat kFormat = VK_FORMAT_R8G8B8A8_UNORM;
 class VulkanMemorylessTest : public ::testing::Test {
  public:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
-    device_ = igl::tests::util::device::createTestDevice(igl::BackendType::Vulkan);
+    setDebugBreakEnabled(false);
+    device_ = igl::tests::util::device::createTestDevice(BackendType::Vulkan);
     ASSERT_TRUE(device_ != nullptr);
-    auto& device = static_cast<igl::vulkan::Device&>(*device_);
+    auto& device = static_cast<vulkan::Device&>(*device_);
     context_ = &device.getVulkanContext();
     ASSERT_TRUE(context_ != nullptr);
   }

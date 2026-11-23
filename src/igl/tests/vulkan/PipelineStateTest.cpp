@@ -24,7 +24,7 @@ class PipelineStateTest : public ::testing::Test {
   PipelineStateTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -35,8 +35,8 @@ class PipelineStateTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };

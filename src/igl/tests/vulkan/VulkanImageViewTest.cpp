@@ -29,11 +29,11 @@ constexpr VkFormat kFormat = VK_FORMAT_R8G8B8A8_UNORM;
 class VulkanImageViewTest : public ::testing::Test {
  public:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
-    device_ = igl::tests::util::device::createTestDevice(igl::BackendType::Vulkan);
+    device_ = igl::tests::util::device::createTestDevice(BackendType::Vulkan);
     ASSERT_TRUE(device_ != nullptr);
-    auto& device = static_cast<igl::vulkan::Device&>(*device_);
+    auto& device = static_cast<vulkan::Device&>(*device_);
     context_ = &device.getVulkanContext();
     ASSERT_TRUE(context_ != nullptr);
   }
@@ -338,7 +338,7 @@ TEST_F(VulkanImageViewTest, CreateImageViewWithMultipleMipLevels) {
 }
 
 TEST(VulkanImageViewFaultTest, CheckedImageViewCreationFailureNamesNothing) {
-  igl::setDebugBreakEnabled(false);
+  setDebugBreakEnabled(false);
   using FaultingDevice = util::device::vulkan::FaultingDevice;
   FaultingDevice fd(util::device::vulkan::getContextConfig());
   ASSERT_NE(fd.device(), nullptr) << fd.creationResult().message.c_str();

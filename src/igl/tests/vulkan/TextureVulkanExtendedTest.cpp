@@ -25,7 +25,7 @@ class TextureVulkanExtendedTest : public ::testing::Test {
   TextureVulkanExtendedTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -119,7 +119,7 @@ TEST_F(TextureVulkanExtendedTest, TextureId) {
   ASSERT_TRUE(ret.isOk()) << ret.message.c_str();
   ASSERT_NE(texture, nullptr);
 
-  auto* vulkanTexture = static_cast<igl::vulkan::Texture*>(texture.get());
+  auto* vulkanTexture = static_cast<vulkan::Texture*>(texture.get());
   ASSERT_NE(vulkanTexture, nullptr);
   EXPECT_NE(vulkanTexture->getVulkanTexture().textureId_, 0u);
 }

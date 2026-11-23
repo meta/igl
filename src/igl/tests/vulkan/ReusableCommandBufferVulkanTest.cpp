@@ -406,7 +406,7 @@ class ReusableCommandBufferVulkanTest : public ::testing::Test {
  public:
   void SetUp() override {
     // debug aborts fail the test instead of stopping it
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     expectedDebugAborts() = {};
     iglSetDebugAbortListener(failOnDebugAbort);
     iglDev_ = createDevice();

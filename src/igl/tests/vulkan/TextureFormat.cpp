@@ -43,7 +43,7 @@ TEST(TextureFormatUtilTest, isTextureFormatBGR) {
 }
 
 TEST(TextureFormatUtilTest, B10G11R11UFloatRoundTrip) {
-  constexpr TextureFormat kIglFormat = igl::TextureFormat::B10G11R11_UFloat;
+  constexpr TextureFormat kIglFormat = TextureFormat::B10G11R11_UFloat;
   constexpr VkFormat kVkFormat = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
 
   EXPECT_EQ(textureFormatToVkFormat(kIglFormat), kVkFormat);
@@ -416,14 +416,14 @@ TEST(TextureFormatUtilTest, vkTextureFormatToTextureFormat) {
 }
 
 TEST(TextureFormatUtilTest, tryVkTextureFormatToTextureFormatReportsUnmappedFormats) {
-  TextureFormat format = igl::TextureFormat::RGBA_UNorm8;
+  TextureFormat format = TextureFormat::RGBA_UNorm8;
   ASSERT_TRUE(util::tryVkTextureFormatToTextureFormat(VK_FORMAT_R8_UNORM, format));
   ASSERT_EQ(format, igl::TextureFormat::R_UNorm8);
   ASSERT_TRUE(util::tryVkTextureFormatToTextureFormat(VK_FORMAT_UNDEFINED, format));
   ASSERT_EQ(format, igl::TextureFormat::Invalid);
 
   // A format with no TextureFormat is reported, not aborted on, and the output stays as it was.
-  format = igl::TextureFormat::RGBA_UNorm8;
+  format = TextureFormat::RGBA_UNorm8;
   ASSERT_FALSE(util::tryVkTextureFormatToTextureFormat(
       VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16, format));
   ASSERT_EQ(format, igl::TextureFormat::RGBA_UNorm8);

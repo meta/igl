@@ -34,7 +34,7 @@ class VulkanContextExtendedTest : public ::testing::Test {
   VulkanContextExtendedTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -45,8 +45,8 @@ class VulkanContextExtendedTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 
@@ -244,7 +244,7 @@ TEST_F(VulkanContextExtendedTest, GetFrameNumber) {
 TEST_F(VulkanContextExtendedTest, FindRenderPassCached) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 

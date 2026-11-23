@@ -146,11 +146,11 @@ class VulkanImageTest : public ::testing::Test {
   // Set up common resources.
   void SetUp() override {
     // Turn off debug break so unit tests can run
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 
-    device_ = igl::tests::util::device::createTestDevice(igl::BackendType::Vulkan);
+    device_ = igl::tests::util::device::createTestDevice(BackendType::Vulkan);
     ASSERT_TRUE(device_ != nullptr);
-    auto& device = static_cast<igl::vulkan::Device&>(*device_);
+    auto& device = static_cast<vulkan::Device&>(*device_);
     context_ = &device.getVulkanContext();
     ASSERT_TRUE(context_ != nullptr);
     ASSERT_TRUE(context_->stagingDevice_ != nullptr);
@@ -595,18 +595,18 @@ TEST_F(VulkanImageTest, IsStorageImage) {
 
   const VkImageUsageFlags storageUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
-  igl::vulkan::VulkanImage image(ctx,
-                                 VkExtent3D{.width = 4, .height = 4, .depth = 1},
-                                 VK_IMAGE_TYPE_2D,
-                                 kFormat,
-                                 1,
-                                 1,
-                                 VK_IMAGE_TILING_OPTIMAL,
-                                 storageUsage,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                 0,
-                                 VK_SAMPLE_COUNT_1_BIT,
-                                 "Storage Image");
+  vulkan::VulkanImage image(ctx,
+                            VkExtent3D{.width = 4, .height = 4, .depth = 1},
+                            VK_IMAGE_TYPE_2D,
+                            kFormat,
+                            1,
+                            1,
+                            VK_IMAGE_TILING_OPTIMAL,
+                            storageUsage,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            0,
+                            VK_SAMPLE_COUNT_1_BIT,
+                            "Storage Image");
   ASSERT_TRUE(image.valid());
 
   EXPECT_TRUE(image.isStorageImage());
@@ -618,18 +618,18 @@ TEST_F(VulkanImageTest, CreateImageMultipleMipLevels) {
 
   const uint32_t kMipLevels = 4;
 
-  igl::vulkan::VulkanImage image(ctx,
-                                 VkExtent3D{.width = 16, .height = 16, .depth = 1},
-                                 VK_IMAGE_TYPE_2D,
-                                 kFormat,
-                                 kMipLevels,
-                                 1,
-                                 VK_IMAGE_TILING_OPTIMAL,
-                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                 0,
-                                 VK_SAMPLE_COUNT_1_BIT,
-                                 "Multi Mip Image");
+  vulkan::VulkanImage image(ctx,
+                            VkExtent3D{.width = 16, .height = 16, .depth = 1},
+                            VK_IMAGE_TYPE_2D,
+                            kFormat,
+                            kMipLevels,
+                            1,
+                            VK_IMAGE_TILING_OPTIMAL,
+                            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            0,
+                            VK_SAMPLE_COUNT_1_BIT,
+                            "Multi Mip Image");
   ASSERT_TRUE(image.valid());
   EXPECT_NE(image.getVkImage(), VK_NULL_HANDLE);
   EXPECT_EQ(image.mipLevels_, kMipLevels);
@@ -640,18 +640,18 @@ TEST_F(VulkanImageTest, CreateImageViewWithMipLevelSubset) {
 
   const uint32_t kMipLevels = 4;
 
-  igl::vulkan::VulkanImage image(ctx,
-                                 VkExtent3D{.width = 16, .height = 16, .depth = 1},
-                                 VK_IMAGE_TYPE_2D,
-                                 kFormat,
-                                 kMipLevels,
-                                 1,
-                                 VK_IMAGE_TILING_OPTIMAL,
-                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                 0,
-                                 VK_SAMPLE_COUNT_1_BIT,
-                                 "Mip Subset Source");
+  vulkan::VulkanImage image(ctx,
+                            VkExtent3D{.width = 16, .height = 16, .depth = 1},
+                            VK_IMAGE_TYPE_2D,
+                            kFormat,
+                            kMipLevels,
+                            1,
+                            VK_IMAGE_TILING_OPTIMAL,
+                            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            0,
+                            VK_SAMPLE_COUNT_1_BIT,
+                            "Mip Subset Source");
   ASSERT_TRUE(image.valid());
   EXPECT_EQ(image.mipLevels_, kMipLevels);
 
@@ -1009,7 +1009,7 @@ class VulkanImageFaultTest : public ::testing::Test {
   using Counted = util::device::vulkan::FaultingDevice::Counted;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
   }
 
   static std::unique_ptr<util::device::vulkan::FaultingDevice> makeDevice() {
@@ -1017,8 +1017,7 @@ class VulkanImageFaultTest : public ::testing::Test {
         util::device::vulkan::getContextConfig());
   }
 
-  static igl::vulkan::VulkanImage createSmallImage(igl::vulkan::VulkanContext& ctx,
-                                                   Result* result) {
+  static vulkan::VulkanImage createSmallImage(vulkan::VulkanContext& ctx, Result* result) {
     return ctx.createImage(VK_IMAGE_TYPE_2D,
                            VkExtent3D{.width = 64, .height = 64, .depth = 1},
                            kFormat,
@@ -1143,7 +1142,7 @@ class VulkanImageFdImportFaultTest : public VulkanImageFaultTest {
     ASSERT_GE(ordinaryFd_, 0);
   }
 
-  std::unique_ptr<igl::vulkan::VulkanImage> importOrdinaryDescriptor(Result* result) const {
+  std::unique_ptr<vulkan::VulkanImage> importOrdinaryDescriptor(Result* result) const {
     return fd_->context().createImageFromFileDescriptor(
         ordinaryFd_,
         /*memoryAllocationSize=*/64 * 64 * 4,
@@ -1160,7 +1159,7 @@ class VulkanImageFdImportFaultTest : public VulkanImageFaultTest {
         "Image: fd import fault test");
   }
 
-  std::unique_ptr<igl::vulkan::VulkanImage> importDescriptor(Result* result) const {
+  std::unique_ptr<vulkan::VulkanImage> importDescriptor(Result* result) const {
     return fd_->context().createImageFromFileDescriptor(
         exported_.exportedFd_,
         exported_.allocatedSize,
@@ -1188,7 +1187,7 @@ class VulkanImageFdImportFaultTest : public VulkanImageFaultTest {
   }
 
   std::unique_ptr<util::device::vulkan::FaultingDevice> fd_;
-  igl::vulkan::VulkanImage exported_;
+  vulkan::VulkanImage exported_;
   int ordinaryFd_ = -1;
 };
 
@@ -1445,30 +1444,30 @@ TEST_F(VulkanImageFaultTest, CreateImageViewOfAnInvalidImageIsRefused) {
   // An image whose construction failed (built directly, as `createImage()` returns an empty one).
   fd->resetCounters();
   fd->arm(Call::CreateImage, VK_ERROR_OUT_OF_HOST_MEMORY, 0, 2);
-  const igl::vulkan::VulkanImage image(ctx,
-                                       VkExtent3D{.width = 64, .height = 64, .depth = 1},
-                                       VK_IMAGE_TYPE_2D,
-                                       kFormat,
-                                       1,
-                                       1,
-                                       VK_IMAGE_TILING_OPTIMAL,
-                                       VK_IMAGE_USAGE_SAMPLED_BIT,
-                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                       0,
-                                       VK_SAMPLE_COUNT_1_BIT,
-                                       "Image: invalid");
+  const vulkan::VulkanImage image(ctx,
+                                  VkExtent3D{.width = 64, .height = 64, .depth = 1},
+                                  VK_IMAGE_TYPE_2D,
+                                  kFormat,
+                                  1,
+                                  1,
+                                  VK_IMAGE_TILING_OPTIMAL,
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  0,
+                                  VK_SAMPLE_COUNT_1_BIT,
+                                  "Image: invalid");
   ASSERT_FALSE(image.valid());
   fd->resetCounters();
 
   // The view creations are failed too, so a call that reached the driver would be counted: none
   // does, and each returns an invalid view.
   fd->arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY, 0, 3);
-  const igl::vulkan::VulkanImageView plain = image.createImageView(
+  const vulkan::VulkanImageView plain = image.createImageView(
       VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: refused");
-  igl::vulkan::VulkanImageViewCreateInfo info;
+  vulkan::VulkanImageViewCreateInfo info;
   info.viewType = VK_IMAGE_VIEW_TYPE_2D;
   info.format = kFormat;
-  const igl::vulkan::VulkanImageView fromInfo = image.createImageView(info, "View: refused");
+  const vulkan::VulkanImageView fromInfo = image.createImageView(info, "View: refused");
   EXPECT_FALSE(plain.valid());
   EXPECT_FALSE(fromInfo.valid());
   EXPECT_EQ(fd->reached(Call::CreateImageView), 0u);
@@ -1502,7 +1501,7 @@ TEST_F(VulkanImageFaultTest, CreateTextureRefusesAnInvalidView) {
   // A view whose creation failed is invalid: no texture is made, and the caller's image stays
   // whole until its own destruction.
   fd->arm(Call::CreateImageView, VK_ERROR_OUT_OF_HOST_MEMORY);
-  igl::vulkan::VulkanImageView failedView = image.createImageView(
+  vulkan::VulkanImageView failedView = image.createImageView(
       VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: refused");
   fd->disarmAll();
   ASSERT_FALSE(failedView.valid());
@@ -1516,7 +1515,7 @@ TEST_F(VulkanImageFaultTest, CreateTextureRefusesAnInvalidView) {
   // An invalid image with a valid view is refused as well.
   auto validImage = createSmallImage(ctx, &result);
   ASSERT_TRUE(validImage.valid());
-  igl::vulkan::VulkanImageView view = validImage.createImageView(
+  vulkan::VulkanImageView view = validImage.createImageView(
       VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: valid");
   ASSERT_TRUE(view.valid());
   EXPECT_EQ(ctx.createTexture(igl::vulkan::VulkanImage(), std::move(view), "refused"), nullptr);
@@ -1524,7 +1523,7 @@ TEST_F(VulkanImageFaultTest, CreateTextureRefusesAnInvalidView) {
   // A valid pair still makes a texture.
   auto goodImage = createSmallImage(ctx, &result);
   ASSERT_TRUE(goodImage.valid());
-  igl::vulkan::VulkanImageView goodView = goodImage.createImageView(
+  vulkan::VulkanImageView goodView = goodImage.createImageView(
       VK_IMAGE_VIEW_TYPE_2D, kFormat, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, "View: good");
   EXPECT_NE(ctx.createTexture(std::move(goodImage), std::move(goodView), "accepted"), nullptr);
 }
