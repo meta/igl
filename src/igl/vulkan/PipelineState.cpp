@@ -22,7 +22,7 @@ void PipelineState::initializeSpvModuleInfoFromShaderStages(const VulkanContext&
   VkShaderStageFlags pushConstantMask = 0;
 
   switch (shaderStagesType) {
-  case igl::ShaderStagesType::Compute: {
+  case ShaderStagesType::Compute: {
     // compute
     auto* smComp = static_cast<ShaderModule*>(stages->getComputeModule().get());
 
@@ -36,7 +36,7 @@ void PipelineState::initializeSpvModuleInfoFromShaderStages(const VulkanContext&
 
     stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   } break;
-  case igl::ShaderStagesType::Render: {
+  case ShaderStagesType::Render: {
     auto* smVert = static_cast<ShaderModule*>(stages->getVertexModule().get());
     auto* smFrag = static_cast<ShaderModule*>(stages->getFragmentModule().get());
 
@@ -58,7 +58,7 @@ void PipelineState::initializeSpvModuleInfoFromShaderStages(const VulkanContext&
 
     stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   } break;
-  case igl::ShaderStagesType::RenderMeshShader: {
+  case ShaderStagesType::RenderMeshShader: {
     auto* smTask = static_cast<ShaderModule*>(stages->getTaskModule().get());
     auto* smMesh = static_cast<ShaderModule*>(stages->getMeshModule().get());
     auto* smFrag = static_cast<ShaderModule*>(stages->getFragmentModule().get());

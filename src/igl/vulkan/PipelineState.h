@@ -39,7 +39,7 @@ class PipelineState {
   void initializeSpvModuleInfoFromShaderStages(const VulkanContext& ctx, IShaderStages* stages);
 
  public:
-  igl::vulkan::util::SpvModuleInfo info;
+  util::SpvModuleInfo info;
 
   VkPushConstantRange pushConstantRange = {};
   VkShaderStageFlags stageFlags = 0;

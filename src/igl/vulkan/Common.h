@@ -131,8 +131,8 @@ struct VulkanContextConfig {
   bool enableMultiviewPerViewViewports = false;
   bool enableDynamicVertexBufferStride = false;
 
-  ColorSpace swapChainColorSpace = igl::ColorSpace::SRGBNonlinear;
-  TextureFormat requestedSwapChainTextureFormat = igl::TextureFormat::RGBA_UNorm8;
+  ColorSpace swapChainColorSpace = ColorSpace::SRGBNonlinear;
+  TextureFormat requestedSwapChainTextureFormat = TextureFormat::RGBA_UNorm8;
 
   // the number of resources to support BufferAPIHintBits::Ring
   uint32_t maxResourceCount = 3u;

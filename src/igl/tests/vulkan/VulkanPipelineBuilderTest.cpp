@@ -25,7 +25,7 @@ class VulkanPipelineBuilderTest : public ::testing::Test {
   VulkanPipelineBuilderTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -36,20 +36,20 @@ class VulkanPipelineBuilderTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
 
 TEST_F(VulkanPipelineBuilderTest, DepthBiasEnable) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.depthBiasEnable(true);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, StencilStateOps) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.stencilStateOps(VK_STENCIL_FACE_FRONT_BIT,
                                          VK_STENCIL_OP_KEEP,
                                          VK_STENCIL_OP_REPLACE,
@@ -59,31 +59,31 @@ TEST_F(VulkanPipelineBuilderTest, StencilStateOps) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, CullModeVariants) {
-  igl::vulkan::VulkanPipelineBuilder builder1;
+  vulkan::VulkanPipelineBuilder builder1;
   auto& r1 = builder1.cullMode(VK_CULL_MODE_NONE);
   EXPECT_EQ(&r1, &builder1);
 
-  igl::vulkan::VulkanPipelineBuilder builder2;
+  vulkan::VulkanPipelineBuilder builder2;
   auto& r2 = builder2.cullMode(VK_CULL_MODE_FRONT_BIT);
   EXPECT_EQ(&r2, &builder2);
 
-  igl::vulkan::VulkanPipelineBuilder builder3;
+  vulkan::VulkanPipelineBuilder builder3;
   auto& r3 = builder3.cullMode(VK_CULL_MODE_BACK_BIT);
   EXPECT_EQ(&r3, &builder3);
 
-  igl::vulkan::VulkanPipelineBuilder builder4;
+  vulkan::VulkanPipelineBuilder builder4;
   auto& r4 = builder4.cullMode(VK_CULL_MODE_FRONT_AND_BACK);
   EXPECT_EQ(&r4, &builder4);
 }
 
 TEST_F(VulkanPipelineBuilderTest, PolygonModeLine) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.polygonMode(VK_POLYGON_MODE_LINE);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, MultipleColorBlendAttachments) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
 
   std::vector<VkPipelineColorBlendAttachmentState> blendStates(3);
   for (auto& state : blendStates) {
@@ -104,13 +104,13 @@ TEST_F(VulkanPipelineBuilderTest, MultipleColorBlendAttachments) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, PrimitiveTopologyVariants) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.primitiveTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, DynamicStates) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   std::vector<VkDynamicState> states = {
       VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
   auto& result = builder.dynamicStates(states);
@@ -118,25 +118,25 @@ TEST_F(VulkanPipelineBuilderTest, DynamicStates) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, DepthCompareOp) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.depthCompareOp(VK_COMPARE_OP_LESS_OR_EQUAL, true);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, DepthWriteEnable) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.depthWriteEnable(true);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, FrontFace) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.frontFace(VK_FRONT_FACE_CLOCKWISE);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, RasterizationSamples) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.rasterizationSamples(VK_SAMPLE_COUNT_4_BIT);
   EXPECT_EQ(&result, &builder);
 
@@ -268,11 +268,11 @@ TEST_F(VulkanPipelineBuilderTest, RasterizationSamples) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, AlphaToCoverageEnable) {
-  igl::vulkan::VulkanPipelineBuilder builder1;
+  vulkan::VulkanPipelineBuilder builder1;
   auto& r1 = builder1.alphaToCoverageEnable(true);
   EXPECT_EQ(&r1, &builder1);
 
-  igl::vulkan::VulkanPipelineBuilder builder2;
+  vulkan::VulkanPipelineBuilder builder2;
   auto& r2 = builder2.alphaToCoverageEnable(false);
   EXPECT_EQ(&r2, &builder2);
 
@@ -424,13 +424,13 @@ TEST_F(VulkanPipelineBuilderTest, AlphaToCoverageEnable) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, DynamicStateSingle) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   auto& result = builder.dynamicState(VK_DYNAMIC_STATE_VIEWPORT);
   EXPECT_EQ(&result, &builder);
 }
 
 TEST_F(VulkanPipelineBuilderTest, ShaderStage) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   const VkPipelineShaderStageCreateInfo stage{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .stage = VK_SHADER_STAGE_VERTEX_BIT};
@@ -439,7 +439,7 @@ TEST_F(VulkanPipelineBuilderTest, ShaderStage) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, ShaderStages) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   const std::vector<VkPipelineShaderStageCreateInfo> stages = {
       {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
        .stage = VK_SHADER_STAGE_VERTEX_BIT},
@@ -450,7 +450,7 @@ TEST_F(VulkanPipelineBuilderTest, ShaderStages) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, VertexInputState) {
-  igl::vulkan::VulkanPipelineBuilder builder;
+  vulkan::VulkanPipelineBuilder builder;
   const VkPipelineVertexInputStateCreateInfo vertexInput{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
   auto& result = builder.vertexInputState(vertexInput);
@@ -458,13 +458,13 @@ TEST_F(VulkanPipelineBuilderTest, VertexInputState) {
 }
 
 TEST_F(VulkanPipelineBuilderTest, ComputePipelineBasic) {
-  igl::vulkan::VulkanComputePipelineBuilder builder{};
+  vulkan::VulkanComputePipelineBuilder builder{};
   (void)builder; // Verify construction succeeds
-  EXPECT_GE(igl::vulkan::VulkanComputePipelineBuilder::getNumPipelinesCreated(), 0u);
+  EXPECT_GE(vulkan::VulkanComputePipelineBuilder::getNumPipelinesCreated(), 0u);
 }
 
 TEST_F(VulkanPipelineBuilderTest, ComputePipelineShaderStage) {
-  igl::vulkan::VulkanComputePipelineBuilder builder{};
+  vulkan::VulkanComputePipelineBuilder builder{};
   const VkPipelineShaderStageCreateInfo stage{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .stage = VK_SHADER_STAGE_COMPUTE_BIT};

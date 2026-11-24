@@ -36,7 +36,7 @@ class VulkanStagingDeviceTest : public ::testing::Test {
   VulkanStagingDeviceTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -47,8 +47,8 @@ class VulkanStagingDeviceTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
@@ -742,7 +742,7 @@ class VulkanStagingFaultTest : public ::testing::Test {
   using Call = util::device::vulkan::FaultingDevice::Call;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     if (!IGL_VULKAN_USE_VMA) {
       GTEST_SKIP() << "The allocation tests run on the VMA path";
     }
@@ -751,10 +751,10 @@ class VulkanStagingFaultTest : public ::testing::Test {
     ASSERT_NE(fd_->device(), nullptr) << fd_->creationResult().message.c_str();
   }
 
-  [[nodiscard]] igl::vulkan::VulkanContext& ctx() const {
+  [[nodiscard]] vulkan::VulkanContext& ctx() const {
     return fd_->context();
   }
-  [[nodiscard]] igl::vulkan::VulkanStagingDevice& staging() const {
+  [[nodiscard]] vulkan::VulkanStagingDevice& staging() const {
     return *ctx().stagingDevice_;
   }
 
@@ -766,7 +766,7 @@ class VulkanStagingFaultTest : public ::testing::Test {
   }
 
   // A device-local buffer that staging uploads can target.
-  [[nodiscard]] std::unique_ptr<igl::vulkan::VulkanBuffer> makeTarget(VkDeviceSize size) const {
+  [[nodiscard]] std::unique_ptr<vulkan::VulkanBuffer> makeTarget(VkDeviceSize size) const {
     Result result;
     auto buffer =
         ctx().createBuffer(size,

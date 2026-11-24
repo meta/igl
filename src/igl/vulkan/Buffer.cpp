@@ -28,8 +28,8 @@ Result Buffer::create(const BufferDesc& desc) {
 
   desc_ = desc;
 
-  if (desc_.storage == igl::ResourceStorage::Invalid) {
-    desc_.storage = igl::ResourceStorage::Private;
+  if (desc_.storage == ResourceStorage::Invalid) {
+    desc_.storage = ResourceStorage::Private;
   }
 
   const VulkanContext& ctx = device_.getVulkanContext();

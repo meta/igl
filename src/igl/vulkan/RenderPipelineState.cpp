@@ -19,15 +19,15 @@ namespace igl::vulkan {
 
 VkPrimitiveTopology primitiveTypeToVkPrimitiveTopology(PrimitiveType t) {
   switch (t) {
-  case igl::PrimitiveType::Point:
+  case PrimitiveType::Point:
     return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-  case igl::PrimitiveType::Line:
+  case PrimitiveType::Line:
     return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-  case igl::PrimitiveType::LineStrip:
+  case PrimitiveType::LineStrip:
     return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-  case igl::PrimitiveType::Triangle:
+  case PrimitiveType::Triangle:
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-  case igl::PrimitiveType::TriangleStrip:
+  case PrimitiveType::TriangleStrip:
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
   }
   IGL_DEBUG_ABORT("Implement PrimitiveType = %u", static_cast<uint32_t>(t));
@@ -36,9 +36,9 @@ VkPrimitiveTopology primitiveTypeToVkPrimitiveTopology(PrimitiveType t) {
 
 VkPolygonMode polygonFillModeToVkPolygonMode(PolygonFillMode mode) {
   switch (mode) {
-  case igl::PolygonFillMode::Fill:
+  case PolygonFillMode::Fill:
     return VK_POLYGON_MODE_FILL;
-  case igl::PolygonFillMode::Line:
+  case PolygonFillMode::Line:
     return VK_POLYGON_MODE_LINE;
   }
   IGL_DEBUG_ABORT("Implement a missing polygon fill mode");
@@ -47,11 +47,11 @@ VkPolygonMode polygonFillModeToVkPolygonMode(PolygonFillMode mode) {
 
 VkCullModeFlags cullModeToVkCullMode(CullMode mode) {
   switch (mode) {
-  case igl::CullMode::Disabled:
+  case CullMode::Disabled:
     return VK_CULL_MODE_NONE;
-  case igl::CullMode::Front:
+  case CullMode::Front:
     return VK_CULL_MODE_FRONT_BIT;
-  case igl::CullMode::Back:
+  case CullMode::Back:
     return VK_CULL_MODE_BACK_BIT;
   }
   IGL_DEBUG_ABORT("Implement a missing cull mode");
@@ -60,9 +60,9 @@ VkCullModeFlags cullModeToVkCullMode(CullMode mode) {
 
 VkFrontFace windingModeToVkFrontFace(WindingMode mode) {
   switch (mode) {
-  case igl::WindingMode::Clockwise:
+  case WindingMode::Clockwise:
     return VK_FRONT_FACE_CLOCKWISE;
-  case igl::WindingMode::CounterClockwise:
+  case WindingMode::CounterClockwise:
     return VK_FRONT_FACE_COUNTER_CLOCKWISE;
   }
   IGL_DEBUG_ABORT("Wrong winding order (cannot be more than 2)");
@@ -201,10 +201,10 @@ VkBool32 checkDualSrcBlendFactor(BlendFactor value, VkBool32 dualSrcBlendSupport
   if (!dualSrcBlendSupported) {
     // NOLINTNEXTLINE(clang-diagnostic-switch-enum)
     switch (value) {
-    case igl::BlendFactor::Src1Color:
-    case igl::BlendFactor::OneMinusSrc1Color:
-    case igl::BlendFactor::Src1Alpha:
-    case igl::BlendFactor::OneMinusSrc1Alpha:
+    case BlendFactor::Src1Color:
+    case BlendFactor::OneMinusSrc1Color:
+    case BlendFactor::Src1Alpha:
+    case BlendFactor::OneMinusSrc1Alpha:
       IGL_DEBUG_ASSERT_NOT_REACHED();
       return VK_FALSE;
     default:
@@ -518,7 +518,7 @@ VkPipeline RenderPipelineState::getVkPipeline(
   VkSpecializationInfo meshSpecInfo{};
   VkSpecializationInfo fragSpecInfo{};
 
-  if (desc_.shaderStages->getType() == igl::ShaderStagesType::Render) {
+  if (desc_.shaderStages->getType() == ShaderStagesType::Render) {
     const auto& vertModule = desc_.shaderStages->getVertexModule();
     vertSpecInfo = buildSpecializationInfo(vertModule->info().functionConstantValues, vertEntries);
     stages.emplace_back(VkPipelineShaderStageCreateInfo{

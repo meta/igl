@@ -71,7 +71,7 @@ class WebGPUDeferredTextureTest : public ::testing::Test {
 };
 
 TEST_F(WebGPUDeferredTextureTest, AcquiresAtFirstAttachmentUseAndPresentsAfterSubmit) {
-  tests::webgpu::TriangleRenderer renderer;
+  webgpu::TriangleRenderer renderer;
   ASSERT_TRUE(renderer.initialize(*device_, TextureFormat::RGBA_UNorm8).isOk());
   const auto texture = createDeferred(/*succeeds=*/true);
   ASSERT_NE(texture, nullptr);
@@ -107,7 +107,7 @@ TEST_F(WebGPUDeferredTextureTest, AcquiresAtFirstAttachmentUseAndPresentsAfterSu
 }
 
 TEST_F(WebGPUDeferredTextureTest, IsNotDestroyedWhenReleased) {
-  tests::webgpu::TriangleRenderer renderer;
+  webgpu::TriangleRenderer renderer;
   ASSERT_TRUE(renderer.initialize(*device_, TextureFormat::RGBA_UNorm8).isOk());
   {
     const auto texture = createDeferred(/*succeeds=*/true);

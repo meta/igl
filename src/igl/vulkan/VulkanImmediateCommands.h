@@ -242,7 +242,7 @@ class VulkanImmediateCommands final {
 
  private:
   friend class CommandQueue;
-  friend class igl::tests::VulkanImmediateCommandsTest;
+  friend class tests::VulkanImmediateCommandsTest;
   /// @brief If `nextCmdBuf` is not null, it is a primary command buffer that the submission runs
   /// after the one of `wrapper`, such as the recording of a reusable command buffer.
   SubmitHandle submit(const CommandBufferWrapper& wrapper,

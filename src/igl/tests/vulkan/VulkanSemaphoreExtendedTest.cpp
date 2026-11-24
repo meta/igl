@@ -22,7 +22,7 @@ class VulkanSemaphoreExtendedTest : public ::testing::Test {
   VulkanSemaphoreExtendedTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -33,8 +33,8 @@ class VulkanSemaphoreExtendedTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
@@ -42,7 +42,7 @@ class VulkanSemaphoreExtendedTest : public ::testing::Test {
 TEST_F(VulkanSemaphoreExtendedTest, BinaryCreation) {
   auto& ctx = getVulkanContext();
 
-  auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
+  auto semaphore = std::make_unique<vulkan::VulkanSemaphore>(
       ctx.vf_, ctx.getVkDevice(), false, "testBinarySemaphore");
 
   ASSERT_NE(semaphore, nullptr);
@@ -54,7 +54,7 @@ TEST_F(VulkanSemaphoreExtendedTest, BinaryCreation) {
 TEST_F(VulkanSemaphoreExtendedTest, TimelineCreation) {
   auto& ctx = getVulkanContext();
 
-  auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
+  auto semaphore = std::make_unique<vulkan::VulkanSemaphore>(
       ctx.vf_, ctx.getVkDevice(), 0, false, "testTimelineSemaphore");
 
   ASSERT_NE(semaphore, nullptr);
@@ -67,7 +67,7 @@ TEST_F(VulkanSemaphoreExtendedTest, ExportableSemaphore) {
 #if IGL_PLATFORM_LINUX || IGL_PLATFORM_ANDROID
   auto& ctx = getVulkanContext();
 
-  auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
+  auto semaphore = std::make_unique<vulkan::VulkanSemaphore>(
       ctx.vf_, ctx.getVkDevice(), true, "testExportableSemaphore");
 
   ASSERT_NE(semaphore, nullptr);
@@ -81,11 +81,11 @@ TEST_F(VulkanSemaphoreExtendedTest, ExportableSemaphore) {
 TEST_F(VulkanSemaphoreExtendedTest, MoveConstruction) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanSemaphore original(ctx.vf_, ctx.getVkDevice(), false, "testMoveCtor");
+  vulkan::VulkanSemaphore original(ctx.vf_, ctx.getVkDevice(), false, "testMoveCtor");
   VkSemaphore originalHandle = original.getVkSemaphore();
   ASSERT_NE(originalHandle, VK_NULL_HANDLE);
 
-  igl::vulkan::VulkanSemaphore moved(std::move(original));
+  vulkan::VulkanSemaphore moved(std::move(original));
   EXPECT_EQ(moved.getVkSemaphore(), originalHandle);
   // After move, original is in a valid but unspecified state - don't access it
 }
@@ -93,8 +93,8 @@ TEST_F(VulkanSemaphoreExtendedTest, MoveConstruction) {
 TEST_F(VulkanSemaphoreExtendedTest, MoveAssignment) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanSemaphore original(ctx.vf_, ctx.getVkDevice(), false, "testMoveAssign1");
-  igl::vulkan::VulkanSemaphore target(ctx.vf_, ctx.getVkDevice(), false, "testMoveAssign2");
+  vulkan::VulkanSemaphore original(ctx.vf_, ctx.getVkDevice(), false, "testMoveAssign1");
+  vulkan::VulkanSemaphore target(ctx.vf_, ctx.getVkDevice(), false, "testMoveAssign2");
 
   VkSemaphore originalHandle = original.getVkSemaphore();
   ASSERT_NE(originalHandle, VK_NULL_HANDLE);
@@ -107,7 +107,7 @@ TEST_F(VulkanSemaphoreExtendedTest, MoveAssignment) {
 TEST_F(VulkanSemaphoreExtendedTest, TimelineWithInitialValue) {
   auto& ctx = getVulkanContext();
 
-  auto semaphore = std::make_unique<igl::vulkan::VulkanSemaphore>(
+  auto semaphore = std::make_unique<vulkan::VulkanSemaphore>(
       ctx.vf_, ctx.getVkDevice(), 42, false, "testTimelineInitial");
 
   ASSERT_NE(semaphore, nullptr);

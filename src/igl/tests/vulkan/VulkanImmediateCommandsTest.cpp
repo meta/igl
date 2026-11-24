@@ -268,7 +268,7 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
   VulkanImmediateCommandsTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -279,8 +279,8 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 
@@ -393,11 +393,11 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     return vf;
   }
 
-  static VkSemaphore lastSubmitSemaphore(const igl::vulkan::VulkanImmediateCommands& commands) {
+  static VkSemaphore lastSubmitSemaphore(const vulkan::VulkanImmediateCommands& commands) {
     return commands.lastSubmitSemaphore_.semaphore;
   }
 
-  using Commands = igl::vulkan::VulkanImmediateCommands;
+  using Commands = vulkan::VulkanImmediateCommands;
 
   static const char* rowState(const Commands& commands, uint32_t row) {
     switch (commands.buffers_[row].state) {
@@ -430,9 +430,9 @@ class VulkanImmediateCommandsTest : public ::testing::Test {
     return Commands::rowAgreesWithWrapper(commands.buffers_[row]);
   }
 
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle submitForPresentation(
-      igl::vulkan::VulkanImmediateCommands& commands,
-      const igl::vulkan::VulkanImmediateCommands::CommandBufferWrapper& wrapper,
+  vulkan::VulkanImmediateCommands::SubmitHandle submitForPresentation(
+      vulkan::VulkanImmediateCommands& commands,
+      const vulkan::VulkanImmediateCommands::CommandBufferWrapper& wrapper,
       VkSemaphore semaphore) {
     return commands.submit(wrapper, semaphore);
   }
@@ -485,7 +485,7 @@ TEST_F(VulkanImmediateCommandsTest, CommandBufferRecycling) {
   auto& ctx = getVulkanContext();
   ASSERT_NE(ctx.immediate_, nullptr);
 
-  std::vector<igl::vulkan::VulkanImmediateCommands::SubmitHandle> handles;
+  std::vector<vulkan::VulkanImmediateCommands::SubmitHandle> handles;
 
   for (int i = 0; i < 4; ++i) {
     const auto& wrapper = ctx.immediate_->acquire();
@@ -522,7 +522,7 @@ TEST_F(VulkanImmediateCommandsTest, IsReadyOnEmptyHandle) {
   auto& ctx = getVulkanContext();
   ASSERT_NE(ctx.immediate_, nullptr);
 
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle emptyHandle;
+  vulkan::VulkanImmediateCommands::SubmitHandle emptyHandle;
   EXPECT_TRUE(emptyHandle.empty());
   EXPECT_TRUE(ctx.immediate_->isReady(emptyHandle));
 }
@@ -531,7 +531,7 @@ TEST_F(VulkanImmediateCommandsTest, WaitAllCommandBuffers) {
   auto& ctx = getVulkanContext();
   ASSERT_NE(ctx.immediate_, nullptr);
 
-  std::vector<igl::vulkan::VulkanImmediateCommands::SubmitHandle> handles;
+  std::vector<vulkan::VulkanImmediateCommands::SubmitHandle> handles;
 
   for (int i = 0; i < 4; ++i) {
     const auto& wrapper = ctx.immediate_->acquire();
@@ -559,11 +559,11 @@ TEST_F(VulkanImmediateCommandsTest, GetNextSubmitHandle) {
 }
 
 TEST_F(VulkanImmediateCommandsTest, SubmitHandleComparison) {
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle h1;
+  vulkan::VulkanImmediateCommands::SubmitHandle h1;
   h1.bufferIndex = 0;
   h1.submitId = 1;
 
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle h2;
+  vulkan::VulkanImmediateCommands::SubmitHandle h2;
   h2.bufferIndex = 0;
   h2.submitId = 1;
 
@@ -574,13 +574,13 @@ TEST_F(VulkanImmediateCommandsTest, SubmitHandleComparison) {
 }
 
 TEST_F(VulkanImmediateCommandsTest, SubmitHandleRoundTrip) {
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle original;
+  vulkan::VulkanImmediateCommands::SubmitHandle original;
   original.bufferIndex = 5;
   original.submitId = 42;
 
   uint64_t packed = original.handle();
 
-  igl::vulkan::VulkanImmediateCommands::SubmitHandle restored(packed);
+  vulkan::VulkanImmediateCommands::SubmitHandle restored(packed);
   EXPECT_EQ(restored.bufferIndex, original.bufferIndex);
   EXPECT_EQ(restored.submitId, original.submitId);
 }

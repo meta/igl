@@ -31,7 +31,7 @@ class VulkanRenderPassBuilderTest : public ::testing::Test {
   VulkanRenderPassBuilderTest() = default;
 
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
     iglDev_ = util::createTestDevice();
     ASSERT_NE(iglDev_, nullptr);
     ASSERT_EQ(iglDev_->getBackendType(), BackendType::Vulkan) << "Test requires Vulkan backend";
@@ -42,8 +42,8 @@ class VulkanRenderPassBuilderTest : public ::testing::Test {
  protected:
   std::shared_ptr<IDevice> iglDev_;
 
-  igl::vulkan::VulkanContext& getVulkanContext() {
-    auto& device = static_cast<igl::vulkan::Device&>(*iglDev_);
+  vulkan::VulkanContext& getVulkanContext() {
+    auto& device = static_cast<vulkan::Device&>(*iglDev_);
     return device.getVulkanContext();
   }
 };
@@ -51,7 +51,7 @@ class VulkanRenderPassBuilderTest : public ::testing::Test {
 TEST_F(VulkanRenderPassBuilderTest, SingleColorAttachment) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
@@ -64,7 +64,7 @@ TEST_F(VulkanRenderPassBuilderTest, ColorWithDepthStencil) {
   const VkFormat depthStencilFormat =
       ctx.getClosestDepthStencilFormat(TextureFormat::S8_UInt_Z24_UNorm);
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addDepthStencil(
@@ -77,7 +77,7 @@ TEST_F(VulkanRenderPassBuilderTest, ColorWithDepthStencil) {
 TEST_F(VulkanRenderPassBuilderTest, MultipleColorAttachments) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(VK_FORMAT_R8G8B8A8_UNORM,
@@ -92,7 +92,7 @@ TEST_F(VulkanRenderPassBuilderTest, MultipleColorAttachments) {
 TEST_F(VulkanRenderPassBuilderTest, WithResolveAttachment) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                    VK_ATTACHMENT_LOAD_OP_CLEAR,
                    VK_ATTACHMENT_STORE_OP_STORE,
@@ -109,7 +109,7 @@ TEST_F(VulkanRenderPassBuilderTest, WithResolveAttachment) {
 TEST_F(VulkanRenderPassBuilderTest, MultiviewRenderPass) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.setMultiviewMasks(0x3, 0x3);
@@ -119,28 +119,28 @@ TEST_F(VulkanRenderPassBuilderTest, MultiviewRenderPass) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, HashEquality) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_EQ(hasher(builder1), hasher(builder2));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, HashInequality) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_B8G8R8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_NE(hasher(builder1), hasher(builder2));
 }
 
@@ -149,7 +149,7 @@ TEST_F(VulkanRenderPassBuilderTest, WithDepthStencilResolveAttachment) {
   const VkFormat depthStencilFormat =
       ctx.getClosestDepthStencilFormat(TextureFormat::S8_UInt_Z24_UNorm);
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                    VK_ATTACHMENT_LOAD_OP_CLEAR,
                    VK_ATTACHMENT_STORE_OP_STORE,
@@ -172,17 +172,17 @@ TEST_F(VulkanRenderPassBuilderTest, WithDepthStencilResolveAttachment) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, EqualityOperator) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
   EXPECT_TRUE(builder1 == builder2);
 
-  igl::vulkan::VulkanRenderPassBuilder builder3;
+  vulkan::VulkanRenderPassBuilder builder3;
   builder3.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
 
@@ -190,30 +190,30 @@ TEST_F(VulkanRenderPassBuilderTest, EqualityOperator) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, HashInequalityDepthStencil) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addDepthStencil(
       VK_FORMAT_D24_UNORM_S8_UINT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.addDepthStencil(
       VK_FORMAT_D32_SFLOAT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_NE(hasher(builder1), hasher(builder2));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, EqualityDepthStencil) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addDepthStencil(
       VK_FORMAT_D24_UNORM_S8_UINT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.addDepthStencil(
@@ -221,7 +221,7 @@ TEST_F(VulkanRenderPassBuilderTest, EqualityDepthStencil) {
 
   EXPECT_TRUE(builder1 == builder2);
 
-  igl::vulkan::VulkanRenderPassBuilder builder3;
+  vulkan::VulkanRenderPassBuilder builder3;
   builder3.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder3.addDepthStencil(
@@ -235,7 +235,7 @@ TEST_F(VulkanRenderPassBuilderTest, DepthStencilWithExplicitStencilOps) {
   const VkFormat depthStencilFormat =
       ctx.getClosestDepthStencilFormat(TextureFormat::S8_UInt_Z24_UNorm);
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addDepthStencil(depthStencilFormat,
@@ -249,19 +249,19 @@ TEST_F(VulkanRenderPassBuilderTest, DepthStencilWithExplicitStencilOps) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, EqualityMultiview) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.setMultiviewMasks(0x3, 0x3);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.setMultiviewMasks(0x3, 0x3);
 
   EXPECT_TRUE(builder1 == builder2);
 
-  igl::vulkan::VulkanRenderPassBuilder builder3;
+  vulkan::VulkanRenderPassBuilder builder3;
   builder3.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder3.setMultiviewMasks(0xF, 0xF);
@@ -270,38 +270,38 @@ TEST_F(VulkanRenderPassBuilderTest, EqualityMultiview) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, DefaultBuilderEquality) {
-  const igl::vulkan::VulkanRenderPassBuilder a;
-  const igl::vulkan::VulkanRenderPassBuilder b;
+  const vulkan::VulkanRenderPassBuilder a;
+  const vulkan::VulkanRenderPassBuilder b;
 
   EXPECT_TRUE(a == b);
 
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_EQ(hasher(a), hasher(b));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, HashInequalityMultiview) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.setMultiviewMasks(0x3, 0x3);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.setMultiviewMasks(0xF, 0xF);
 
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_NE(hasher(builder1), hasher(builder2));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, RenderPassCaching) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
@@ -315,12 +315,12 @@ TEST_F(VulkanRenderPassBuilderTest, RenderPassCaching) {
 // Multisubpass render pass tests
 
 TEST_F(VulkanRenderPassBuilderTest, NumSubpassesDefaultsToOne) {
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   EXPECT_EQ(builder.getNumSubpasses(), 1u);
 }
 
 TEST_F(VulkanRenderPassBuilderTest, SetSubpassesReportsCount) {
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
@@ -330,7 +330,7 @@ TEST_F(VulkanRenderPassBuilderTest, SetSubpassesReportsCount) {
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b1110, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0001, .inputAttachmentMask = 0b1110},
   };
@@ -341,7 +341,7 @@ TEST_F(VulkanRenderPassBuilderTest, SetSubpassesReportsCount) {
 TEST_F(VulkanRenderPassBuilderTest, DeferredLayoutPreserveAndDependencies) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
@@ -351,7 +351,7 @@ TEST_F(VulkanRenderPassBuilderTest, DeferredLayoutPreserveAndDependencies) {
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b0001, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b1110, .inputAttachmentMask = 0b0001},
   };
@@ -371,7 +371,7 @@ TEST_F(VulkanRenderPassBuilderTest, DeferredLayoutPreserveAndDependencies) {
 TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainPreserveMasks) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
@@ -381,7 +381,7 @@ TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainPreserveMasks) {
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b0011, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0001},
       {.colorAttachmentMask = 0b1000, .inputAttachmentMask = 0b0110},
@@ -402,7 +402,7 @@ TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainPreserveMasks) {
 TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainWithoutStorePreserve) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
   builder.addColor(
@@ -412,7 +412,7 @@ TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainWithoutStorePreserve) {
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b0011, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0001},
       {.colorAttachmentMask = 0b1000, .inputAttachmentMask = 0b0110},
@@ -431,7 +431,7 @@ TEST_F(VulkanRenderPassBuilderTest, ThreeSubpassChainWithoutStorePreserve) {
 TEST_F(VulkanRenderPassBuilderTest, FourSubpassChainPreserveMask) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
   builder.addColor(
@@ -441,7 +441,7 @@ TEST_F(VulkanRenderPassBuilderTest, FourSubpassChainPreserveMask) {
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b0001, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0010, .inputAttachmentMask = 0b0001},
       {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0010},
@@ -462,14 +462,14 @@ TEST_F(VulkanRenderPassBuilderTest, FourSubpassChainPreserveMask) {
 // The dependency from VK_SUBPASS_EXTERNAL orders the transition away from the initial layout after
 // the attachment writes of earlier render passes, and the one to it orders later reads
 TEST_F(VulkanRenderPassBuilderTest, LegacyBuilderHasDependenciesFromAndToExternal) {
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   EXPECT_EQ(builder.getNumDependencies(), 2u);
 }
 
 TEST_F(VulkanRenderPassBuilderTest, SubpassMasksAffectEqualityAndHash) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addColor(
@@ -479,13 +479,13 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassMasksAffectEqualityAndHash) {
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses1[] = {
+  const RenderPassDesc::SubpassDesc subpasses1[] = {
       {.colorAttachmentMask = 0b0110, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b1001, .inputAttachmentMask = 0b0110},
   };
   builder1.setSubpasses(subpasses1, 2);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.addColor(
@@ -495,31 +495,31 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassMasksAffectEqualityAndHash) {
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses2[] = {
+  const RenderPassDesc::SubpassDesc subpasses2[] = {
       {.colorAttachmentMask = 0b0110, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b1001, .inputAttachmentMask = 0b0001},
   };
   builder2.setSubpasses(subpasses2, 2);
 
   EXPECT_FALSE(builder1 == builder2);
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_NE(hasher(builder1), hasher(builder2));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, SubpassMasksIdenticalAffectEqualityAndHash) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0b01},
   };
   builder1.setSubpasses(subpasses, 2);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.addColor(
@@ -527,19 +527,19 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassMasksIdenticalAffectEqualityAndHash) 
   builder2.setSubpasses(subpasses, 2);
 
   EXPECT_TRUE(builder1 == builder2);
-  igl::vulkan::VulkanRenderPassBuilder::HashFunction hasher;
+  vulkan::VulkanRenderPassBuilder::HashFunction hasher;
   EXPECT_EQ(hasher(builder1), hasher(builder2));
 }
 
 TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIgnoresLoadOpsAndInitialLayout) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                     VK_ATTACHMENT_LOAD_OP_CLEAR,
                     VK_ATTACHMENT_STORE_OP_STORE,
                     VK_IMAGE_LAYOUT_UNDEFINED,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                     VK_ATTACHMENT_LOAD_OP_LOAD,
                     VK_ATTACHMENT_STORE_OP_STORE,
@@ -553,11 +553,11 @@ TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIgnoresLoadOpsAndInitialLayo
 }
 
 TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIgnoresStoreOpsForSingleSubpass) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
 
@@ -568,7 +568,7 @@ TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIgnoresStoreOpsForSingleSubp
 }
 
 TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIncludesPreserveMasks) {
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addColor(
@@ -578,14 +578,14 @@ TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIncludesPreserveMasks) {
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses1[] = {
+  const RenderPassDesc::SubpassDesc subpasses1[] = {
       {.colorAttachmentMask = 0b0011, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0001},
       {.colorAttachmentMask = 0b1000, .inputAttachmentMask = 0b0110},
   };
   builder1.setSubpasses(subpasses1, 3);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
   builder2.addColor(
@@ -595,7 +595,7 @@ TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIncludesPreserveMasks) {
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses2[] = {
+  const RenderPassDesc::SubpassDesc subpasses2[] = {
       {.colorAttachmentMask = 0b0011, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0001},
       {.colorAttachmentMask = 0b1000, .inputAttachmentMask = 0b0110},
@@ -611,13 +611,13 @@ TEST_F(VulkanRenderPassBuilderTest, CompatibilityKeyIncludesPreserveMasks) {
 TEST_F(VulkanRenderPassBuilderTest, FindRenderPassMultiSubpassCreatesPass) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0b01},
   };
@@ -631,14 +631,14 @@ TEST_F(VulkanRenderPassBuilderTest, FindRenderPassMultiSubpassCreatesPass) {
 TEST_F(VulkanRenderPassBuilderTest, FindRenderPassSharesCompatIndexAcrossLoadOps) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                     VK_ATTACHMENT_LOAD_OP_CLEAR,
                     VK_ATTACHMENT_STORE_OP_STORE,
                     VK_IMAGE_LAYOUT_UNDEFINED,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(VK_FORMAT_R8G8B8A8_UNORM,
                     VK_ATTACHMENT_LOAD_OP_LOAD,
                     VK_ATTACHMENT_STORE_OP_STORE,
@@ -655,19 +655,19 @@ TEST_F(VulkanRenderPassBuilderTest, FindRenderPassSharesCompatIndexAcrossLoadOps
 TEST_F(VulkanRenderPassBuilderTest, FindRenderPassSeparatesSingleAndMultiSubpass) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder1;
+  vulkan::VulkanRenderPassBuilder builder1;
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder1.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  igl::vulkan::VulkanRenderPassBuilder builder2;
+  vulkan::VulkanRenderPassBuilder builder2;
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder2.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0b01},
   };
@@ -682,14 +682,14 @@ TEST_F(VulkanRenderPassBuilderTest, FindRenderPassSeparatesSingleAndMultiSubpass
 TEST_F(VulkanRenderPassBuilderTest, StereoSubpassDependencyFlags) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.setMultiviewMasks(0x3, 0x3);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0b10},
   };
@@ -713,13 +713,13 @@ TEST_F(VulkanRenderPassBuilderTest, StereoSubpassDependencyFlags) {
 }
 
 TEST_F(VulkanRenderPassBuilderTest, MonoSubpassDependencyFlags) {
-  igl::vulkan::VulkanRenderPassBuilder builder;
+  vulkan::VulkanRenderPassBuilder builder;
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builder.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0b10},
   };
@@ -738,7 +738,7 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassDependencyFlagsOfEveryDependency) {
   for (const uint32_t viewMask : {0u, 0x3u}) {
     SCOPED_TRACE(viewMask != 0 ? "Stereo" : "Mono");
 
-    igl::vulkan::VulkanRenderPassBuilder builder;
+    vulkan::VulkanRenderPassBuilder builder;
     for (uint32_t i = 0; i != 4; ++i) {
       builder.addColor(
           VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
@@ -747,7 +747,7 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassDependencyFlagsOfEveryDependency) {
       builder.setMultiviewMasks(viewMask, viewMask);
     }
 
-    const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+    const RenderPassDesc::SubpassDesc subpasses[] = {
         {.colorAttachmentMask = 0b0011, .inputAttachmentMask = 0},
         {.colorAttachmentMask = 0b0100, .inputAttachmentMask = 0b0001},
         {.colorAttachmentMask = 0b1000, .inputAttachmentMask = 0b0110},
@@ -775,19 +775,19 @@ TEST_F(VulkanRenderPassBuilderTest, SubpassDependencyFlagsOfEveryDependency) {
 TEST_F(VulkanRenderPassBuilderTest, StereoSubpassVsMonoCompatibility) {
   auto& ctx = getVulkanContext();
 
-  igl::vulkan::VulkanRenderPassBuilder builderMono;
+  vulkan::VulkanRenderPassBuilder builderMono;
   builderMono.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builderMono.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
 
-  const igl::RenderPassDesc::SubpassDesc subpasses[] = {
+  const RenderPassDesc::SubpassDesc subpasses[] = {
       {.colorAttachmentMask = 0b10, .inputAttachmentMask = 0},
       {.colorAttachmentMask = 0b01, .inputAttachmentMask = 0b10},
   };
   builderMono.setSubpasses(subpasses, 2);
 
-  igl::vulkan::VulkanRenderPassBuilder builderStereo;
+  vulkan::VulkanRenderPassBuilder builderStereo;
   builderStereo.addColor(
       VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
   builderStereo.addColor(

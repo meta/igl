@@ -144,7 +144,7 @@ uint32_t SamplerState::getSamplerId() const {
 }
 
 bool SamplerState::isYUV() const noexcept {
-  return desc_.yuvFormat != igl::TextureFormat::Invalid;
+  return desc_.yuvFormat != TextureFormat::Invalid;
 }
 
 } // namespace igl::vulkan

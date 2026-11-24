@@ -38,7 +38,7 @@ struct ReusableCommandBufferDesc {
 /// @brief Implements the igl::IPlatformDevice interface
 class PlatformDevice : public IPlatformDevice {
  public:
-  static constexpr PlatformDeviceType kType = igl::PlatformDeviceType::Vulkan;
+  static constexpr PlatformDeviceType kType = PlatformDeviceType::Vulkan;
 
   explicit PlatformDevice(Device& device);
   ~PlatformDevice() override = default;

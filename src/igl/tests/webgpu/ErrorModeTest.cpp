@@ -138,7 +138,7 @@ TEST_F(WebGPUErrorModeTest, DisallowedSuspensionFailsWaitsAndLatchesErrors) {
   EXPECT_EQ(ctx.waitForSubmittedWork().code, Result::Code::InvalidOperation);
 
   // Rendering still works; only waiting for it does not.
-  tests::webgpu::TriangleRenderer renderer;
+  webgpu::TriangleRenderer renderer;
   ASSERT_TRUE(renderer.initialize(*device, TextureFormat::RGBA_UNorm8).isOk());
   Result ret;
   const auto target = device->createTexture(

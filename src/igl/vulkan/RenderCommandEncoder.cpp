@@ -185,7 +185,7 @@ void RenderCommandEncoder::initialize(const RenderPassDesc& renderPass,
     }
     mipLevel = descColor.mipLevel;
     layer = colorLayer;
-    const auto initialLayout = descColor.loadAction == igl::LoadAction::Load
+    const auto initialLayout = descColor.loadAction == LoadAction::Load
                                    ? colorTexture.getVulkanTexture().image.imageLayout_
                                    : VK_IMAGE_LAYOUT_UNDEFINED;
     builder.addColor(textureFormatToVkFormat(colorTexture.getFormat()),
@@ -227,7 +227,7 @@ void RenderCommandEncoder::initialize(const RenderPassDesc& renderPass,
                                                      .depth = descDepth.clearDepth,
                                                      .stencil = descStencil.clearStencil,
                                                  }};
-    const auto initialLayout = descDepth.loadAction == igl::LoadAction::Load
+    const auto initialLayout = descDepth.loadAction == LoadAction::Load
                                    ? depthTexture.getVulkanTexture().image.imageLayout_
                                    : VK_IMAGE_LAYOUT_UNDEFINED;
     builder.addDepthStencil(depthTexture.getVkFormat(),
@@ -725,9 +725,9 @@ void RenderCommandEncoder::bindRenderPipelineState(
 
   const RenderPipelineDesc& desc = rps_->getRenderPipelineDesc();
 
-  if (desc.shaderStages->getType() == igl::ShaderStagesType::Render) {
+  if (desc.shaderStages->getType() == ShaderStagesType::Render) {
     ensureShaderModule(desc.shaderStages->getVertexModule().get());
-  } else if (desc.shaderStages->getType() == igl::ShaderStagesType::RenderMeshShader) {
+  } else if (desc.shaderStages->getType() == ShaderStagesType::RenderMeshShader) {
     ensureShaderModule(desc.shaderStages->getMeshModule().get());
   }
   ensureShaderModule(desc.shaderStages->getFragmentModule().get());
@@ -909,11 +909,11 @@ void RenderCommandEncoder::bindIndexBuffer(IBuffer& buffer,
 
   auto indexFormatToVkIndexType = [](IndexFormat fmt, bool has8BitIndices) -> VkIndexType {
     switch (fmt) {
-    case igl::IndexFormat::UInt8:
+    case IndexFormat::UInt8:
       return IGL_DEBUG_VERIFY(has8BitIndices) ? VK_INDEX_TYPE_UINT8_EXT : VK_INDEX_TYPE_UINT16;
-    case igl::IndexFormat::UInt16:
+    case IndexFormat::UInt16:
       return VK_INDEX_TYPE_UINT16;
-    case igl::IndexFormat::UInt32:
+    case IndexFormat::UInt32:
       return VK_INDEX_TYPE_UINT32;
     };
     IGL_DEBUG_ASSERT_NOT_REACHED();
@@ -1025,7 +1025,7 @@ void RenderCommandEncoder::bindTexture(size_t index, uint8_t target, ITexture* t
 }
 
 void RenderCommandEncoder::bindTexture(size_t index, ITexture* texture) {
-  bindTexture(index, igl::BindTarget::kFragment, texture);
+  bindTexture(index, BindTarget::kFragment, texture);
 }
 
 void RenderCommandEncoder::bindUniform(const UniformDesc& /*uniformDesc*/, const void* /*data*/) {
@@ -1391,7 +1391,7 @@ bool RenderCommandEncoder::flushDynamicState() {
         cmdBuffer_, bindPoint, layout, kBindPoint_CombinedImageSamplers, 1, &dset, 0, nullptr);
     // This is necessary to support a mix of BindGroups and bindTexture() calls in the same command
     // encoder. A typical use case for that is running ImGui rendering etc.
-    binder_.isDirtyFlags_ &= ~igl::vulkan::ResourcesBinder::DirtyFlagBits_Textures;
+    binder_.isDirtyFlags_ &= ~ResourcesBinder::DirtyFlagBits_Textures;
     if (replay_) {
       replay_->boundTextureGroup = {.dset = dset, .usageMask = usageMaskBindGroup};
     }
@@ -1427,7 +1427,7 @@ bool RenderCommandEncoder::flushDynamicState() {
                                      dynamicOffsets_);
     // This is necessary to support a mix of BindGroups and bindBuffer() calls in the same command
     // encoder.
-    binder_.isDirtyFlags_ &= ~igl::vulkan::ResourcesBinder::DirtyFlagBits_Buffers;
+    binder_.isDirtyFlags_ &= ~ResourcesBinder::DirtyFlagBits_Buffers;
     if (replay_) {
       replay_->boundBufferGroup = {.dset = dset, .usageMask = usageMaskBindGroup};
       replay_->numBoundDynamicOffsets = numDynamicOffsets_;

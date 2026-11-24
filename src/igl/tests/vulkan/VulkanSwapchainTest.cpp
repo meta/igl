@@ -120,7 +120,7 @@ TEST_F(VulkanSwapchainTest, AcquireNextImage) {
 class VulkanSwapchainRecoveryTest : public ::testing::TestWithParam<bool> {
  public:
   void SetUp() override {
-    igl::setDebugBreakEnabled(false);
+    setDebugBreakEnabled(false);
 #if IGL_PLATFORM_MACOSX && !defined(IGL_USE_STATIC_KOSMICKRISP)
     vulkan::setupMoltenVKEnvironment();
 #endif

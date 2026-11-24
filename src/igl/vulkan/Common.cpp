@@ -108,21 +108,21 @@ VkFormat invertRedAndBlue(VkFormat format) {
 
 VkStencilOp stencilOperationToVkStencilOp(StencilOperation op) {
   switch (op) {
-  case igl::StencilOperation::Keep:
+  case StencilOperation::Keep:
     return VK_STENCIL_OP_KEEP;
-  case igl::StencilOperation::Zero:
+  case StencilOperation::Zero:
     return VK_STENCIL_OP_ZERO;
-  case igl::StencilOperation::Replace:
+  case StencilOperation::Replace:
     return VK_STENCIL_OP_REPLACE;
-  case igl::StencilOperation::IncrementClamp:
+  case StencilOperation::IncrementClamp:
     return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
-  case igl::StencilOperation::DecrementClamp:
+  case StencilOperation::DecrementClamp:
     return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
-  case igl::StencilOperation::Invert:
+  case StencilOperation::Invert:
     return VK_STENCIL_OP_INVERT;
-  case igl::StencilOperation::IncrementWrap:
+  case StencilOperation::IncrementWrap:
     return VK_STENCIL_OP_INCREMENT_AND_WRAP;
-  case igl::StencilOperation::DecrementWrap:
+  case StencilOperation::DecrementWrap:
     return VK_STENCIL_OP_DECREMENT_AND_WRAP;
   }
   IGL_DEBUG_ASSERT_NOT_REACHED();
@@ -464,21 +464,21 @@ VkMemoryPropertyFlags resourceStorageToVkMemoryPropertyFlags(
 
 VkCompareOp compareFunctionToVkCompareOp(CompareFunction func) {
   switch (func) {
-  case igl::CompareFunction::Never:
+  case CompareFunction::Never:
     return VK_COMPARE_OP_NEVER;
-  case igl::CompareFunction::Less:
+  case CompareFunction::Less:
     return VK_COMPARE_OP_LESS;
-  case igl::CompareFunction::Equal:
+  case CompareFunction::Equal:
     return VK_COMPARE_OP_EQUAL;
-  case igl::CompareFunction::LessEqual:
+  case CompareFunction::LessEqual:
     return VK_COMPARE_OP_LESS_OR_EQUAL;
-  case igl::CompareFunction::Greater:
+  case CompareFunction::Greater:
     return VK_COMPARE_OP_GREATER;
-  case igl::CompareFunction::NotEqual:
+  case CompareFunction::NotEqual:
     return VK_COMPARE_OP_NOT_EQUAL;
-  case igl::CompareFunction::GreaterEqual:
+  case CompareFunction::GreaterEqual:
     return VK_COMPARE_OP_GREATER_OR_EQUAL;
-  case igl::CompareFunction::AlwaysPass:
+  case CompareFunction::AlwaysPass:
     return VK_COMPARE_OP_ALWAYS;
   }
   IGL_DEBUG_ABORT("CompareFunction value not handled: %d", static_cast<int>(func));
@@ -823,7 +823,7 @@ Result validateShaderModuleBindings(const util::SpvModuleInfo& info, const std::
 void ensureShaderModule(IShaderModule* sm) {
   IGL_DEBUG_ASSERT(sm);
 
-  const igl::vulkan::util::SpvModuleInfo& info =
+  const util::SpvModuleInfo& info =
       static_cast<ShaderModule*>(sm)->getVulkanShaderModule().getSpvModuleInfo();
 
   for (const auto& t : info.textures) {

@@ -381,9 +381,9 @@ fn main() -> @location(0) vec4f {
   iglu::material::ShaderUniforms shaderUniforms(*device_, *reflection);
   const iglu::simdtypes::float3 zero = {0.0f, 0.0f, 0.0f};
   const iglu::simdtypes::float3 green = {0.0f, 1.0f, 0.0f};
-  shaderUniforms.setFloat3x3(igl::genNameHandle("m"), iglu::simdtypes::float3x3(zero, zero, green));
+  shaderUniforms.setFloat3x3(genNameHandle("m"), iglu::simdtypes::float3x3(zero, zero, green));
   const iglu::simdtypes::float4 white = {1.0f, 1.0f, 1.0f, 1.0f};
-  shaderUniforms.setFloat4(igl::genNameHandle("color"), white);
+  shaderUniforms.setFloat4(genNameHandle("color"), white);
   auto vertices = createVertices(quad(0.5f));
   encode(
       [&](IRenderCommandEncoder& encoder) {
