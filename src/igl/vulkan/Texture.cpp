@@ -27,6 +27,69 @@ void logMipmapFailure(const Result& result) {
     IGL_LOG_ERROR_ONCE("Texture::generateMipmap(): %s\n", result.message.c_str());
   }
 }
+
+// Writes `data`, packed as `ITexture::upload()` describes, through the host mapping of a linearly
+// tiled image. Each row goes where `vkGetImageSubresourceLayout()` places it in its level and
+// layer.
+Result uploadThroughMapping(const VulkanContext& ctx,
+                            const VulkanImage& image,
+                            TextureType type,
+                            const TextureFormatProperties& properties,
+                            const TextureRangeDesc& range,
+                            const uint8_t* data,
+                            size_t bytesPerRow) {
+  IGL_PROFILER_FUNCTION();
+
+  const VkImageAspectFlags aspectMask =
+      image.isDepthFormat_
+          ? VK_IMAGE_ASPECT_DEPTH_BIT
+          : (image.isStencilFormat_ ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
+  const uint32_t initialLayer = getVkLayer(type, range.face, range.layer);
+  const uint32_t numLayers = getVkLayer(type, range.numFaces, range.numLayers);
+  uint8_t* const mappedPtr = static_cast<uint8_t*>(image.mappedPtr_);
+
+  for (uint32_t mipLevel = range.mipLevel; mipLevel < range.mipLevel + range.numMipLevels;
+       ++mipLevel) {
+    const TextureRangeDesc mipRange = range.atMipLevel(mipLevel);
+    const size_t rowBytes = properties.getBytesPerRow(mipRange);
+    // A nonzero `bytesPerRow` describes the rows of a single level; a chain is always packed.
+    const size_t srcBytesPerRow = (bytesPerRow == 0 || range.numMipLevels > 1) ? rowBytes
+                                                                               : bytesPerRow;
+    const uint32_t numRows =
+        properties.getRows(TextureRangeDesc::new2D(0, 0, mipRange.width, mipRange.height));
+    const VkDeviceSize firstRow = mipRange.y / properties.blockHeight;
+    const VkDeviceSize rowOffset =
+        static_cast<VkDeviceSize>(mipRange.x / properties.blockWidth) * properties.bytesPerBlock;
+
+    for (uint32_t layer = initialLayer; layer < initialLayer + numLayers; ++layer) {
+      const VkImageSubresource subresource = {
+          .aspectMask = aspectMask,
+          .mipLevel = mipLevel,
+          .arrayLayer = layer,
+      };
+      VkSubresourceLayout layout = {};
+      ctx.vf_.vkGetImageSubresourceLayout(
+          ctx.getVkDevice(), image.getVkImage(), &subresource, &layout);
+
+      for (uint32_t z = mipRange.z; z < mipRange.z + mipRange.depth; ++z) {
+        for (uint32_t row = 0; row < numRows; ++row) {
+          const VkDeviceSize dstOffset = layout.offset + z * layout.depthPitch +
+                                         (firstRow + row) * layout.rowPitch + rowOffset;
+          if (dstOffset > image.allocatedSize || image.allocatedSize - dstOffset < rowBytes) {
+            // The rows before this one stay written, and are not flushed.
+            return Result{Result::Code::ArgumentOutOfRange,
+                          "The upload range does not fit in the mapped image memory"};
+          }
+          checked_memcpy(mappedPtr + dstOffset, image.allocatedSize - dstOffset, data, rowBytes);
+          data += srcBytesPerRow;
+        }
+      }
+    }
+  }
+
+  image.flushMappedMemory();
+  return Result();
+}
 } // namespace
 
 Texture::Texture(Device& device, TextureFormat format) : ITexture(format), device_(device) {
@@ -412,15 +475,17 @@ Result Texture::uploadInternal(TextureType /*type*/,
     return Result{};
   }
 
+  const VulkanContext& ctx = device_.getVulkanContext();
   const VulkanImage& vulkanImage = texture_->image;
   if (vulkanImage.isMappedPtrAccessible()) {
-    checked_memcpy(
-        vulkanImage.mappedPtr_, vulkanImage.allocatedSize, data, bytesPerRow * range.width);
-    vulkanImage.flushMappedMemory();
-    return Result();
+    return uploadThroughMapping(ctx,
+                                vulkanImage,
+                                desc_.type,
+                                getProperties(),
+                                range,
+                                static_cast<const uint8_t*>(data),
+                                bytesPerRow);
   }
-
-  const VulkanContext& ctx = device_.getVulkanContext();
 
   const VkImageAspectFlags imageAspectFlags = texture_->imageView_.getVkImageAspectFlags();
   if (!ctx.stagingDevice_->imageData(vulkanImage,
