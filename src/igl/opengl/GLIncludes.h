@@ -61,6 +61,7 @@
 #elif IGL_PLATFORM_EMSCRIPTEN
   #include <GLES2/gl2.h> // IWYU pragma: export
   #include <GLES2/gl2ext.h> // IWYU pragma: export
+  #include <GLES3/gl3.h> // IWYU pragma: export
 #endif
 // clang-format on
 

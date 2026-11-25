@@ -24,7 +24,7 @@ Context::Context(BackendVersion backendVersion, const char* canvasName) : canvas
   IGL_DEBUG_ASSERT(backendVersion.minorVersion == 0);
   EmscriptenWebGLContextAttributes attrs;
   emscripten_webgl_init_context_attributes(&attrs);
-  attrs.majorVersion = backendversion.majorVersion - 1;
+  attrs.majorVersion = backendVersion.majorVersion - 1;
   attrs.minorVersion = 0;
   attrs.premultipliedAlpha = false;
   attrs.alpha = false;
