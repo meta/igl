@@ -210,6 +210,7 @@ bool PlatformDevice::waitOnSubmitHandle(SubmitHandle handle, uint64_t timeoutNan
   }
 
   const auto& ctx = device_.getVulkanContext();
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
   const auto& immediateCommands = ctx.immediate_;
 
   return immediateCommands->wait(VulkanImmediateCommands::SubmitHandle(handle),
