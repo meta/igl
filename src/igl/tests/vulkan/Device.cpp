@@ -98,7 +98,7 @@ TEST_F(DeviceVulkanTest, PlatformDevice) {
   auto fence1 = vulkanPlatformDevice.getVkFenceFromSubmitHandle(submitHandle);
   ASSERT_NE(fence1, VK_NULL_HANDLE);
 
-  vulkanPlatformDevice.waitOnSubmitHandle(submitHandle);
+  EXPECT_TRUE(vulkanPlatformDevice.waitOnSubmitHandle(submitHandle));
 }
 
 TEST_F(DeviceVulkanTest, Semaphores) {

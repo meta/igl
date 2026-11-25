@@ -68,11 +68,12 @@ class PlatformDevice : public IPlatformDevice {
   /// @return The Vulkan fence associated with the handle
   [[nodiscard]] VkFence getVkFenceFromSubmitHandle(SubmitHandle handle) const;
 
-  /// Waits on the GPU Fence associated with the handle
-  /// @param handle The handle to the GPU Fence
-  /// @return 'true' when ready or 'false' on time out (can be ignored)
+  /// Waits for the submission of `handle` to complete. Call it on the context thread.
+  /// @return true if the submission completed; otherwise false, with the reason in `outResult`.
   // NOLINTNEXTLINE(modernize-use-nodiscard)
-  bool waitOnSubmitHandle(SubmitHandle handle, uint64_t timeoutNanoseconds = UINT64_MAX) const;
+  bool waitOnSubmitHandle(SubmitHandle handle,
+                          uint64_t timeoutNanoseconds = UINT64_MAX,
+                          Result* IGL_NULLABLE outResult = nullptr) const;
 
   /// Invoke a task when a SubmitHandle is ready
   void deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle) const;

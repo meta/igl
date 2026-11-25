@@ -203,18 +203,22 @@ VkFence PlatformDevice::getVkFenceFromSubmitHandle(SubmitHandle handle) const {
   return device_.getVulkanContext().getVkFenceFromSubmitHandle(handle);
 }
 
-bool PlatformDevice::waitOnSubmitHandle(SubmitHandle handle, uint64_t timeoutNanoseconds) const {
+bool PlatformDevice::waitOnSubmitHandle(SubmitHandle handle,
+                                        uint64_t timeoutNanoseconds,
+                                        Result* IGL_NULLABLE outResult) const {
   if (handle == 0) {
     IGL_LOG_ERROR("Invalid submit handle passed to waitOnSubmitHandle");
+    Result::setResult(outResult, Result::Code::ArgumentInvalid, "Invalid submit handle");
     return false;
   }
 
   const auto& ctx = device_.getVulkanContext();
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
-  const auto& immediateCommands = ctx.immediate_;
 
-  return immediateCommands->wait(VulkanImmediateCommands::SubmitHandle(handle),
-                                 timeoutNanoseconds) != VK_TIMEOUT;
+  const VkResult result =
+      ctx.immediate_->wait(VulkanImmediateCommands::SubmitHandle(handle), timeoutNanoseconds);
+  setResultFrom(outResult, result);
+  return result == VK_SUCCESS;
 }
 
 void PlatformDevice::deferredTask(std::packaged_task<void()>&& task, SubmitHandle handle) const {
