@@ -815,7 +815,7 @@ void ShaderUniforms::setIntArray(const igl::NameHandle& blockTypeName,
 void ShaderUniforms::setTexture(const std::string& name,
                                 const std::shared_ptr<igl::ITexture>& value,
                                 const std::shared_ptr<igl::ISamplerState>& sampler,
-                                IGL_MAYBE_UNUSED size_t arrayIndex) {
+                                [[maybe_unused]] size_t arrayIndex) {
   IGL_PROFILER_FUNCTION();
   IGL_DEBUG_ASSERT(arrayIndex == 0, "texture arrays not supported");
   auto it = allTexturesByName_.find(name);

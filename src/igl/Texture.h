@@ -1043,17 +1043,17 @@ class ITexture : public ITrackedResource<ITexture>, public base::IAttachmentInte
                                                          const TextureRangeDesc& subRange,
                                                          size_t bytesPerRow) const noexcept;
 
-  [[nodiscard]] virtual bool needsRepacking(IGL_MAYBE_UNUSED const TextureRangeDesc& range,
-                                            IGL_MAYBE_UNUSED size_t bytesPerRow) const {
+  [[nodiscard]] virtual bool needsRepacking([[maybe_unused]] const TextureRangeDesc& range,
+                                            [[maybe_unused]] size_t bytesPerRow) const {
     return false;
   }
 
   [[nodiscard]] virtual Result uploadInternal(
-      IGL_MAYBE_UNUSED TextureType type,
-      IGL_MAYBE_UNUSED const TextureRangeDesc& range,
-      IGL_MAYBE_UNUSED const void* IGL_NULLABLE data,
-      IGL_MAYBE_UNUSED size_t bytesPerRow = 0,
-      IGL_MAYBE_UNUSED const uint32_t* IGL_NULLABLE mipLevelBytes = nullptr) const {
+      [[maybe_unused]] TextureType type,
+      [[maybe_unused]] const TextureRangeDesc& range,
+      [[maybe_unused]] const void* IGL_NULLABLE data,
+      [[maybe_unused]] size_t bytesPerRow = 0,
+      [[maybe_unused]] const uint32_t* IGL_NULLABLE mipLevelBytes = nullptr) const {
     IGL_DEBUG_ASSERT_NOT_IMPLEMENTED();
     return Result{Result::Code::Unimplemented, "Upload not implemented."};
   }

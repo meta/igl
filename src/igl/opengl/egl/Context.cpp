@@ -31,12 +31,12 @@ namespace error_checking {
     break;
 
 namespace {
-EGLint checkForEGLErrors(IGL_MAYBE_UNUSED const char* fileName,
-                         IGL_MAYBE_UNUSED const char* callerName,
-                         IGL_MAYBE_UNUSED size_t lineNum) {
+EGLint checkForEGLErrors([[maybe_unused]] const char* fileName,
+                         [[maybe_unused]] const char* callerName,
+                         [[maybe_unused]] size_t lineNum) {
   const EGLint errorCode = eglGetError();
   if (errorCode != EGL_SUCCESS) {
-    IGL_MAYBE_UNUSED const char* errorStr = nullptr;
+    [[maybe_unused]] const char* errorStr = nullptr;
     switch (errorCode) {
       // https://www.khronos.org/files/egl-1-4-quick-reference-card.pdf
       CASE_ERROR_CODE_IMPL(EGL_NOT_INITIALIZED);

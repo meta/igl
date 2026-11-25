@@ -120,19 +120,6 @@
 #endif
 
 ///--------------------------------------
-/// MARK: - C++17 attributes (these should be inlined after all of our compilers are on c++17)
-
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(maybe_unused)
-#define IGL_MAYBE_UNUSED [[maybe_unused]]
-#endif
-#endif
-
-#if !defined(IGL_MAYBE_UNUSED)
-#define IGL_MAYBE_UNUSED
-#endif
-
-///--------------------------------------
 /// MARK: Visual Studio compatibility
 
 // not all control paths return a value

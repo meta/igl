@@ -201,7 +201,7 @@ std::string getVulkanLightingFragmentShader(bool subpass) {
 // ---------------------------------------------------------------------------
 
 // The subpass shaders are GLSL ES 3.00 only. The others use the newest version of the device.
-std::string getOpenGLVersionLine(IGL_MAYBE_UNUSED const IDevice& device, bool subpass) {
+std::string getOpenGLVersionLine([[maybe_unused]] const IDevice& device, bool subpass) {
   if (subpass) {
     return "#version 300 es\n";
   }

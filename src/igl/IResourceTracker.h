@@ -131,11 +131,11 @@ class IResourceTracker {
   virtual void willDelete(const IShaderStages* shaderStages) noexcept = 0;
 
   template<typename T>
-  void didCreate(IGL_MAYBE_UNUSED const ITrackedResource<T>* resource) noexcept {
+  void didCreate([[maybe_unused]] const ITrackedResource<T>* resource) noexcept {
     IGL_DEBUG_ASSERT_NOT_REACHED();
   }
   template<typename T>
-  void willDelete(IGL_MAYBE_UNUSED const ITrackedResource<T>* resource) noexcept {
+  void willDelete([[maybe_unused]] const ITrackedResource<T>* resource) noexcept {
     IGL_DEBUG_ASSERT_NOT_REACHED();
   }
 

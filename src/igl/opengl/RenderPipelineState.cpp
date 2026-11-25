@@ -16,7 +16,7 @@ namespace igl::opengl {
 
 namespace {
 
-void logBlendFactorError(IGL_MAYBE_UNUSED const char* value) {
+void logBlendFactorError([[maybe_unused]] const char* value) {
   IGL_DEBUG_ABORT("OpenGL does not support blend mode:  %s, setting to GL_ONE instead\n", value);
 }
 

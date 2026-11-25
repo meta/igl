@@ -31,7 +31,7 @@ class RenderSession {
 
   virtual void initialize() noexcept {}
   // NOLINTNEXTLINE(performance-unnecessary-value-param)
-  virtual void update(IGL_MAYBE_UNUSED SurfaceTextures surfaceTextures) noexcept {}
+  virtual void update([[maybe_unused]] SurfaceTextures surfaceTextures) noexcept {}
 
   /// @brief Wrapper around update() that automatically handles benchmark timing
   /// Platform code should call this instead of update() directly when benchmark

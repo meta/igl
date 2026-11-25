@@ -13,7 +13,7 @@
 
 namespace igl::vulkan {
 namespace {
-IGL_MAYBE_UNUSED std::ostream& operator<<(std::ostream& os, const VulkanQueueDescriptor& queue) {
+[[maybe_unused]] std::ostream& operator<<(std::ostream& os, const VulkanQueueDescriptor& queue) {
   return os << "VulkanQueueDescriptor" << "\n\tQueue Index        : " << queue.queueIndex
             << "\n\tQueue Family Index : " << queue.familyIndex;
 }

@@ -2906,7 +2906,7 @@ void IContext::frontFace(GLenum mode) {
   GLCHECK_ERRORS();
 }
 
-void IContext::polygonFillMode(IGL_MAYBE_UNUSED GLenum mode) {
+void IContext::polygonFillMode([[maybe_unused]] GLenum mode) {
 #if IGL_OPENGL
   APILOG("glPolygonMode(%s)\n", GL_ENUM_TO_STRING(mode));
   GLCALL(PolygonMode)(GL_FRONT_AND_BACK, mode);
@@ -3476,9 +3476,9 @@ void IContext::importMemoryFd(GLuint memory, GLuint64 size, GLenum handleType, G
   GLCHECK_ERRORS();
 }
 
-void IContext::invalidateFramebuffer(IGL_MAYBE_UNUSED GLenum target,
-                                     IGL_MAYBE_UNUSED GLsizei numAttachments,
-                                     IGL_MAYBE_UNUSED const GLenum* attachments) {
+void IContext::invalidateFramebuffer([[maybe_unused]] GLenum target,
+                                     [[maybe_unused]] GLsizei numAttachments,
+                                     [[maybe_unused]] const GLenum* attachments) {
   if (invalidateFramebufferProc_ == nullptr) {
     if (deviceFeatureSet_.hasInternalRequirement(
             InternalRequirement::InvalidateFramebufferExtReq)) {
@@ -4717,8 +4717,8 @@ Result IContext::getLastError() const {
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
-GLenum IContext::checkForErrors(IGL_MAYBE_UNUSED const char* callerName,
-                                IGL_MAYBE_UNUSED size_t lineNum) const {
+GLenum IContext::checkForErrors([[maybe_unused]] const char* callerName,
+                                [[maybe_unused]] size_t lineNum) const {
   // GL error state belongs to the calling thread's current context, so the error is reported from
   // this call's own read rather than from lastError_, which another thread may have replaced.
   const GLenum error = getError();

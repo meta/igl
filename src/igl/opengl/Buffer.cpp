@@ -179,7 +179,7 @@ void ArrayBuffer::unbind() {
   getContext().bindBuffer(target_, 0);
 }
 
-void ArrayBuffer::bindBase(IGL_MAYBE_UNUSED size_t index, Result* IGL_NULLABLE outResult) {
+void ArrayBuffer::bindBase([[maybe_unused]] size_t index, Result* IGL_NULLABLE outResult) {
   IGL_PROFILER_FUNCTION();
   if (target_ != GL_SHADER_STORAGE_BUFFER) {
     static constexpr const char* kErrorMsg = "Buffer should be GL_SHADER_STORAGE_BUFFER";

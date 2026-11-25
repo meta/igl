@@ -50,7 +50,7 @@ HWDeviceType getDeviceType(id<MTLDevice> device) {
 
 } // namespace
 
-std::vector<HWDeviceDesc> HWDevice::queryDevices(IGL_MAYBE_UNUSED const HWDeviceQueryDesc& desc,
+std::vector<HWDeviceDesc> HWDevice::queryDevices([[maybe_unused]] const HWDeviceQueryDesc& desc,
                                                  Result* outResult) {
   IGL_PROFILER_FUNCTION();
   std::vector<HWDeviceDesc> devices;
