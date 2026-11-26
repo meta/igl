@@ -147,6 +147,16 @@ TEST_F(PlatformDeviceVulkanTest, WaitOnSubmitHandleFailsForANullHandle) {
   EXPECT_EQ(result.code, Result::Code::ArgumentInvalid);
 }
 
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportIsUnsupportedWithoutTheExportFunction) {
+  const SubmitHandle handle = submit();
+  ASSERT_NE(handle, 0u);
+
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = nullptr;
+
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle), -1);
+}
+
 } // namespace
 
 } // namespace igl::tests

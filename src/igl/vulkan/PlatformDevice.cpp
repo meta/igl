@@ -232,7 +232,10 @@ void PlatformDevice::deferredTask(std::packaged_task<void()>&& task, SubmitHandl
 }
 
 int PlatformDevice::getFenceFdFromSubmitHandle(SubmitHandle handle) const {
-  return device_.getVulkanContext().getFenceFdFromSubmitHandle(handle);
+  const auto& ctx = device_.getVulkanContext();
+  IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
+
+  return ctx.getFenceFdFromSubmitHandle(handle);
 }
 
 bool PlatformDevice::supportsReusableCommandBuffers() const {
