@@ -231,11 +231,12 @@ void PlatformDevice::deferredTask(std::packaged_task<void()>&& task, SubmitHandl
                                           VulkanImmediateCommands::SubmitHandle(handle));
 }
 
-int PlatformDevice::getFenceFdFromSubmitHandle(SubmitHandle handle) const {
+int PlatformDevice::getFenceFdFromSubmitHandle(SubmitHandle handle,
+                                               Result* IGL_NULLABLE outResult) const {
   const auto& ctx = device_.getVulkanContext();
   IGL_ENSURE_VULKAN_CONTEXT_THREAD(&ctx);
 
-  return ctx.getFenceFdFromSubmitHandle(handle);
+  return ctx.getFenceFdFromSubmitHandle(handle, outResult);
 }
 
 bool PlatformDevice::supportsReusableCommandBuffers() const {

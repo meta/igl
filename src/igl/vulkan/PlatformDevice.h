@@ -159,12 +159,13 @@ class PlatformDevice : public IPlatformDevice {
                        ICommandBuffer& reusable,
                        Result* IGL_NULLABLE outResult) const;
 
-  /// Creates the file descriptor for the underlying VkFence
-  /// @param handle The handle to the GPU Fence
-  /// @return The fd for the Vulkan Fence associated with the handle
-#if defined(IGL_PLATFORM_ANDROID) && defined(VK_KHR_external_fence_fd)
-  [[nodiscard]] int getFenceFdFromSubmitHandle(SubmitHandle handle) const;
-#endif
+  /// Exports the fence of the submission of `handle` as a sync file descriptor that the caller
+  /// owns. The device needs VulkanContextConfig::exportableFences. Call it on the context thread.
+  /// A successful export resets the fence: wait on the descriptor, not with waitOnSubmitHandle().
+  /// @return The descriptor, or -1: with Result::Code::Ok if the fence was already signaled,
+  /// otherwise with the reason in `outResult`.
+  [[nodiscard]] int getFenceFdFromSubmitHandle(SubmitHandle handle,
+                                               Result* IGL_NULLABLE outResult = nullptr) const;
 
   /// Clear the cached textures
   void clear() {

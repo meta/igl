@@ -372,11 +372,11 @@ class VulkanContext final {
   // @fb-only
   [[nodiscard]] VkFence getVkFenceFromSubmitHandle(igl::SubmitHandle handle) const noexcept;
 
-  /// Creates the file descriptor for the underlying VkFence
-  /// @param handle The handle to the GPU Fence
-  /// @return The fd for the Vulkan Fence associated with the handleint
+  /// @brief Exports the fence of the submission of `handle` to a sync file descriptor (see
+  /// PlatformDevice::getFenceFdFromSubmitHandle()).
   // @fb-only
-  [[nodiscard]] int getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const noexcept;
+  [[nodiscard]] int getFenceFdFromSubmitHandle(igl::SubmitHandle handle,
+                                               Result* IGL_NULLABLE outResult) const noexcept;
 
   /// @brief Timeout to use for the descriptor-set fence wait in
   /// checkAndUpdateDescriptorSets().

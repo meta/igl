@@ -2933,25 +2933,28 @@ VkFence VulkanContext::getVkFenceFromSubmitHandle(igl::SubmitHandle handle) cons
 }
 
 // @fb-only
-int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const noexcept {
-  int fenceFd = -1;
-#if defined(IGL_PLATFORM_ANDROID) && defined(VK_KHR_external_fence_fd)
+int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle,
+                                              Result* IGL_NULLABLE outResult) const noexcept {
+  IGL_PROFILER_FUNCTION();
+
   if (handle == 0) {
-    IGL_LOG_ERROR("Invalid submit handle passed to getFenceFDFromSubmitHandle");
+    IGL_LOG_ERROR("Invalid submit handle passed to getFenceFdFromSubmitHandle");
+    Result::setResult(outResult, Result::Code::ArgumentInvalid, "Invalid submit handle");
     return -1;
   }
-
-  // Although the extension is present at compile time, software/emulated Vulkan
-  // ICDs (e.g. SwiftShader) may not implement VK_KHR_external_fence_fd at
-  // runtime, leaving vkGetFenceFdKHR() null. Return the no-fence sentinel (-1)
-  // rather than dereferencing a null function pointer.
+#if defined(VK_KHR_external_fence_fd)
+  // Software Vulkan drivers, such as SwiftShader, may not implement VK_KHR_external_fence_fd.
   if (!vf_.vkGetFenceFdKHR) {
-    IGL_LOG_ERROR_ONCE("VK_KHR_external_fence_fd not loaded; vkGetFenceFdKHR is null\n");
+    Result::setResult(outResult, Result::Code::Unsupported, "vkGetFenceFdKHR() is not loaded");
     return -1;
   }
 
   const VkFence vkFence = getVkFenceFromSubmitHandle(handle);
-  IGL_DEBUG_ASSERT(vkFence != VK_NULL_HANDLE);
+  if (vkFence == VK_NULL_HANDLE) {
+    Result::setResult(
+        outResult, Result::Code::ArgumentInvalid, "The submission of the handle was recycled");
+    return -1;
+  }
 
   const VkFenceGetFdInfoKHR getFdInfo = {
       .sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
@@ -2959,13 +2962,23 @@ int VulkanContext::getFenceFdFromSubmitHandle(igl::SubmitHandle handle) const no
       .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
   };
 
+  int fenceFd = -1;
   const VkResult result = vf_.vkGetFenceFdKHR(vkDevice_, &getFdInfo, &fenceFd);
   if (result != VK_SUCCESS) {
-    IGL_LOG_ERROR("Unable to get fence fd from submit handle: %lu", handle);
+    IGL_LOG_ERROR("Unable to get fence fd from submit handle %llu: %s\n",
+                  static_cast<unsigned long long>(handle),
+                  ivkGetVulkanResultString(result));
+    // The contents of `fenceFd` are undefined after a failure.
+    fenceFd = -1;
   }
   immediate_->storeFDInSubmitHandle(VulkanImmediateCommands::SubmitHandle(handle), fenceFd);
-#endif // defined(IGL_PLATFORM_ANDROID)
+  setResultFrom(outResult, result);
   return fenceFd;
+#else
+  Result::setResult(
+      outResult, Result::Code::Unsupported, "VK_KHR_external_fence_fd is unavailable");
+  return -1;
+#endif // defined(VK_KHR_external_fence_fd)
 }
 
 VkDescriptorSetLayout VulkanContext::getBindlessVkDescriptorSetLayout() const {

@@ -17,13 +17,20 @@
 #include <igl/vulkan/Device.h>
 #include <igl/vulkan/PlatformDevice.h>
 #include <igl/vulkan/VulkanContext.h>
+#include <igl/vulkan/VulkanImmediateCommands.h>
 
 namespace igl::tests {
 
 namespace {
 
+/// What the replacement functions below return, and what vkGetFenceFdKHR() was asked to export.
 struct FakeVulkan {
   VkResult waitForFencesResult = VK_SUCCESS;
+  VkResult getFenceFdResult = VK_SUCCESS;
+  int fenceFd{-1};
+  uint32_t numGetFenceFdCalls{};
+  VkFence exportedFence = VK_NULL_HANDLE;
+  VkExternalFenceHandleTypeFlagBits exportedHandleType{};
 };
 
 FakeVulkan& fakeVulkan() {
@@ -37,6 +44,17 @@ VKAPI_ATTR VkResult VKAPI_CALL fakeWaitForFences(VkDevice /*device*/,
                                                  VkBool32 /*waitAll*/,
                                                  uint64_t /*timeout*/) {
   return fakeVulkan().waitForFencesResult;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL fakeGetFenceFd(VkDevice /*device*/,
+                                              const VkFenceGetFdInfoKHR* pGetFdInfo,
+                                              int* pFd) {
+  FakeVulkan& fake = fakeVulkan();
+  ++fake.numGetFenceFdCalls;
+  fake.exportedFence = pGetFdInfo->fence;
+  fake.exportedHandleType = pGetFdInfo->handleType;
+  *pFd = fake.fenceFd;
+  return fake.getFenceFdResult;
 }
 
 /// Lets a test replace functions of the function table of a context, which VulkanContext exposes
@@ -97,6 +115,11 @@ class PlatformDeviceVulkanTest : public ::testing::Test {
     return queue_->submit(*commandBuffer);
   }
 
+  int cachedFenceFd(SubmitHandle handle) {
+    return context().immediate_->cachedFDFromSubmitHandle(
+        vulkan::VulkanImmediateCommands::SubmitHandle(handle));
+  }
+
   std::shared_ptr<IDevice> device_;
   std::shared_ptr<ICommandQueue> queue_;
 };
@@ -154,7 +177,88 @@ TEST_F(PlatformDeviceVulkanTest, FenceFdExportIsUnsupportedWithoutTheExportFunct
   ScopedFunctionTable table(context());
   table->vkGetFenceFdKHR = nullptr;
 
-  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle), -1);
+  Result result;
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle, &result), -1);
+  EXPECT_EQ(result.code, Result::Code::Unsupported);
+}
+
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportReportsADriverErrorWithoutAnFd) {
+  const SubmitHandle handle = submit();
+  ASSERT_NE(handle, 0u);
+
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = fakeGetFenceFd;
+  fakeVulkan().getFenceFdResult = VK_ERROR_TOO_MANY_OBJECTS;
+  // A failed call leaves its output undefined: it must not be returned as a descriptor.
+  fakeVulkan().fenceFd = 77;
+
+  Result result;
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle, &result), -1);
+  EXPECT_FALSE(result.isOk());
+  EXPECT_NE(result.code, Result::Code::Unsupported);
+  EXPECT_EQ(result.message, "VK_ERROR_TOO_MANY_OBJECTS");
+  EXPECT_EQ(fakeVulkan().numGetFenceFdCalls, 1u);
+  EXPECT_EQ(cachedFenceFd(handle), -1);
+}
+
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportOfASignaledFenceSucceedsWithoutAnFd) {
+  const SubmitHandle handle = submit();
+  ASSERT_NE(handle, 0u);
+
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = fakeGetFenceFd;
+  fakeVulkan().fenceFd = -1;
+
+  Result result(Result::Code::RuntimeError);
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle, &result), -1);
+  EXPECT_TRUE(result.isOk()) << result.message;
+  EXPECT_EQ(fakeVulkan().numGetFenceFdCalls, 1u);
+}
+
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportReturnsTheSyncFdOfTheSubmission) {
+  const SubmitHandle handle = submit();
+  ASSERT_NE(handle, 0u);
+  const VkFence fence = platformDevice().getVkFenceFromSubmitHandle(handle);
+  ASSERT_NE(fence, VK_NULL_HANDLE);
+
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = fakeGetFenceFd;
+  // The descriptor is only compared, never used.
+  fakeVulkan().fenceFd = 1234;
+
+  Result result(Result::Code::RuntimeError);
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(handle, &result), 1234);
+  EXPECT_TRUE(result.isOk()) << result.message;
+  EXPECT_EQ(fakeVulkan().exportedFence, fence);
+  EXPECT_EQ(fakeVulkan().exportedHandleType, VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT);
+  EXPECT_EQ(cachedFenceFd(handle), 1234);
+}
+
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportFailsForANullHandle) {
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = fakeGetFenceFd;
+
+  Result result;
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(0, &result), -1);
+  EXPECT_EQ(result.code, Result::Code::ArgumentInvalid);
+  EXPECT_EQ(fakeVulkan().numGetFenceFdCalls, 0u);
+}
+
+TEST_F(PlatformDeviceVulkanTest, FenceFdExportFailsForAHandleWhoseSubmissionWasRecycled) {
+  const SubmitHandle handle = submit();
+  ASSERT_NE(handle, 0u);
+  // The same command buffer with a later submit id (the upper 32 bits): its row no longer holds the
+  // submission of `handle`.
+  const SubmitHandle recycled = handle + (uint64_t{1} << 32);
+  ASSERT_EQ(platformDevice().getVkFenceFromSubmitHandle(recycled), VK_NULL_HANDLE);
+
+  ScopedFunctionTable table(context());
+  table->vkGetFenceFdKHR = fakeGetFenceFd;
+
+  Result result;
+  EXPECT_EQ(platformDevice().getFenceFdFromSubmitHandle(recycled, &result), -1);
+  EXPECT_EQ(result.code, Result::Code::ArgumentInvalid);
+  EXPECT_EQ(fakeVulkan().numGetFenceFdCalls, 0u);
 }
 
 } // namespace
