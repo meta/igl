@@ -159,7 +159,7 @@ class PlatformDevice : public IPlatformDevice {
                        ICommandBuffer& reusable,
                        Result* IGL_NULLABLE outResult) const;
 
-  /// Android only for now - Creates the file descriptor for the underlying VkFence
+  /// Creates the file descriptor for the underlying VkFence
   /// @param handle The handle to the GPU Fence
   /// @return The fd for the Vulkan Fence associated with the handle
 #if defined(IGL_PLATFORM_ANDROID) && defined(VK_KHR_external_fence_fd)
