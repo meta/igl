@@ -54,12 +54,17 @@ class ICommandBufferAllocator {
   [[nodiscard]] virtual CommandBufferScope commandBufferScope(
       ICommandBufferAllocator& allocator,
       igl::ICommandBuffer& commandBuffer,
-      bool shouldFinalizeCommandBuffer) noexcept {
-    return {allocator, commandBuffer, shouldFinalizeCommandBuffer};
-  }
+      bool shouldFinalizeCommandBuffer) noexcept;
   [[nodiscard]] virtual CommandBufferScope commandBufferScope(
       CommandBufferScopeConfig config) noexcept = 0;
   virtual void finalizeCommandBuffer() noexcept = 0;
 };
+
+[[nodiscard]] inline ICommandBufferAllocator::CommandBufferScope
+ICommandBufferAllocator::commandBufferScope(ICommandBufferAllocator& allocator,
+                                            igl::ICommandBuffer& commandBuffer,
+                                            bool shouldFinalizeCommandBuffer) noexcept {
+  return {allocator, commandBuffer, shouldFinalizeCommandBuffer};
+}
 
 } // namespace iglu::command_buffer_allocator

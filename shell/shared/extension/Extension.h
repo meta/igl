@@ -34,9 +34,11 @@ class Platform;
 class Extension : public IGLShellExtension {
  public:
   virtual ~Extension() = default;
-  virtual bool initialize(Platform& /*platform*/) noexcept {
-    return true;
-  }
+  virtual bool initialize(Platform& /*platform*/) noexcept;
 };
+
+inline bool Extension::initialize(Platform& /*platform*/) noexcept {
+  return true;
+}
 
 } // namespace igl::shell

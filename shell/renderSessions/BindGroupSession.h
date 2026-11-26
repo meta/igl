@@ -27,9 +27,7 @@ class BindGroupSession : public RenderSession {
   explicit BindGroupSession(std::shared_ptr<Platform> platform);
   void initialize() noexcept override;
   void update(SurfaceTextures surfaceTextures) noexcept override;
-  void releaseFramebuffer() override {
-    framebuffer_ = nullptr;
-  }
+  void releaseFramebuffer() override;
 
  private:
   RenderPassDesc renderPass_;
@@ -48,5 +46,9 @@ class BindGroupSession : public RenderSession {
 
   void createSamplerAndTextures(const IDevice& /*device*/);
 };
+
+inline void BindGroupSession::releaseFramebuffer() {
+  framebuffer_ = nullptr;
+}
 
 } // namespace igl::shell

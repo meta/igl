@@ -26,9 +26,7 @@ class TQSession : public RenderSession {
   void initialize() noexcept override;
   void update(SurfaceTextures surfaceTextures) noexcept override;
 
-  void setUVScale(float uvScale) noexcept {
-    uvScale_ = uvScale;
-  }
+  void setUVScale(float uvScale) noexcept;
 
  private:
   std::shared_ptr<IRenderPipelineState> pipelineState_;
@@ -48,5 +46,9 @@ class TQSession : public RenderSession {
 
   float uvScale_ = 1.0f;
 };
+
+inline void TQSession::setUVScale(float uvScale) noexcept {
+  uvScale_ = uvScale;
+}
 
 } // namespace igl::shell

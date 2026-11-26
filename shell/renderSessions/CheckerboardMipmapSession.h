@@ -26,9 +26,7 @@ class CheckerboardMipmapSession : public RenderSession {
     RenderSession(std::move(platform)) {}
   void initialize() noexcept override;
   void update(SurfaceTextures surfaceTextures) noexcept override;
-  void releaseFramebuffer() override {
-    framebuffer_ = nullptr;
-  }
+  void releaseFramebuffer() override;
 
  private:
   RenderPassDesc renderPass_;
@@ -44,5 +42,9 @@ class CheckerboardMipmapSession : public RenderSession {
   // Initial angle of the plane, so that it starts at an angle
   float planeAngle_ = M_PI / 4.0f;
 };
+
+inline void CheckerboardMipmapSession::releaseFramebuffer() {
+  framebuffer_ = nullptr;
+}
 
 } // namespace igl::shell

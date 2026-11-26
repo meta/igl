@@ -23,9 +23,7 @@ class ITextureLoaderFactory {
   virtual ~ITextureLoaderFactory() = default;
 
   [[nodiscard]] virtual uint32_t minHeaderLength() const noexcept = 0;
-  [[nodiscard]] virtual uint32_t maxHeaderLength() const noexcept {
-    return minHeaderLength();
-  }
+  [[nodiscard]] virtual uint32_t maxHeaderLength() const noexcept;
   [[nodiscard]] bool canCreate(const uint8_t* IGL_NONNULL headerData,
                                uint32_t headerLength,
                                igl::Result* IGL_NULLABLE outResult) const noexcept;
@@ -58,5 +56,9 @@ class ITextureLoaderFactory {
       igl::TextureFormat preferredFormat,
       igl::Result* IGL_NULLABLE outResult) const noexcept = 0;
 };
+
+[[nodiscard]] inline uint32_t ITextureLoaderFactory::maxHeaderLength() const noexcept {
+  return minHeaderLength();
+}
 
 } // namespace iglu::textureloader

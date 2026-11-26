@@ -65,10 +65,12 @@ struct TrafficEstimate {
   uint64_t readBytes = 0;
   uint64_t writeBytes = 0;
 
-  [[nodiscard]] uint64_t totalBytes() const noexcept {
-    return readBytes + writeBytes;
-  }
+  [[nodiscard]] uint64_t totalBytes() const noexcept;
 };
+
+[[nodiscard]] inline uint64_t TrafficEstimate::totalBytes() const noexcept {
+  return readBytes + writeBytes;
+}
 
 /// Sums the estimated traffic of `passes`. Per attachment that is not memoryless, with `samples`
 /// and `layers` counted as at least 1:

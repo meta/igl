@@ -21,9 +21,7 @@ class ClothSimulationSession : public ShellRenderSession {
     ShellRenderSession(std::move(platform)) {}
   void initialize() noexcept override;
   void update(SurfaceTextures surfaceTextures) noexcept override;
-  void releaseFramebuffer() override {
-    framebuffer_ = nullptr;
-  }
+  void releaseFramebuffer() override;
 
  private:
   void createOrUpdateDefaultFramebuffer(const SurfaceTextures& surfaceTextures);
@@ -52,5 +50,9 @@ class ClothSimulationSession : public ShellRenderSession {
 
   std::shared_ptr<IDepthStencilState> depthStencilState_;
 };
+
+inline void ClothSimulationSession::releaseFramebuffer() {
+  framebuffer_ = nullptr;
+}
 
 } // namespace igl::shell
