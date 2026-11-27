@@ -18,6 +18,7 @@
 #import <Metal/MTLDevice.h>
 #include <cstring>
 #include <igl/IGL.h>
+#include <igl/metal/CommandQueue.h>
 #include <igl/metal/Device.h>
 
 namespace igl::tests {
@@ -236,7 +237,7 @@ TEST_F(MetalBufferTest, CreatePrivateBufferWithInitialData) {
   id<MTLBuffer> readback = [nativeBuffer.device newBufferWithLength:kCopySize
                                                             options:MTLResourceStorageModeShared];
   ASSERT_NE(readback, nil);
-  id<MTLCommandQueue> queue = [nativeBuffer.device newCommandQueue];
+  id<MTLCommandQueue> queue = static_cast<metal::CommandQueue&>(*cmdQueue_).get();
   ASSERT_NE(queue, nil);
   id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
   ASSERT_NE(commandBuffer, nil);
