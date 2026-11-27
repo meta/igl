@@ -24,15 +24,17 @@ class TriangleRenderer final {
   /// Clears `target` and draws the triangle into it; submits without waiting.
   [[nodiscard]] Result render(const std::shared_ptr<ITexture>& target);
 
-  [[nodiscard]] ICommandQueue& getQueue() const {
-    return *queue_;
-  }
+  [[nodiscard]] ICommandQueue& getQueue() const;
 
  private:
   IDevice* device_ = nullptr;
   std::shared_ptr<ICommandQueue> queue_;
   std::shared_ptr<IRenderPipelineState> pipeline_;
 };
+
+[[nodiscard]] inline ICommandQueue& TriangleRenderer::getQueue() const {
+  return *queue_;
+}
 
 /// Renders the reference triangle into a `size` x `size` RGBA8 target and reads it back with rows
 /// top to bottom. Shared by the native test and the wasm sample, so their frames can be compared

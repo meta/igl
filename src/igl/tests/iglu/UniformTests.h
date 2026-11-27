@@ -22,11 +22,14 @@ constexpr int kFragmentIndex = 51;
 
 template<typename T>
 struct Compare {
-  static void verifyAligned(const T* expected, const void* aligned) {
-    const T& alignedValue = *(static_cast<const T*>(aligned));
-    ASSERT_EQ(*expected, alignedValue);
-  }
+  static void verifyAligned(const T* expected, const void* aligned);
 };
+
+template<typename T>
+void Compare<T>::verifyAligned(const T* expected, const void* aligned) {
+  const T& alignedValue = *(static_cast<const T*>(aligned));
+  ASSERT_EQ(*expected, alignedValue);
+}
 
 template<>
 struct Compare<glm::mat3> {

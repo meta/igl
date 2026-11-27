@@ -119,12 +119,14 @@ class PlatformDevice : public IPlatformDevice {
                               Result* outResult);
 
  protected:
-  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override {
-    return t == kType;
-  }
+  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override;
 
   Device& owner_;
 };
+
+[[nodiscard]] inline bool PlatformDevice::isType(PlatformDeviceType t) const noexcept {
+  return t == kType;
+}
 
 } // namespace opengl
 } // namespace igl

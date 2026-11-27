@@ -35,9 +35,7 @@ class ComputePipelineState final : public WithContext, public IComputePipelineSt
 
   [[nodiscard]] int getIndexByName(const NameHandle& name) const override;
 
-  bool getIsUsingShaderStorageBuffers() {
-    return usingShaderStorageBuffers_;
-  }
+  bool getIsUsingShaderStorageBuffers();
 
  private:
   using ComputePipelineReflection = RenderPipelineReflection;
@@ -51,5 +49,9 @@ class ComputePipelineState final : public WithContext, public IComputePipelineSt
 
   bool usingShaderStorageBuffers_ = false;
 };
+
+inline bool ComputePipelineState::getIsUsingShaderStorageBuffers() {
+  return usingShaderStorageBuffers_;
+}
 
 } // namespace igl::opengl

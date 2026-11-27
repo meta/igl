@@ -54,10 +54,12 @@ class ViewTextureTarget final : public Texture {
   [[nodiscard]] bool isImplicitStorage() const override;
 
   // @fb-only
-  [[nodiscard]] GLuint getId() const override {
-    IGL_DEBUG_ASSERT_NOT_REACHED();
-    return 0;
-  }
+  [[nodiscard]] GLuint getId() const override;
 };
+
+[[nodiscard]] inline GLuint ViewTextureTarget::getId() const {
+  IGL_DEBUG_ASSERT_NOT_REACHED();
+  return 0;
+}
 
 } // namespace igl::opengl

@@ -23,9 +23,11 @@ class TextureBufferExternal : public TextureBufferBase {
                                  TextureDesc::TextureUsage usage);
   ~TextureBufferExternal() override = default;
 
-  [[nodiscard]] bool supportsUpload() const final {
-    return false;
-  }
+  [[nodiscard]] bool supportsUpload() const final;
 };
+
+[[nodiscard]] inline bool TextureBufferExternal::supportsUpload() const {
+  return false;
+}
 
 } // namespace igl::opengl

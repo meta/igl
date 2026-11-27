@@ -24,15 +24,17 @@ class ShaderModule final : public IShaderModule {
   ShaderModule(ShaderModuleInfo info, std::shared_ptr<VulkanShaderModule> shaderModule);
   ~ShaderModule() override = default;
 
-  [[nodiscard]] const VulkanShaderModule& getVulkanShaderModule() const {
-    return *module_;
-  }
+  [[nodiscard]] const VulkanShaderModule& getVulkanShaderModule() const;
 
   static VkShaderModule getVkShaderModule(const std::shared_ptr<IShaderModule>& shaderModule);
 
  private:
   std::shared_ptr<VulkanShaderModule> module_;
 };
+
+[[nodiscard]] inline const VulkanShaderModule& ShaderModule::getVulkanShaderModule() const {
+  return *module_;
+}
 
 /// @brief Implements the igl::IShaderStages interface
 class ShaderStages final : public IShaderStages {

@@ -23,9 +23,7 @@ class CommandQueue final : public ICommandQueue {
  public:
   CommandQueue(Device& device, const CommandQueueDesc& desc);
 
-  ~CommandQueue() override {
-    IGL_DEBUG_ASSERT(*numBuffersLeftToSubmit_ == 0);
-  }
+  ~CommandQueue() override;
 
   CommandQueue(const CommandQueue&) = delete;
   CommandQueue& operator=(const CommandQueue&) = delete;
@@ -68,5 +66,9 @@ class CommandQueue final : public ICommandQueue {
   /// buffer leaves the count when it is destroyed without being submitted.
   std::shared_ptr<int> numBuffersLeftToSubmit_ = std::make_shared<int>(0);
 };
+
+inline CommandQueue::~CommandQueue() {
+  IGL_DEBUG_ASSERT(*numBuffersLeftToSubmit_ == 0);
+}
 
 } // namespace igl::vulkan

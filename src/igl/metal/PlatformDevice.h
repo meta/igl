@@ -163,14 +163,16 @@ class PlatformDevice final : public IPlatformDevice {
       Result* outResult) const;
 
  protected:
-  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override {
-    return t == kType;
-  }
+  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override;
 
  private:
   Device& device_;
   CVMetalTextureCacheRef textureCache_ = nullptr;
 };
+
+[[nodiscard]] inline bool PlatformDevice::isType(PlatformDeviceType t) const noexcept {
+  return t == kType;
+}
 
 } // namespace metal
 } // namespace igl
