@@ -386,10 +386,10 @@ bool XrApp::initialize(const struct android_app* app, const InitParams& params) 
                                  reinterpret_cast<PFN_xrVoidFunction*>(&xrInitializeLoaderKHR)));
   if (xrInitializeLoaderKHR) {
     XrLoaderInitInfoAndroidKHR loaderInitializeInfoAndroid = {
-        XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
-        nullptr,
-        app->activity->vm,
-        app->activity->clazz,
+        .type = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
+        .next = nullptr,
+        .applicationVM = app->activity->vm,
+        .applicationContext = app->activity->clazz,
     };
 
     XR_CHECK(xrInitializeLoaderKHR(
@@ -598,10 +598,10 @@ void XrApp::createShellSession(std::unique_ptr<IDevice> device, AAssetManager* a
 
 void XrApp::createSpaces() {
   XrReferenceSpaceCreateInfo spaceCreateInfo = {
-      XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
-      nullptr,
-      XR_REFERENCE_SPACE_TYPE_VIEW,
-      {{0.0f, 0.0f, 0.0f, 1.0f}},
+      .type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
+      .next = nullptr,
+      .referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW,
+      .poseInReferenceSpace = {.orientation = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f}},
   };
   XR_CHECK(xrCreateReferenceSpace(session_, &spaceCreateInfo, &headSpace_));
 
@@ -867,9 +867,9 @@ void XrApp::handleSessionStateChanges(XrSessionState state) {
     assert(!sessionActive_);
 
     const XrSessionBeginInfo sessionBeginInfo{
-        XR_TYPE_SESSION_BEGIN_INFO,
-        nullptr,
-        viewConfigProps_.viewConfigurationType,
+        .type = XR_TYPE_SESSION_BEGIN_INFO,
+        .next = nullptr,
+        .primaryViewConfigurationType = viewConfigProps_.viewConfigurationType,
     };
 
     const XrResult result = xrBeginSession(session_, &sessionBeginInfo);
@@ -909,7 +909,7 @@ XrFrameState XrApp::beginFrame() {
   XR_CHECK(xrBeginFrame(session_, &beginFrameInfo));
 
   XrSpaceLocation loc = {
-      loc.type = XR_TYPE_SPACE_LOCATION,
+      .type = XR_TYPE_SPACE_LOCATION,
   };
   XR_CHECK(xrLocateSpace(headSpace_, currentSpace_, frameState.predictedDisplayTime, &loc));
   const XrPosef headPose = loc.pose;
@@ -917,11 +917,11 @@ XrFrameState XrApp::beginFrame() {
   XrViewState viewState = {XR_TYPE_VIEW_STATE};
 
   const XrViewLocateInfo projectionInfo = {
-      XR_TYPE_VIEW_LOCATE_INFO,
-      nullptr,
-      viewConfigProps_.viewConfigurationType,
-      frameState.predictedDisplayTime,
-      headSpace_,
+      .type = XR_TYPE_VIEW_LOCATE_INFO,
+      .next = nullptr,
+      .viewConfigurationType = viewConfigProps_.viewConfigurationType,
+      .displayTime = frameState.predictedDisplayTime,
+      .space = headSpace_,
   };
 
   uint32_t numViews = views_.size();
@@ -1018,7 +1018,10 @@ void XrApp::update() {
 
   // Sync and poll controller input
   if (actionSet_ != XR_NULL_HANDLE && platform_ != nullptr) {
-    XrActiveActionSet activeActionSet = {actionSet_, XR_NULL_PATH};
+    const XrActiveActionSet activeActionSet = {
+        .actionSet = actionSet_,
+        .subactionPath = XR_NULL_PATH,
+    };
     XrActionsSyncInfo syncInfo = {
         .type = XR_TYPE_ACTIONS_SYNC_INFO,
         .countActiveActionSets = 1,
