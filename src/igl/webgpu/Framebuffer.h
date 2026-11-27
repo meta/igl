@@ -53,9 +53,7 @@ class Framebuffer final : public IFramebuffer {
   void updateDrawable(SurfaceTextures surfaceTextures) override;
   void updateResolveAttachment(std::shared_ptr<ITexture> texture) override;
 
-  [[nodiscard]] const FramebufferDesc& getDesc() const noexcept {
-    return desc_;
-  }
+  [[nodiscard]] const FramebufferDesc& getDesc() const noexcept;
 
  private:
   void copyBytes(const std::shared_ptr<ITexture>& texture,
@@ -67,5 +65,9 @@ class Framebuffer final : public IFramebuffer {
   WebGPUContext& ctx_;
   FramebufferDesc desc_;
 };
+
+[[nodiscard]] inline const FramebufferDesc& Framebuffer::getDesc() const noexcept {
+  return desc_;
+}
 
 } // namespace igl::webgpu

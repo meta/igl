@@ -40,14 +40,16 @@ class VulkanFramebuffer final {
   VulkanFramebuffer(VulkanFramebuffer&&) = delete;
   VulkanFramebuffer& operator=(VulkanFramebuffer&&) = delete;
 
-  [[nodiscard]] VkFramebuffer getVkFramebuffer() const {
-    return vkFramebuffer;
-  }
+  [[nodiscard]] VkFramebuffer getVkFramebuffer() const;
 
  public:
   const VulkanContext& ctx;
   VkDevice vkDevice = VK_NULL_HANDLE;
   VkFramebuffer vkFramebuffer = VK_NULL_HANDLE;
 };
+
+[[nodiscard]] inline VkFramebuffer VulkanFramebuffer::getVkFramebuffer() const {
+  return vkFramebuffer;
+}
 
 } // namespace igl::vulkan

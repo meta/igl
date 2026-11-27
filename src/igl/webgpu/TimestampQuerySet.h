@@ -43,9 +43,7 @@ class TimestampQuerySet final {
   [[nodiscard]] WGPUQuerySet IGL_NULLABLE getQuerySet() const noexcept {
     return querySet_.get();
   }
-  [[nodiscard]] uint32_t getCount() const noexcept {
-    return count_;
-  }
+  [[nodiscard]] uint32_t getCount() const noexcept;
 
   /// Encodes resolving queries [0, count) into a new readback buffer.
   void encodeResolve(WGPUCommandEncoder IGL_NONNULL encoder, uint32_t count);
@@ -85,5 +83,9 @@ class TimestampQuerySet final {
   mutable std::vector<std::shared_ptr<Readback>> mapped_;
   mutable std::shared_ptr<Readback> completed_;
 };
+
+[[nodiscard]] inline uint32_t TimestampQuerySet::getCount() const noexcept {
+  return count_;
+}
 
 } // namespace igl::webgpu

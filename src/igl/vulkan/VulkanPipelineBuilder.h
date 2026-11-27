@@ -52,9 +52,7 @@ class VulkanPipelineBuilder final {
                                VkPipeline* outPipeline,
                                const char* debugName = nullptr) noexcept;
 
-  [[nodiscard]] static uint32_t getNumPipelinesCreated() {
-    return numPipelinesCreated;
-  }
+  [[nodiscard]] static uint32_t getNumPipelinesCreated();
 
  private:
   std::vector<VkDynamicState> dynamicStates_;
@@ -68,6 +66,10 @@ class VulkanPipelineBuilder final {
   uint32_t subpass_ = 0;
   static uint32_t numPipelinesCreated;
 };
+
+[[nodiscard]] inline uint32_t VulkanPipelineBuilder::getNumPipelinesCreated() {
+  return numPipelinesCreated;
+}
 
 class VulkanComputePipelineBuilder final {
  public:
@@ -84,13 +86,15 @@ class VulkanComputePipelineBuilder final {
                                VkPipeline* outPipeline,
                                const char* debugName = nullptr) noexcept;
 
-  [[nodiscard]] static uint32_t getNumPipelinesCreated() {
-    return numPipelinesCreated;
-  }
+  [[nodiscard]] static uint32_t getNumPipelinesCreated();
 
  private:
   VkPipelineShaderStageCreateInfo shaderStage_;
   static uint32_t numPipelinesCreated;
 };
+
+[[nodiscard]] inline uint32_t VulkanComputePipelineBuilder::getNumPipelinesCreated() {
+  return numPipelinesCreated;
+}
 
 } // namespace igl::vulkan

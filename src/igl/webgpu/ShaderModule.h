@@ -60,9 +60,7 @@ class ShaderModule final : public IShaderModule {
   [[nodiscard]] WGPUShaderModule IGL_NULLABLE getWGPUShaderModule() const noexcept {
     return module_.module.get();
   }
-  [[nodiscard]] const WgslReflection& getReflection() const noexcept {
-    return *module_.reflection;
-  }
+  [[nodiscard]] const WgslReflection& getReflection() const noexcept;
   /// The selected entry point; never null for a successfully created module.
   [[nodiscard]] const WgslEntryPoint* IGL_NULLABLE getEntryPoint() const noexcept {
     return module_.reflection->findEntryPoint(info().entryPoint);
@@ -74,6 +72,10 @@ class ShaderModule final : public IShaderModule {
  private:
   WgslModule module_;
 };
+
+[[nodiscard]] inline const WgslReflection& ShaderModule::getReflection() const noexcept {
+  return *module_.reflection;
+}
 
 class ShaderLibrary final : public IShaderLibrary {
  public:

@@ -18,12 +18,14 @@ class DepthStencilState final : public IDepthStencilState {
  public:
   explicit DepthStencilState(DepthStencilStateDesc desc) : desc_(std::move(desc)) {}
 
-  [[nodiscard]] const DepthStencilStateDesc& getDesc() const noexcept {
-    return desc_;
-  }
+  [[nodiscard]] const DepthStencilStateDesc& getDesc() const noexcept;
 
  private:
   DepthStencilStateDesc desc_;
 };
+
+[[nodiscard]] inline const DepthStencilStateDesc& DepthStencilState::getDesc() const noexcept {
+  return desc_;
+}
 
 } // namespace igl::webgpu

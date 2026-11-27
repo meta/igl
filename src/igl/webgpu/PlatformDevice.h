@@ -58,12 +58,14 @@ class PlatformDevice final : public IPlatformDevice {
                                       AsyncBufferReadback& readback) const;
 
  protected:
-  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override {
-    return t == kType;
-  }
+  [[nodiscard]] bool isType(PlatformDeviceType t) const noexcept override;
 
  private:
   Device& device_;
 };
+
+[[nodiscard]] inline bool PlatformDevice::isType(PlatformDeviceType t) const noexcept {
+  return t == kType;
+}
 
 } // namespace igl::webgpu
